@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_in3_candidates" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="in3-candidates" name="in3-candidates" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="reviewTask" />
+    <!-- WO-IN-3: кандидаты приходят ПЕРЕМЕННЫМИ, а не литералами, чтобы ОДИН процесс дал два
+         РАЗНЫХ набора кандидатов в двух инстансах. Тогда проверка «нашла своё и не нашла чужое» —
+         настоящая разность, а не совпадение всего подряд. assignee намеренно не задан: он не
+         участвует в критериях этого WO и только шумит в колонке. -->
+    <bpmn:userTask id="reviewTask" name="Review Task">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:assignmentDefinition candidateGroups="${candGroup}" candidateUsers="${candUser}" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="reviewTask" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

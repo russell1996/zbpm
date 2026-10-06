@@ -90,6 +90,9 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
     public boolean createTaskRow(UUID processInstanceId, UUID activityId, BpmnElementModel bpmnElement) {
         String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, bpmnElement);
         String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, bpmnElement);
+        // WO-IN-3: кандидаты-пользователи резолвятся здесь и уходят в таблицу кандидатов —
+        // раньше атрибут парсился и молча терялся (E-IN2-1).
+        String resolvedUsers = elementSupport.resolveCandidateUsers(processInstanceId, bpmnElement);
         String resolvedDueDate = elementSupport.resolveDueDate(processInstanceId, bpmnElement);
         String resolvedFollowUpDate = elementSupport.resolveFollowUpDate(processInstanceId, bpmnElement);
         String formKey = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
@@ -126,7 +129,7 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
             dbService.createIncident(activityId, e.getMessage());
             return false;
         }
-        dbService.createUserTask(activityId, parkedAssignee != null ? null : resolvedAssignee, resolvedGroups, formKey, formId, bindingType, resolvedDueDate, resolvedFollowUpDate, resolvedPriority);
+        dbService.createUserTask(activityId, parkedAssignee != null ? null : resolvedAssignee, resolvedGroups, resolvedUsers, formKey, formId, bindingType, resolvedDueDate, resolvedFollowUpDate, resolvedPriority);
         if (parkedAssignee != null) {
             dbService.setPendingAssignee(activityId, parkedAssignee);
         }

@@ -285,6 +285,9 @@ public class MultiInstanceExecutor {
         if (element.getType() == BpmnElementType.USER_TASK) {
             String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, element);
             String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, element);
+            // WO-IN-3: зеркало прямого пути — MI-инстанс тоже обязан писать кандидатов,
+            // иначе задача внутри MI осталась бы невидимой для фильтра по кандидату.
+            String resolvedUsers = elementSupport.resolveCandidateUsers(processInstanceId, element);
             String formKey = element.getExtensions() != null && element.getExtensions().getUserTaskExtension() != null
                 ? element.getExtensions().getUserTaskExtension().getFormKey() : null;
             // WO-C8-22: linked-form id rides its own field into the row (never into formKey).
@@ -311,7 +314,7 @@ public class MultiInstanceExecutor {
                 dbService.createIncident(activityId, e.getMessage());
                 return;
             }
-            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, formKey, formId, bindingType, resolvedDueDate, resolvedFollowUpDate, resolvedPriority);
+            dbService.createUserTask(activityId, resolvedAssignee, resolvedGroups, resolvedUsers, formKey, formId, bindingType, resolvedDueDate, resolvedFollowUpDate, resolvedPriority);
         } else {
             dbService.createServiceTask(activityId, elementSupport.serviceTaskRetries(element), elementSupport.serviceTaskJob(element));
             elementSupport.applyIoMappings(processInstanceId, activityId, element, true);

@@ -16,6 +16,7 @@ import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.service.db.UserTaskCandidateWriter;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -71,6 +72,8 @@ class UserTaskRelatesToAuthzIntegrationTest {
     @Autowired private UiUserRepository userRepository;
     @Autowired private PasswordHasher passwordHasher;
     @Autowired private UserTaskRepository userTaskRepository;
+    /** WO-IN-3: писатель кандидатов — фикстура пишет строки тем же кодом, что и движок. */
+    @Autowired private UserTaskCandidateWriter userTaskCandidateWriter;
     @Autowired private UserGroupRepository userGroupRepository;
     @Autowired private ProcessRepository processRepository;
     @Autowired private ProcessMemberRepository processMemberRepository;
@@ -252,14 +255,36 @@ class UserTaskRelatesToAuthzIntegrationTest {
 
     // ===== the new filters are reachable over HTTP and validated there =====
 
-    /** C0.2 / E-IN2-1 variant B: refused out loud over HTTP, never answered with "everything". */
+    /**
+     * WO-IN-3: {@code candidateUser} больше не отказ. Тот же вопрос по HTTP, что был отказом
+     * E-IN2-1/C0.2 — и ответ теперь настоящий: ровно одна задача, а не «все» и не 400.
+     *
+     * <p>Мутация, которая обязана покраснить этот тест: вернуть 400 (вариант B) — упадёт первый
+     * ассерт; убрать фильтр из {@code findUserTasks} — упадёт второй, потому что строк станет
+     * больше одной. Оба варианта «тест всё равно зелёный» здесь закрыты.
+     */
     @Test
-    void candidateUserParam_overHttp_is400_notSilentlyIgnored() throws Exception {
+    void candidateUserParam_overHttp_filtersRows_andNeverFallsBackToEverything() throws Exception {
+        UUID aliceCandidateTask = task(pdVisible, null, null, aliceName);
+        task(pdVisible, null, null, "in3-rest-nobody-" + UUID.randomUUID());
+
         mockMvc.perform(get("/user-tasks")
                         .header("Authorization", "Bearer " + adminToken)
-                        .param("candidateUser", strangerName))
+                        .param("candidateUser", aliceName)
+                        .param("pageSize", "200"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.totalElements").value(1))
+            .andExpect(jsonPath("$.data[0].id").value(aliceCandidateTask.toString()));
+    }
+
+    /** Имя с разделителем списка не представимо — отказ, а не тихая пустая выборка. */
+    @Test
+    void candidateUserWithDelimiter_overHttp_is400() throws Exception {
+        mockMvc.perform(get("/user-tasks")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("candidateUser", "a,b"))
             .andExpect(status().isBadRequest())
-            .andExpect(jsonPath("$.code").value("UNSUPPORTED_CANDIDATE_USER_FILTER"));
+            .andExpect(jsonPath("$.code").value("UNSUPPORTED_CANDIDATE_USER_NAME"));
     }
 
     /** MEDIUM-2 over HTTP: a caller-supplied index must answer an empty page, never a 500. */
@@ -363,8 +388,21 @@ class UserTaskRelatesToAuthzIntegrationTest {
         processMemberRepository.save(pm);
     }
 
-    /** Starts an instance and stamps assignee / candidateGroups onto its (open) task row. */
+    /**
+     * Starts an instance and stamps assignee / candidateGroups / candidateUsers onto its (open)
+     * task row.
+     *
+     * <p>WO-IN-3: строки-кандидаты пишет ТОТ ЖЕ рабочий код, что и живой путь
+     * ({@code UserTaskCandidateWriter}). Раньше фикстура писала только колонку
+     * {@code candidate_groups}, и после перехода читателя на таблицу такие задачи просто перестали
+     * бы находиться — то есть тест описывал бы состояние, которого движок создать не может.
+     * Стирать перед записью нечего: в {@code in2-rest-person.bpmn} кандидатов нет вовсе.
+     */
     private UUID task(UUID pdId, String assignee, String candidateGroups) throws Exception {
+        return task(pdId, assignee, candidateGroups, null);
+    }
+
+    private UUID task(UUID pdId, String assignee, String candidateGroups, String candidateUsers) throws Exception {
         StartProcessInstanceDTO startDto = new StartProcessInstanceDTO();
         startDto.setProcessDefinitionId(pdId);
         MvcResult result = mockMvc.perform(post("/process-instances")
@@ -379,7 +417,9 @@ class UserTaskRelatesToAuthzIntegrationTest {
             .findFirst().orElseThrow();
         row.setAssignee(assignee);
         row.setCandidateGroups(candidateGroups);
-        return userTaskRepository.save(row).getId();
+        UUID taskId = userTaskRepository.save(row).getId();
+        userTaskCandidateWriter.writeCandidates(taskId, candidateGroups, candidateUsers);
+        return taskId;
     }
 
     private UiUserEntity createUser(String username) {
