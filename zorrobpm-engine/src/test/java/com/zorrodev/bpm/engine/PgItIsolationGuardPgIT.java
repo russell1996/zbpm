@@ -163,14 +163,21 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
             // The premise of the old assertion — "the table has no due rows I did not create" — is
             // provably false in a shared database. This is why `isEmpty()` could not be the criterion.
             //
-            // Known residual risk (@verifier, round 2 finding 7, NOT reproduced): this read is the only
-            // assertion in the class that does not depend on our own ids, and a LIVE TimerScheduler in
-            // another cached context can hold those very rows FOR UPDATE. Its SKIP LOCKED query would
-            // then skip them and this diagnostic could fail on a busy runner. Not reproduced in a full
-            // suite plus three targeted runs, and the window is narrow because processBatch() does not
-            // claim rows with a broken activity_id — but it is the one place where this guard depends on
-            // shared state. If it ever fires, the fix is to assert the premise on a fresh snapshot with
-            // a retry-free, id-scoped query rather than to delete the assertion.
+            // Known residual risk (@verifier, rounds 2 and 6): this read is the only assertion in the
+            // class that depends on the WHOLE table rather than on our own ids. A live TimerScheduler of a
+            // neighbouring, fully-unparked context can CLAIM one of these foreign rows — measured:
+            // `TimerBatchProcessor : Failed to fire timer job f021c6f2… (activity d1b735ff…)`.
+            // TimerJobExecutor.fire() claims in its own transaction BEFORE firing
+            // (TimerJobExecutor.java:44), so a claimed row stays claimed and disappears from this
+            // diagnostic (it asks for `fired = false`) — narrowing the SELECT would NOT help, which is
+            // why the earlier "just snapshot by id" hint was wrong. Not reproduced as a red run in five
+            // isolated runs; the real mitigation is the cleanup: the writer is joined and every id is
+            // removed in @AfterEach.
+            //
+            // Second, deliberate cost of this test: the writer inserts ~500 due rows/s into the SHARED
+            // table for the duration of the test, and an unparked neighbour claims them and logs a
+            // per-job failure. No data is harmed (rows are removed by id afterwards), but it is noise in
+            // other logs — stated here rather than left for someone else to discover.
             List<UUID> writtenSnapshot = List.copyOf(writtenByWriter);
             assertThat(PgItIsolation.allDueTimerIds(jdbc))
                 .contains(foreignLeftover)
