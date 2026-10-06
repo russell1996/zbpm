@@ -75,7 +75,10 @@ class Perf7CriteriaTest {
         return new UiUserServiceImpl(repository, mapper, mock(PasswordHasher.class),
             mock(TokenService.class), mock(RefreshTokenRepository.class),
             passwordTokens, mock(PlatformTransactionManager.class),
-            mock(com.zorrodev.bpm.engine.service.RabbitMqProvisioningService.class));
+            mock(com.zorrodev.bpm.engine.service.RabbitMqProvisioningService.class),
+            // WO-QW-14: the REAL page-clamp helper, not a stand-in — this criteria class asserts the
+            // size clamp, and the clamp it must assert is the production implementation.
+            new com.zorrodev.bpm.engine.service.query.QueryPaginationSupport());
     }
 
     private List<UiUserEntity> threeUsers() {

@@ -102,7 +102,8 @@ class ModuleConfigImportGuardTest {
         "свойство по умолчанию false (порядок выката «сначала воркеры, потом флаг»), наш compose "
             + "включает CR-01 в true — engine и http-connector одного релиза",
         "RABBITMQ_MGMT_BASE_URL",
-        "внутри docker-сети Management API доступен по имени сервиса (http://rabbitmq:15672), "
+        "внутри docker-сети Management API доступен по имени сервиса (http://rabbitmq:15672/rabbitmq — "
+            + "путь обязателен при management.path_prefix, см. RabbitMqMgmtPathPrefixWiringGuardTest), "
             + "а умолчание файла — localhost для локального запуска вне compose");
 
     /** Модули репозитория, у которых есть {@code src/main/resources}. */

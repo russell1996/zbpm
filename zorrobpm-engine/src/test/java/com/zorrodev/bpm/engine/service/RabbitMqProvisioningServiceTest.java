@@ -332,6 +332,35 @@ class RabbitMqProvisioningServiceTest {
             .isEqualTo("https://h");
     }
 
+    /**
+     * WO-QW-12 (ДОПОЛНЕНИЕ CTO, требование 1): путь в базе переживает нормализацию
+     * ЦЕЛИКОМ, а склейка с путём Management API даёт ровно префиксованный адрес.
+     *
+     * <p>Значение — то, что теперь в {@code docker-compose.yml} и CI-стенде
+     * ({@code http://rabbitmq:15672/rabbitmq}). Проверяется не «строка не пустая», а
+     * результат склейки {@code <base> + "/api/users/x"}, потому что именно её видят
+     * вызовы {@code mgmtPut} (создание/ротация/permissions) и GET/DELETE-пути.
+     * Если бы нормализация съедала или ломала внутренний слэш, адрес уехал бы в
+     * {@code …/rabbitmq//api/users/x} или потерял бы префикс — и management-API отвечал
+     * бы 404 (fail-closed 503 на провижининге).
+     */
+    @Test
+    void normalizeBaseUrl_keepsManagementPathPrefixAndJoinsApiPathCorrectly() {
+        assertThat(RabbitMqProvisioningService.normalizeBaseUrl("http://rabbitmq:15672/rabbitmq"))
+            .as("path in base must survive normalization verbatim")
+            .isEqualTo("http://rabbitmq:15672/rabbitmq");
+        assertThat(RabbitMqProvisioningService.normalizeBaseUrl("http://rabbitmq:15672/rabbitmq/"))
+            .as("trailing slash must be trimmed, prefix kept")
+            .isEqualTo("http://rabbitmq:15672/rabbitmq");
+        assertThat(RabbitMqProvisioningService.normalizeBaseUrl("http://127.0.0.1:15673/rabbitmq/")
+                + "/api/users/qw12p")
+            .as("joined URL must be the prefixed management path the broker serves")
+            .isEqualTo("http://127.0.0.1:15673/rabbitmq/api/users/qw12p");
+        assertThat(RabbitMqProvisioningService.normalizeBaseUrl("http://127.0.0.1:15673/rabbitmq")
+                + "/api/permissions/%2F/qw12p")
+            .isEqualTo("http://127.0.0.1:15673/rabbitmq/api/permissions/%2F/qw12p");
+    }
+
     @Test
     void mgmtUrlValidator_rejectsNonHttp_unitLevel() {
         // Полное поведение валидатора (fail-fast до бинов) — в
