@@ -41,10 +41,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import java.util.HashMap;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @Service
 @Slf4j
@@ -415,6 +417,14 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     }
                 }
             }
+
+            // WO-ENG-34: record the executable constructs this engine does not implement, so deploy
+            // can refuse the model instead of running it with changed meaning. Runs at the END of
+            // parse on purpose: the flow-ref half resolves against pd.getElements(), which is only
+            // complete once every element (including sub-process bodies) has been flattened in.
+            // Recording, not throwing — models stored by an earlier release keep parsing (no runtime
+            // regression on upgrade); ProcessDefinitionServiceImpl is the single refusal point.
+            pd.setUnsupportedConstructs(BpmnSupportScanner.scan(bpmn, parsedElementIds(pd)));
 
             return pd;
         } catch (Exception e) {
@@ -1226,6 +1236,17 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         }
     }
 
+    /** WO-ENG-34: the ids the executable model can actually navigate to (sub-process bodies included). */
+    private static Set<String> parsedElementIds(com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd) {
+        Set<String> ids = new HashSet<>();
+        for (com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel element : pd.getElements()) {
+            if (element.getId() != null) {
+                ids.add(element.getId());
+            }
+        }
+        return ids;
+    }
+
     private BpmnFlowModel toFlowModel(BpmnSequenceFlowModel flow) {
         BpmnFlowModel element = new BpmnFlowModel();
         element.setFlowId(flow.getId());
@@ -1248,6 +1269,11 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             .filter(e -> e.getMessageEventDefinition()==null)
             .filter(e -> e.getTimerEventDefinition()==null)
             .filter(e -> e.getSignalEventDefinition()==null)
+            // WO-ENG-34: a conditional start is NOT a plain (none) start — counting it here spent the
+            // "at most one plain start" budget and made the error name the wrong defect. Leaving it out
+            // keeps the count honest; the model is then refused by name, with the conditional start
+            // named, in the unsupported-construct check below.
+            .filter(e -> e.getConditionalEventDefinition()==null)
             .count();
         // at most one plain (none) start is allowed; a process may instead start via message/timer/
         // signal start events, so zero plain starts is valid as long as some start event exists

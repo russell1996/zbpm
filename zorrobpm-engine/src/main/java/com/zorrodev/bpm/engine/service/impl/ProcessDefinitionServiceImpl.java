@@ -112,6 +112,37 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
                 java.util.Map.of("elementIds", missingJobIds));
         }
 
+        // WO-ENG-34: constructs the engine does not implement. The XML asked for a loop, a complex
+        // gateway, a multi-instance container, a conditional start, a second <process>, or a flow
+        // into nowhere; parsing used to drop them silently and the model then RAN with different
+        // meaning. Refused here — before the transaction below, so no version row, no stored file,
+        // no start subscription/timer job is ever created. Same answer shape as the missing-job
+        // refusal above (400 + stable code + element ids).
+        //
+        // Deliberately AFTER the missing-job check: a model can carry both defects, and the
+        // pre-existing, more specific error keeps its priority — this WO does not reorder an
+        // established contract.
+        List<com.zorrodev.bpm.engine.bpmn.model.UnsupportedBpmnConstruct> unsupported =
+            model.getUnsupportedConstructs();
+        if (unsupported != null && !unsupported.isEmpty()) {
+            var finding = unsupported.get(0);
+            // the rest is not lost, only not in the body: the API answers with ONE code + ids (the
+            // shape SERVICE_TASK_MISSING_JOB established), the log gets the complete list so a model
+            // with several defects is diagnosable server-side in one go.
+            if (unsupported.size() > 1) {
+                log.warn("WO-ENG-34: deployment of '{}' rejected for {} unsupported construct(s): {}",
+                    key, unsupported.size(),
+                    unsupported.stream()
+                        .map(f -> f.code() + "=" + f.elementIds())
+                        .toList());
+            }
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.BAD_REQUEST,
+                finding.code(),
+                finding.description(),
+                java.util.Map.of("elementIds", finding.elementIds()));
+        }
+
         // WO-REL-15 (R-05): ALL database artifacts of a deployment (version row, bpmn model/file,
         // message/signal start subscriptions, timer start jobs, element bindings) are created
         // inside ONE transaction — either everything commits or nothing does. A failure between
