@@ -32,8 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * «ошибка значения», а рассогласование ДВУХ файлов, и ни один тест его не видит —
  * compose-файлы не компилируются, контекст Spring поднимается с дефолтом из
  * properties-файла, а не из compose. Регрессия «скопировали compose-файл и забыли
- * про префикс» (ровно то, что случилось с {@code docker-compose.multi.yml} и
- * {@code ci/docker-compose.rabbit.yml}) вернулась бы молча.
+ * про префикс» вернулась бы молча.
  *
  * <p>Проверяется форма конфигурации на диске — то же, что компилятор пропускает по
  * определению (тот же приём, что в {@link ModuleConfigImportGuardTest}). Живое поведение
@@ -55,9 +54,20 @@ class RabbitMqMgmtPathPrefixWiringGuardTest {
     /** Compose-файлы, где вообще может быть объявлен base-url или смонтирован conf. */
     private static final List<String> COMPOSE_FILES = List.of(
         "docker-compose.yml",
-        "docker-compose.multi.yml",
         "ci/docker-compose.rabbit.yml",
         "ci/docker-compose.e2e.yml");
+
+    /**
+     * Soak-риг — НЕ в списке выше и не молча: это автономный файл со своим брокером
+     * БЕЗ префиксного conf.d (проверено чтением: в его `rabbitmq.volumes` нет
+     * {@code 30-management-path-prefix.conf}), поэтому его base-url без суффикса
+     * согласован с его же брокером уже сегодня. Но это та же ловушка копипаста, что
+     * закрывает этот класс: стоит долететь туда префиксному conf.d (или наоборот —
+     * base-url с суффиксом), и провижининг на soak-риге упадёт в fail-closed 503,
+     * а soak-сьют этого не заметит (он не ходит в Management API с префиксом).
+     * Отдельный тест держит файл в явном списке, а не в «не проверяем».
+     */
+    private static final String SOAK_COMPOSE = "docker-compose.multi.yml";
 
     /**
      * Ключ инварианта: {@code RABBITMQ_MGMT_BASE_URL} с любым разделителем и любым
@@ -110,6 +120,37 @@ class RabbitMqMgmtPathPrefixWiringGuardTest {
                 + "fails closed with 503; without the conf, a suffixed URL 404s immediately. "
                 + "The rabbit stand mirrors the prod broker on purpose — "
                 + "ci/docker-compose.rabbit.yml mounts the same conf.")
+            .isEmpty();
+    }
+
+    /**
+     * Soak-риг (`docker-compose.multi.yml`) — автономный compose со СВОИМ брокером:
+     * его `rabbitmq.volumes` не монтирует префиксный conf.d, и его base-url без
+     * суффикса — согласованное состояние уже сегодня (а не «забыли поправить»).
+     * Но файл в явном списке: если туда долетит префиксный conf.d без суффикса в
+     * base-url (или суффикс без conf.d), этот тест падает с указанием файла.
+     */
+    @Test
+    void soakRigBrokerAndBaseUrlStayConsistent() throws IOException {
+        String text = read(SOAK_COMPOSE);
+        assertThat(text).as(SOAK_COMPOSE + " must exist").isNotNull();
+        boolean confMounted = text.contains(PREFIX_CONF_MOUNT);
+        List<String> declaredUrls = declaredMgmtUrls(text);
+        assertThat(declaredUrls)
+            .as(SOAK_COMPOSE + " must still declare RABBITMQ_MGMT_BASE_URL, "
+                + "otherwise this test guards nothing and the drift goes silent")
+            .isNotEmpty();
+        List<String> offenders = new ArrayList<>();
+        for (String url : declaredUrls) {
+            if (confMounted != hasMgmtPathPrefix(url)) {
+                offenders.add(SOAK_COMPOSE + ": broker mounts the prefix conf = " + confMounted
+                    + ", but base-url '" + url + "' has the "
+                    + MGMT_PATH_PREFIX + " path = " + hasMgmtPathPrefix(url));
+            }
+        }
+        assertThat(offenders)
+            .as("soak rig broker and its RABBITMQ_MGMT_BASE_URL must agree (WO-QW-12): "
+                + "today both are prefix-less, which is consistent")
             .isEmpty();
     }
 
