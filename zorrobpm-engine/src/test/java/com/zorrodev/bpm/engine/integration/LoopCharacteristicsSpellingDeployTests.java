@@ -353,6 +353,48 @@ class LoopCharacteristicsSpellingDeployTests {
             .isEmpty();
     }
 
+    // ─── why the head spelling is refused even where multi-instance IS implemented ───────────
+
+    /**
+     * The factual core behind the new {@code UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE}: on the two kinds
+     * that DO implement multi-instance, the direct spelling binds the MI extension and the head
+     * spelling does not — so a model that says "one instance per item" would run exactly ONCE.
+     *
+     * <p>This used to live only in the output of a throwaway probe, which meant the claim had no
+     * home on disk: a reviewer could not reproduce it and, worse, the new error MESSAGE asserts it
+     * ("would run once instead of creating one instance per item"). Now it is asserted against the
+     * production parser, so the message cannot drift away from the behaviour.
+     *
+     * <p>Structural reason, not a coincidence: JAXB binds the MI extension by ELEMENT NAME —
+     * {@code BpmnServiceTaskModel.java:16} and {@code BpmnUserTaskModel.java:13} carry
+     * {@code @XmlElement(name = "multiInstanceLoopCharacteristics", …)} — and the only other
+     * {@code loopCharacteristics} binding in main is Zeebe's, inside {@code ExtensionElements.java:50}
+     * and bound to the Zeebe namespace. There is no binding for the abstract head element anywhere.
+     */
+    @Test
+    void theDirectSpellingBindsMultiInstance_andTheHeadSpellingDoesNot() {
+        for (String host : List.of("serviceTask", "userTask")) {
+            BpmnProcessDefinitionModel direct = bpmnParseService.parse(bpmnWith(host, directMultiInstance()));
+            BpmnProcessDefinitionModel head = bpmnParseService.parse(bpmnWith(host, headElementMultiInstance()));
+
+            assertThat(multiInstanceBound(direct, "loopTask"))
+                .as("%s + <multiInstanceLoopCharacteristics> binds the MI extension", host)
+                .isTrue();
+            assertThat(multiInstanceBound(head, "loopTask"))
+                .as("%s + <loopCharacteristics xsi:type=…> binds NOTHING — the marker is dropped, "
+                    + "which is exactly what the refusal message says", host)
+                .isFalse();
+        }
+    }
+
+    private static boolean multiInstanceBound(BpmnProcessDefinitionModel model, String elementId) {
+        return model.getElements().stream()
+            .filter(e -> elementId.equals(e.getId()))
+            .findFirst()
+            .map(e -> e.getExtensions() != null && e.getExtensions().getMultiInstanceExtension() != null)
+            .orElseThrow(() -> new AssertionError("no element " + elementId + " in the parsed model"));
+    }
+
     // ─── helpers ───────────────────────────────────────────────────────────────────────────
 
     private ApiException catchThrowableOfDeploy(String bpmn) {
