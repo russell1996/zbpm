@@ -58,9 +58,11 @@ public final class BpmnSupportScanner {
      * ({@code zorrobpm-frontend/node_modules/bpmn-moddle/resources/bpmn/xsd/Semantic.xsd}),
      * narrowed to the element names a document can actually contain:
      * <ul>
-     *   <li><b>omitted on purpose:</b> {@code activity}, {@code event}, {@code flowNode},
-     *       {@code gateway}, {@code catchEvent}, {@code throwEvent} — abstract base TYPES of the
-     *       closure, never element names, so they cannot appear in a model;</li>
+     *   <li><b>omitted on purpose:</b> every element whose XSD type is {@code abstract="true"} —
+     *       {@code activity}, {@code event}, {@code flowNode}, {@code gateway}, {@code catchEvent},
+     *       {@code throwEvent} and {@code choreographyActivity} ({@code tChoreographyActivity},
+     *       {@code Semantic.xsd:234}). They cannot appear in a document, so listing them would
+     *       contradict this rule;</li>
      *   <li><b>added beyond the XSD:</b> the {@code *StartEvent}/{@code terminateEndEvent} TAG
      *       spellings — not BPMN 2.0 elements (the XSD has only {@code startEvent}/{@code endEvent}
      *       plus the definitions), but they are what Zeebe/Camunda exports contain, and this engine's
@@ -90,7 +92,7 @@ public final class BpmnSupportScanner {
         "exclusiveGateway", "inclusiveGateway", "parallelGateway", "complexGateway",
         "eventBasedGateway",
         // choreography activities (concrete ones from the same closure)
-        "choreographyActivity", "choreographyTask", "subChoreography", "callChoreography",
+        "choreographyTask", "subChoreography", "callChoreography",
         // NOT in BPMN 2.0 XSD, but real in Zeebe/Camunda exports — see the javadoc above
         "messageStartEvent", "timerStartEvent", "signalStartEvent", "terminateEndEvent");
 
