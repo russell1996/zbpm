@@ -20,9 +20,13 @@ import org.springframework.context.annotation.PropertySource;
  * импорта это переименовало бы приложение в проде.
  *
  * <p>Соседний {@code application-prod.yml} намеренно остался под своим именем: профильный
- * документ резолвится по тому же правилу «первый на classpath», но перекрывать его нечем
- * (одноимённого файла у zorrobpm-app нет), поэтому он работает и работать продолжает — это
- * утверждение сторожевого теста {@code ModuleConfigImportGuardTest}, а не предположение.
+ * документ резолвится по тому же правилу «первый на classpath», а перекрывать его нечем
+ * (одноимённого файла у zorrobpm-app нет). Что он ЗАГРУЖАЕТСЯ, следует из этого правила Spring
+ * плюс двух проверок на диске: ресурс лежит в classpath и ни один другой модуль такого документа
+ * не заводит (обе — в {@code ModuleConfigImportGuardTest}). Отдельного теста «поднять контекст с
+ * профилем prod и прочитать ключ только из этого файла» здесь нет; если перекрытие всё же
+ * появится (например, zorrobpm-app заведёт свой {@code application-prod.yml}), это увидит
+ * {@code noTwoModulesShipTheSameProfileDocument}.
  */
 @Configuration
 @PropertySource("classpath:zorrobpm-rest.properties")
