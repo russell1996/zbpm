@@ -111,6 +111,8 @@ completion со статусом `FAILED`, а ретраи/инцидент ве
 |---|---|---|---|
 | `zorrobpm.worker.ensure-publisher-confirms` | `ZORROBPM_WORKER_ENSURE_PUBLISHER_CONFIRMS` | `true` | Входное задание ACK'ается только после того, как брокер **подтвердил** публикацию результата. Выключать стоит только осознанно: `false` возвращает старую семантику «считаем отправку успешной по синхронным исключениям». |
 | `zorrobpm.worker.completion-confirm-timeout` | `ZORROBPM_WORKER_COMPLETION_CONFIRM_TIMEOUT` | `5000` (мс) | Сколько ждать брокерский confirm. Значения **ниже 100 мс и выше 60 000 мс зажимаются** с warn'ом: первое истекало бы мгновенно на каждом задании, второе — парковало бы единственный поток потребителя (воркер вне настроек ZorroBPM идёт на дефолтах Spring, то есть concurrency 1). |
+| `zorrobpm.worker.completion-max-attempts` | `ZORROBPM_WORKER_COMPLETION_MAX_ATTEMPTS` | `10` | После стольких неудачных публикаций подряд результат паркуется в poison-очередь `zorrobpm.completion.poison` (не drop!), а вход подтверждается — основная очередь продолжает работать. Значения **ниже 1 и выше 100 зажимаются** с warn'ом. |
+| `zorrobpm.worker.completion-poison-enabled` | `ZORROBPM_WORKER_COMPLETION_POISON_ENABLED` | `true` | Парковка отравленных результатов + слушатель повтора. `false` — осознанный opt-out в старую семантику (бесконечный backoff на потоке потребителя). |
 
 > **Имя переменной обязано быть точной формой ключа в верхнем регистре** — с точками и
 > дефисами, заменёнными на подчёркивания (`zorrobpm.worker.*` → `ZORROBPM_WORKER_*`).
