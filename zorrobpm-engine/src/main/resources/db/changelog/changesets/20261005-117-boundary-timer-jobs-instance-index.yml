@@ -5,7 +5,11 @@ databaseChangeLog:
   # уникальны, и оба changeset'а отработали на живой PG 16 (см. §17.9). Но id-пространство
   # было неоднозначным: будущий changeset с id 20261005-117* в третьем файле встал бы в
   # коллизию по FILENAME и приложение не стартовало бы на Liquibase. Ветка не смержена,
-  # checksum на прод не менялся — переименование безопасно и стоит одну строку.
+  # checksum на прод не менялся — переименование стоит одну строку. ОГОВОРКА (WO-C8-35 §17.8,
+  # решение вынесено CTO, не принято исполнителем): переименование безопасно на пути «до первого
+  # применения этого changeset'а». Если changeset где-то уже применён под старым FILENAME,
+  # Liquibase переиграет его (checksum совпадает, но FILENAME в DATABASECHANGELOG другой), и
+  # упадёт h2-ветка — PG-ветка идемпотентна (CREATE INDEX CONCURRENTLY IF NOT EXISTS).
   - logicalFilePath: 20261005-117-boundary-timer-jobs-instance-index
   - changeSet:
       id: 20261005-117-boundary-timer-jobs-instance-pg

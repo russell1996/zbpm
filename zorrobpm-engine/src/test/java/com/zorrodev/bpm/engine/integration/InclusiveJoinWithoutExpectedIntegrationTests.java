@@ -173,7 +173,7 @@ class InclusiveJoinWithoutExpectedIntegrationTests {
         runtimeService.completeUserTask(taskB.getId(), List.of());
 
         assertThat(statusOf(pi, "join"))
-            .as("the REAL convergent join fired: expected=2 was written to it, not to the decoy")
+            .as("the REAL convergent join fired: it is reachable (taskB brought the second branch), the decoy is not")
             .isEqualTo(ActivityStatus.COMPLETED);
         assertThat(statusOf(pi, "endEvent")).isEqualTo(ActivityStatus.COMPLETED);
         assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
