@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_eng33_now" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-ENG-33 criterion 3: output mapping =now() on service-task completion must land
+       as an ISO-offset STRING (no Java [ZoneId] suffix), no incident, instance completes. -->
+  <bpmn:process id="test-eng33-now-output" name="test-eng33-now-output" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="srvStamp" />
+
+    <bpmn:serviceTask id="srvStamp" name="srvStamp">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="eng33-stamp" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=now()" target="started"/>
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="srvStamp" targetRef="endEvent" />
+
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

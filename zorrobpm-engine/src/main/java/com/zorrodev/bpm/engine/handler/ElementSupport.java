@@ -711,11 +711,71 @@ public class ElementSupport {
         } else if (isStructuredResult(normalized)) {
             variable.setType(ProcessVariableType.JSON);
             variable.setValue(objectMapper.writeValueAsString(toJavaStructure(normalized)));
+        } else if (normalized instanceof java.time.temporal.TemporalAccessor temporal) {
+            // WO-ENG-33: FEEL date/time-объект, дошедший досюда, сериализуем в
+            // interoperable ISO-строку с офсетом — НЕ голым toString(). У
+            // ZonedDateTime toString() даёт Java-формат с именем зоны
+            // (2026-09-30T15:49:48.966494894+05:00[Asia/Almaty]), который не
+            // парсит никто кроме Java (живой инцидент: Go-API ответило
+            // extra text: "[Asia/Almaty]"). Контракт типа НЕ меняется: всё
+            // равно STRING, меняется только содержимое для date-объектов.
+            //
+            // Слой 1 из WO (string(now()) средствами FEEL, суффикс @ZoneId) —
+            // НЕ чиним: string() исполняется ВНУТРИ feel-scala 1.19.3 (та же
+            // линия, что Camunda 8), это апстрим-паритет, руками в либу не
+            // лезем. Сюда такие значения приходят уже готовыми String и идут
+            // общим else ниже нетронутыми — специально.
+            variable.setType(ProcessVariableType.STRING);
+            variable.setValue(formatFeelDatetime(name, temporal));
         } else {
             variable.setType(ProcessVariableType.STRING);
             variable.setValue(normalized == null ? "" : normalized.toString());
         }
         return variable;
+    }
+
+    /**
+     * WO-ENG-33: ISO-сериализация FEEL date/time-объектов в STRING-переменные.
+     * {@code ZonedDateTime}/{@code OffsetDateTime} → {@code ISO_OFFSET_DATE_TIME}
+     * ({@code ...+05:00}, RFC 3339 — ест Go-layout
+     * {@code 2006-01-02T15:04:05Z07:00}); {@code Instant} → {@code ISO_INSTANT};
+     * zone-naive {@code LocalDateTime}/{@code LocalDate}/{@code LocalTime} →
+     * {@code ISO_LOCAL_*} БЕЗ офсета (зона неизвестна — честно, не выдумываем;
+     * интерпретация naive-значений в businessZone живёт в
+     * {@code computeDueAt}, здесь только формат). Неизвестный
+     * {@code TemporalAccessor} — fail-closed явным {@code EngineException}, а не
+     * молчаливый {@code toString()} с квадратными скобками: FEEL date/time
+     * отдают только типы выше (Period/Duration — вообще не TemporalAccessor),
+     * так что это охранник от будущих типов, не от текущего FEEL-набора.
+     */
+    static String formatFeelDatetime(String name, java.time.temporal.TemporalAccessor temporal) {
+        if (temporal instanceof java.time.ZonedDateTime zdt) {
+            return java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(zdt);
+        }
+        if (temporal instanceof java.time.OffsetDateTime odt) {
+            return java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME.format(odt);
+        }
+        if (temporal instanceof java.time.Instant instant) {
+            return java.time.format.DateTimeFormatter.ISO_INSTANT.format(instant);
+        }
+        if (temporal instanceof java.time.LocalDateTime ldt) {
+            return java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME.format(ldt);
+        }
+        if (temporal instanceof java.time.LocalDate ld) {
+            return java.time.format.DateTimeFormatter.ISO_LOCAL_DATE.format(ld);
+        }
+        if (temporal instanceof java.time.LocalTime lt) {
+            return java.time.format.DateTimeFormatter.ISO_LOCAL_TIME.format(lt);
+        }
+        if (temporal instanceof java.time.OffsetTime ot) {
+            // FEEL time() с зоной: toString() здесь и так ISO (15:00+05:00,
+            // без скобок) — фиксируем формат явно, инцидента нет.
+            return java.time.format.DateTimeFormatter.ISO_OFFSET_TIME.format(ot);
+        }
+        throw new com.zorrodev.bpm.contract.exception.EngineException(
+            "Variable '" + name + "' holds an unsupported date/time type "
+                + temporal.getClass().getName()
+                + " — refusing to store a non-interoperable toString() value");
     }
 
     /**
