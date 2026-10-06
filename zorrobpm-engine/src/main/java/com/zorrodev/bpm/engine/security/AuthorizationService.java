@@ -278,12 +278,16 @@ public class AuthorizationService {
         return false;
     }
 
-    /** Parses a comma-separated candidate-groups string into a trimmed, non-blank set. */
+    /**
+     * Parses a comma-separated candidate-groups string into a trimmed, non-blank set.
+     *
+     * <p>WO-IN-2 (red-team LOW-5): the body lives in {@link CandidateGroups}, because the QUERY
+     * side has to parse the very same string — a second copy of these five lines is exactly how
+     * "may I claim this task" and "which tasks concern me" drift into answering different
+     * questions (P-24). Behaviour here is unchanged: same {@link String#trim()} per element, same
+     * blank filtering.
+     */
     private static Set<String> parseCandidateGroups(String candidateGroups) {
-        if (candidateGroups == null || candidateGroups.isBlank()) return Set.of();
-        return Arrays.stream(candidateGroups.split(","))
-            .map(String::trim)
-            .filter(s -> !s.isEmpty())
-            .collect(Collectors.toSet());
+        return CandidateGroups.parse(candidateGroups);
     }
 }
