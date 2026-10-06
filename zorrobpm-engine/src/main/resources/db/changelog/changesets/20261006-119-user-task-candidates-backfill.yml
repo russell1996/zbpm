@@ -15,8 +15,9 @@ databaseChangeLog:
         Trim здесь — ТОЧНО String.trim(): режутся все символы ≤ U+0020 (пробел, \t, \n, \r,
         \f, \v и остальные управляющие), а не только пробелы, как делал бы btrim(element).
         Проверено на живой PG16 (WO-IN-3r3, Б-1): btrim(E'sales\t') оставляет 'sales\t', а
-        regexp_replace с '^[\x00-\x20]+|[\x00-\x20]+$' даёт 'sales' и режет даже chr(1)/chr(2),
-        которые класс [[:space:]] оставляет. Тест с \t/\n/\r — в UserTaskCandidatesBackfillPgIT.
+        regexp_replace с '^[\x00-\x20]+|[\x00-\x20]+$' даёт 'sales'; тот же regexp режет даже
+        chr(1)/chr(2), которые класс POSIX [[:space:]] оставляет. Тест с \t/\n/\r —
+        в UserTaskCandidatesBackfillPgIT.
         Кандидаты-ПОЛЬЗОВАТЕЛИ бэкфилля не имеют и не могут иметь: до этого changeset значения
         candidateUsers не сохранялись нигде (E-IN2-1), и легаси-данных для них не существует.
         ON CONFLICT DO NOTHING — конфликт не является ошибкой: повторный прогон (или ручной
