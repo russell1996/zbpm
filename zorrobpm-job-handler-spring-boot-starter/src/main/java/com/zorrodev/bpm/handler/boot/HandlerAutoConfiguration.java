@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.handler.boot;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.handler.JobHandler;
 import jakarta.annotation.PostConstruct;
@@ -15,6 +16,7 @@ import org.springframework.amqp.rabbit.connection.ConnectionListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Configuration;
 
@@ -30,6 +32,19 @@ public class HandlerAutoConfiguration {
     private final SimpleRabbitListenerContainerFactory connectionFactory;
     private final RabbitTemplate rabbitTemplate;
     private final AmqpAdmin amqpAdmin;
+
+    /**
+     * WO-C8-36 (CR-13): дотянуть фабрику до publisher confirms + returns.
+     * Дефолт true — воркер подтверждает вход только после надёжной публикации
+     * результата. Выключение — осознанный opt-out (старая семантика «синхронные
+     * исключения наружу, confirm не ждём»). Новых required-env нет.
+     */
+    @Value("${zorrobpm.worker.ensure-publisher-confirms:true}")
+    private boolean ensurePublisherConfirms = true;
+
+    /** WO-C8-36 (CR-13): deadline ожидания брокерского confirm на completion. */
+    @Value("${zorrobpm.worker.completion-confirm-timeout:5000}")
+    private long completionConfirmTimeoutMs = 5_000L;
 
     private ObjectMapper objectMapper;  // shared instance (CRIT-5)
 
@@ -58,9 +73,26 @@ public class HandlerAutoConfiguration {
         }
     }
 
+    /**
+     * Reader тела входящего задания.
+     *
+     * <p>WO-C8-36 (H-1): {@code FAIL_ON_UNKNOWN_PROPERTIES} по умолчанию true,
+     * то есть СТАРЫЙ воркер роняет десериализацию на любом поле, добавленном
+     * движком в новой версии, а {@code onMessage} на этой ошибке делает чистый
+     * возврат — то есть AUTO-ack: задание теряется навсегда, без redelivery.
+     * Апгрейд движка раньше воркеров (штатный rolling order) превращался в
+     * ПОТЕРЮ ВСЕХ заданий. Поэтому reader толерантен к незнакомым полям, а
+     * второй слой — {@code @JsonIgnoreProperties(ignoreUnknown=true)} на DTO
+     * exchange — спасает даже чужой строгий reader.
+     */
+    static ObjectMapper createJobBodyReader() {
+        return new ObjectMapper()
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    }
+
     @PostConstruct
     public void init() {
-        this.objectMapper = new ObjectMapper();
+        this.objectMapper = createJobBodyReader();
         Map<String, JobHandler> handlersMap = applicationContext.getBeansOfType(JobHandler.class);
         log.info("Found {} handlers", handlersMap.size());
 
@@ -75,6 +107,46 @@ public class HandlerAutoConfiguration {
                 converter.getJavaTypeMapper());
         connectionFactory.setMessageConverter(converter);
         rabbitTemplate.setMessageConverter(converter);
+
+        // WO-C8-36 (CR-13): ACK входа завязывается на confirm публикации
+        // результата (см. JobCompletionListener.sendCompletion): фабрика — в
+        // CORRELATED + returns, шаблон — mandatory + returns-callback движка
+        // воркера (unroutable → исключение, не тихий confirm ack=true).
+        // Действует только на mandatory-публикации этого стартера (completion);
+        // чужие sends через тот же бин семантически не меняются (returns без
+        // callback раньше тоже никуда не девались — их просто никто не читал).
+        if (ensurePublisherConfirms) {
+            // CF — из шаблона (у фабрики контейнеров публичного геттера нет),
+            // шаблон и контейнеры делят одну и ту же фабрику соединения.
+            org.springframework.amqp.rabbit.connection.ConnectionFactory cf =
+                rabbitTemplate.getConnectionFactory();
+            if (cf instanceof CachingConnectionFactory cachingCf) {
+                cachingCf.setPublisherConfirmType(CachingConnectionFactory.ConfirmType.CORRELATED);
+                cachingCf.setPublisherReturns(true);
+            } else {
+                log.warn("WO-C8-36: publisher confirms requested but connection factory is {} "
+                    + "(not caching) — completions fall back to sync-exceptions-only",
+                    cf == null ? "null" : cf.getClass().getSimpleName());
+            }
+            rabbitTemplate.setMandatory(true);
+            // ReturnsCallback нужен ТОЛЬКО для наблюдаемости (warn в лог). Решение
+            // «считать ли отправку доставленной» принимает сам воркер по
+            // CorrelationData.getReturned() (см. JobCompletionListener.sendCompletion)
+            // — это не зависит от чужого callback на шаблоне, поэтому составной
+            // контекст (чужой callback уже стоял) больше не деградирует проверку.
+            // Обратный контур: повторный set на том же шаблоне = IllegalState,
+            // init() в составных контекстах вызывается повторно — молча пропускаем.
+            try {
+                rabbitTemplate.setReturnsCallback(returned -> log.warn(
+                    "Completion returned as unroutable: replyCode={}, replyText={}, exchange={}, routingKey={}",
+                    returned.getReplyCode(), returned.getReplyText(),
+                    returned.getExchange(), returned.getRoutingKey()));
+            } catch (IllegalStateException someoneElsesCallback) {
+                log.warn("WO-C8-36: RabbitTemplate already has a returns callback "
+                    + "(not ours) — keeping it; delivery decision does not depend on it: {}",
+                    someoneElsesCallback.getMessage());
+            }
+        }
 
         for (Map.Entry<String, JobHandler> entry : handlersMap.entrySet()) {
             JobHandler handler = entry.getValue();
@@ -105,8 +177,12 @@ public class HandlerAutoConfiguration {
             log.info("Subscribing to {}", queueName);
             // WO-REL-36: вся логика — в JobCompletionListener (разделение ошибок +
             // идемпотентная переотправка); здесь только wiring.
-            container.setMessageListener(
-                new JobCompletionListener(handler, rabbitTemplate, objectMapper, queueName));
+            // WO-C8-36: confirm-настройки listener'а — из тех же пропертей, что выше.
+            JobCompletionListener jobListener =
+                new JobCompletionListener(handler, rabbitTemplate, objectMapper, queueName);
+            jobListener.setEnsurePublisherConfirms(ensurePublisherConfirms);
+            jobListener.setConfirmTimeoutMs(completionConfirmTimeoutMs);
+            container.setMessageListener(jobListener);
             container.start();
         }
 

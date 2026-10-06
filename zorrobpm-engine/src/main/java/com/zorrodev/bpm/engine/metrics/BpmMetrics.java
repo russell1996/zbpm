@@ -7,6 +7,9 @@ import io.micrometer.core.instrument.Timer;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -71,7 +74,27 @@ public class BpmMetrics {
     private final Timer timerLag;
 
     // --- Activity transitions (WO-QW-2) ---
-    private final Counter activityTransitionIgnored;
+    // WO-C8-36 (F-5): счётчик ОДИН на причину, а не один на всё. РаньшеMeter с
+    // жёстким .tag("reason","stale_status") принимал ещё и stale_phase, и
+    // duplicate_completion, то есть в Prometheus phased-игноры и отказы дедупа были
+    // неотличимы от stale_status — а счётчик добавлен именно затем, чтобы оператор
+    // ВИДЕЛ причину (E-3a).
+    private final Map<String, Counter> activityTransitionIgnoredByReason;
+
+    /** Известные причины игнора перехода. Неизвестные — по-прежнему не считаются. */
+    static final List<String> ACTIVITY_TRANSITION_IGNORE_REASONS =
+        List.of("stale_status", "stale_phase", "duplicate_completion", "legacy_null_phase");
+
+    /**
+     * WO-C8-36 (M-3): сколько completion'ов пришло БЕЗ идентификатора вызова
+     * (legacy-путь). Fail-open семантика на legacy-пути принята CTO осознанно
+     * (E-3) как совместимость со старыми воркерами, но «принято как риск» и
+     * «невидимо» — разные вещи: без счётчика во время rolling-обновления
+     * нельзя измерить, сколько трафика идёт вне защиты CR-01, и отличить
+     * намеренный обход от обычного REST-трафика. Именно эту невидимость
+     * закрывает счётчик (плюс WARN на каждый legacy-проход).
+     */
+    private final Counter legacyUnphasedCompletion;
 
     // --- SSE bridge (WO-REL-56, part B) ---
     private final Counter sseForeignSequenceDropped;
@@ -190,10 +213,23 @@ public class BpmMetrics {
         // WO-QW-2: idempotent status-guard no-ops in CompletionService
         // (duplicate/late completions). Counter with a reason tag so future
         // ignore-reasons can reuse the same meter.
-        this.activityTransitionIgnored = Counter.builder("zbpm.activity.transition.ignored")
-            .description("Activity completions ignored by the idempotent status guard")
-            .tag("reason", "stale_status")
+        this.legacyUnphasedCompletion = Counter.builder("zbpm.completion.legacy.unphased")
+            .description("WO-C8-36 (M-3): service-task completions accepted on the legacy "
+                + "null-dispatchPhase path (no call identifier — old worker or REST). "
+                + "These are OUTSIDE the CR-01 exact-match guard by construction (E-3).")
             .register(registry);
+
+        // WO-C8-36 (F-5): по счётчику на причину — тег перестаёт врать.
+        Map<String, Counter> ignoredByReason = new LinkedHashMap<>();
+        for (String reason : ACTIVITY_TRANSITION_IGNORE_REASONS) {
+            ignoredByReason.put(reason, Counter.builder("zbpm.activity.transition.ignored")
+                .description("Activity completions ignored by the idempotent status/phase guard. "
+                    + "One series per reason — a shared 'stale_status' tag made phased-ignores "
+                    + "and dedup rejections indistinguishable from it.")
+                .tag("reason", reason)
+                .register(registry));
+        }
+        this.activityTransitionIgnoredByReason = Map.copyOf(ignoredByReason);
 
         // WO-REL-56 (part B): foreign sequence dropped, visible to the
         // operator instead of silently skipped (pre-REL-55 behavior was a
@@ -249,11 +285,30 @@ public class BpmMetrics {
     public void setFeedAgeMaxSeconds(long seconds) { feedAgeMaxSeconds.set(seconds); }
     public void recordFeedAssignDuration(Duration duration) { feedAssignDuration.record(duration); }
 
-    // --- Activity transitions (WO-QW-2) ---
+    /**
+     * WO-C8-36 (M-3): legacy-проход без идентификатора вызова. Считает и
+     * fail-open путь (совместимость), и осознанный обход защиты CR-01 — их
+     * различает уж вызывающий код, а не метрика.
+     */
+    public void legacyUnphasedCompletion() {
+        legacyUnphasedCompletion.increment();
+    }
+
+    // --- Activity transitions (WO-QW-2 + WO-C8-36 F-5) ---
+    /**
+     * Причины: {@code stale_status} (WO-QW-2 — активность уже в терминальном
+     * статусе), {@code stale_phase} (не тот индекс/фаза вызова), {@code
+     * duplicate_completion} (тот же {@code completionId} уже обработан — durable
+     * дедуп H-2), {@code legacy_null_phase} (сообщение без идентификатора вызова,
+     * fail-open путь E-3). Каждая — ОТДЕЛЬНАЯ серия: общий счётчик с одним тегом
+     * делал три разные причины неразличимыми, а счётчик добавлен именно ради
+     * видимости причины.
+     */
     public void activityTransitionIgnored(String reason) {
-        // Single pre-registered reason tag today ("stale_status"); the parameter
-        // keeps the call-site honest if a second reason ever appears.
-        if ("stale_status".equals(reason)) activityTransitionIgnored.increment();
+        Counter counter = activityTransitionIgnoredByReason.get(reason);
+        if (counter != null) {
+            counter.increment();
+        }
     }
 
     // --- SSE bridge (WO-REL-56, part B) ---

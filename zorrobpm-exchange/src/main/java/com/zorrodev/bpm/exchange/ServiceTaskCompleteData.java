@@ -27,4 +27,22 @@ public class ServiceTaskCompleteData {
      * MDC on the completion path — no DB read per completion just for logging.
      */
     private String processInstanceId;
+    /**
+     * WO-C8-36 (CR-01): эхо {@code dispatchPhase} входящего задания (nullable —
+     * null у старых воркеров, движок трактует как legacy без проверки).
+     */
+    private String dispatchPhase;
+    /**
+     * WO-C8-36 (CR-01): эхо {@code dispatchIndex} входящего задания (nullable).
+     */
+    private Integer dispatchIndex;
+    /**
+     * WO-C8-36 (red-team HOLD-1): идентификатор КОНКРЕТНОЙ отправки результата
+     * (per-send UUID воркера, стабилен на redelivery из resultCache — та же
+     * отправка переигрывается, а не новая). Движок дедуплицирует FAILED-дубликаты
+     * ОТКРЫТОЙ фазы по нему (иначе confirm-loss переотправка дважды расходовала
+     * бы бюджет одного логического сбоя). Nullable — null у старых воркеров
+     * (дедуп невозможен, legacy без проверки).
+     */
+    private String completionId;
 }

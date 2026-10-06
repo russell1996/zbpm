@@ -165,7 +165,11 @@ public class ActivityServiceImplTests {
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.AdHocSubProcessHandler.class),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.IncidentService.class),
             org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class),
-            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.metrics.BpmMetrics.class));
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.metrics.BpmMetrics.class),
+            // WO-C8-36 (H-2): durable-дедуп (последний ctor-arg). Здесь мок —
+            // этот юнит не про дедуп, а claim() на нём всё равно true (маркер
+            // наш), поведение проверяет PG-IT на реальной БД.
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.service.CompletionDedupStore.class));
         try {
             var csField = ActivityServiceImpl.class.getDeclaredField("completionService");
             csField.setAccessible(true);

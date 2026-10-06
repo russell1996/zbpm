@@ -113,7 +113,8 @@ class RuntimeServiceImplTest {
         IdDTO result = runtimeService.completeServiceTask(id, vars);
 
         assertThat(result.getId()).isEqualTo(id);
-        verify(activityService).completeServiceTask(id, vars);
+        // WO-C8-36: плоский делегат — в 4-arg с null-фазой (legacy без проверки).
+        verify(activityService).completeServiceTask(id, vars, null, null);
     }
 
     @Test

@@ -41,8 +41,11 @@ public class ServiceTaskCompleteListener {
         UUID serviceTaskId = serviceTaskCompleted.getServiceTaskId();
 
         // a worker reports failure via status="FAILED" -> retries/incident, otherwise it completes the task
+        // WO-C8-36 (CR-01): идентификатор вызова — в перегрузки (null = legacy без проверки).
         if ("FAILED".equalsIgnoreCase(serviceTaskCompleted.getStatus())) {
-            runtimeService.failServiceTask(serviceTaskId, serviceTaskCompleted.getErrorMessage(), null);
+            runtimeService.failServiceTask(serviceTaskId, serviceTaskCompleted.getErrorMessage(), null,
+                serviceTaskCompleted.getDispatchPhase(), serviceTaskCompleted.getDispatchIndex(),
+                serviceTaskCompleted.getCompletionId());
             return;
         }
 
@@ -67,7 +70,8 @@ public class ServiceTaskCompleteListener {
         // RuntimeException идёт прежним путём (транзакция откатывается,
         // контейнер решает по общей политике, без новой семантики здесь).
         try {
-            runtimeService.completeServiceTask(serviceTaskId, variables);
+            runtimeService.completeServiceTask(serviceTaskId, variables,
+                serviceTaskCompleted.getDispatchPhase(), serviceTaskCompleted.getDispatchIndex());
         } catch (com.zorrodev.bpm.engine.service.ScriptOverloadException overloaded) {
             log.info("Service task {} completion deferred: FEEL pool overloaded, "
                 + "container retry will redeliver (retry-after ~{}s)",

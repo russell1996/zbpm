@@ -11,6 +11,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.dto.Activity;
 import com.zorrodev.bpm.engine.dto.Token;
+import com.zorrodev.bpm.exchange.ServiceTaskDispatchPhase;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.metrics.BpmMetrics;
@@ -55,6 +56,18 @@ public class CompletionService {
     private final IncidentService incidentService;
     private final tools.jackson.databind.ObjectMapper objectMapper;
     private final BpmMetrics bpmMetrics;
+
+    /**
+     * WO-C8-36 (H-2): durable-дедуп отправок в {@code completion_dedup} — в БД, а не
+     * в памяти JVM (in-memory не работал при N&gt;1 репликах, см. javadoc стора).
+     */
+    private final com.zorrodev.bpm.engine.service.CompletionDedupStore completionDedupStore;
+
+    // Раунд 4 (F-8): поля completionDedupTtlSeconds здесь больше НЕТ. Оно
+    // передавалось в claim(completionId, ttlSeconds), а параметр не читался —
+    // время жизни маркера задаёт порасписание CompletionDedupCleanupJob. Поле с
+    // javadoc «совпадает с TTL-очисткой» выглядело как носительство инварианта,
+    // которого нет; оставлять его — мина под следующую правку захвата (P-14).
 
     /**
      * WO-C8-25 (extends WO-C8-24): element kinds whose jobs never live in
@@ -394,19 +407,48 @@ public class CompletionService {
      * WITHOUT moving the token. Only the real job's completion follows the path below.
      */
     public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
+        completeServiceTask(serviceTaskId, variables, null, null, null, executor);
+    }
+
+    public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables,
+            String dispatchPhase, Integer dispatchIndex, TokenExecutor executor) {
+        completeServiceTask(serviceTaskId, variables, dispatchPhase, dispatchIndex, null, executor);
+    }
+
+    /**
+     * WO-C8-36 (CR-01): тот же complete с идентификатором вызова из сообщения
+     * воркера. Null-фаза = legacy без проверки (старый воркер/REST). Не-null фаза =
+     * exact-match: принимается ТОЛЬКО результат ожидаемого вызова, дубликат/
+     * устаревший игнорятся ДО переменных/ретраев/переходов и НИКОГДА не падают
+     * в хвост чужой фазы (fail-closed; legacy остаётся fail-open — см. отчёт).
+     *
+     * <p>WO-C8-36 (red-team HOLD-1): {@code completionId} на SUCCESS-пути НЕ
+     * используется — дедуп там не нужен (первый результат закрывает фазу,
+     * повтор отсекает exact-match по фазе, см. {@link #completePhased}). Параметр
+     * оставлен в сигнатуре, чтобы phased-вызовы имели единый набор
+     * идентификаторов вызова; мёртвый параметр удалён бы в отдельном WO по P-14.
+     * Дедуп FAILED-дубликатов — в {@link #failServiceTask}.
+     */
+    public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables,
+            String dispatchPhase, Integer dispatchIndex, String completionId, TokenExecutor executor) {
         if (resumeElementListenerPhase(serviceTaskId, variables, executor)) {
             return;
         }
-        completeServiceTaskInner(serviceTaskId, variables, executor);
-    }
-
-    private void completeServiceTaskInner(UUID serviceTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
+        if (ServiceTaskDispatchPhase.ELEMENT_START.equals(dispatchPhase)) {
+            // Фазовая отправка, а PK-фазы уже нет (удалена после incident-exhaustion —
+            // см. ElementListenerPhaseService.failPhaseListener): инцидент владеет
+            // токеном, поздний SUCCESS воскрешать ничего не должен. Игнор вместо
+            // orElseThrow лока ниже.
+            log.info("Ignoring completion of element-listener phase {} with no phase row", serviceTaskId);
+            bpmMetrics.activityTransitionIgnored("stale_phase");
+            return;
+        }
         Activity activity = elementSupport.lockInstanceFirst(serviceTaskId);
         // WO-REL-59: тот же единый порядок instance→activity, что в
         // completeUserTask выше (сериализация с cancel; см. комментарий выше).
         // Phase-resume выше лока осознанно: у phase-job нет activity-строки
         // (lock ниже orElseThrow — см. C8-25).
-        if (!isCompletionAllowed(serviceTaskId, activity)) {
+        if (!isCompletionAllowed(serviceTaskId, activity, dispatchPhase)) {
             return;
         }
         UUID processInstanceId = activity.getProcessInstanceId();
@@ -416,6 +458,40 @@ public class CompletionService {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(processInstance.getProcessDefinitionId());
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
+        if (dispatchPhase != null) {
+            completePhased(serviceTaskId, variables, dispatchPhase, dispatchIndex, completionId,
+                processInstanceId, tokenId, bpmn, bpmnElement, activity, executor);
+            return;
+        }
+
+        // WO-C8-36 (red-team HOLD-2 — ОТКАЧЕНО, см. отчёт §HOLD-2): null-phase
+        // при открытой фазе шёл в игнор, но это сломало 29 существующих тестов —
+        // плоский вызов с открытыми фазами является легальным REST-путём
+        // (оператор подтверждает текущий шаг фазы) и путём старых воркеров.
+        // Менять семантику REST в этом WO нельзя (V7/scope) — legacy-цепочка
+        // без изменений. Защита CR-01 действует на phased-сообщения нового
+        // воркера; смешанные версии — остаточный риск с flag-day планом.
+        //
+        // WO-C8-36 (M-3): принятый риск обязан быть ИЗМЕРИМ. Счётчик + WARN на
+        // каждый legacy-проход: без них во время rolling-обновления нельзя
+        // оценить долю трафика вне защиты CR-01 и отличить намеренный обход
+        // (flag-day) от обычного REST-трафика. Семантика при этом НЕ меняется.
+        bpmMetrics.legacyUnphasedCompletion();
+        log.warn("WO-C8-36: service-task completion {} accepted WITHOUT call identifier "
+                + "(dispatchPhase=null) — legacy fail-open path, CR-01 exact-match guard "
+                + "does NOT apply (old worker or REST caller)",
+            serviceTaskId);
+        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn, bpmnElement, activity, executor);
+    }
+
+    /**
+     * WO-C8-36 (CR-01): legacy-цепочка completeServiceTask — побайтово вынесена из
+     * метода выше (нулевой diff поведения). Сюда же делегирует phased-путь для
+     * {@code real} при закрытых фазах (все фазовые ветки при этом no-op).
+     */
+    private void completeLegacyChain(UUID serviceTaskId, List<ProcessVariable> variables,
+            UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
+            BpmnElementModel bpmnElement, Activity activity, TokenExecutor executor) {
         if (handleCreatingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity)) {
             return;
         }
@@ -451,10 +527,203 @@ public class CompletionService {
     }
 
     /**
+     * WO-C8-36 (CR-01): phased-маршрутизация completion. Вызывается ПОСЛЕ лока
+     * (instance→activity) и статус-гарда — конкурентные дубликаты сериализуются
+     * локом, второй видит уже продвинутую фазу и глохнет. Совпадение — СТРОГОЕ
+     * равенство текущей фазовой колонки с (phase,index) из сообщения; любое
+     * несовпадение (дубликат закрытой фазы, устаревший индекс, чужой мусор) —
+     * игнор БЕЗ fall-through в хвост (именно он и был дефектом CR-01).
+     *
+     * <p>При совпадении — делегация в существующую handle-ветку (она перечитывает
+     * ту же колонку и находит её in-range, тело мутации общее, дублирования нет).
+     *
+     * <p><b>Возврат обработчика больше НЕ выбрасывается (WO-C8-36 H-3).</b> exact-match
+     * выполнен, а обработчик всё равно может вернуть {@code false}: индекс оказался ВНЕ
+     * диапазона новой модели (модель передеплоена без этого слушателя, пока воркер
+     * отвечает) либо объявление фазы исчезло совсем. На этом месте legacy-цепочка
+     * fall-through'ит дальше (fail-open, «completes and moves the token» — комментарий
+     * {@code handleStartListeners}), и расхождение фазовой семантики с legacy было бы
+     * ровно тем тихим зависанием, которое описал red-team: ни переменных, ни
+     * {@code completeActivity}/{@code proceedToOutgoing}, ни лога, ни метрики, токен
+     * паркован навсегда. Поэтому {@code false} = «продолжить по-legacy», а не возврат.
+     *
+     * <p>Почему именно {@link #completeLegacyChain}, а не прямой
+     * {@code finishServiceTaskCompletion} (как в ветке END):
+     * <ul>
+     *   <li>для START ветка END недостижима — там {@code false} это «последний
+     *       end-listener отработал, иди в хвост» с УЖЕ очищенной колонкой, повторный
+     *       проход переоткрыл бы end-фазу (поймано живьём, комментарий в её ветке);</li>
+     *   <li>для user-task фаз прямой хвост недопустим вовсе: у user-task нет строки
+     *       {@code service_tasks}, {@code dbService.completeServiceTask} упал бы
+     *       orElseThrow, тогда как legacy молча уходит в
+     *       {@code rejectPhaseOnlyCompletion} (USER_TASK в PHASE_ONLY_ELEMENT_TYPES);</li>
+     *   <li>в остальном полный проход — это буквально тот же путь, который проходит
+     *       legacy на том же входе, включая открытие end-фазы у START.</li>
+     * </ul>
+     * Повторный вызов упавшего обработчика безвреден: вернуть {@code false} он может
+     * только на ветке, которая НИЧЕГО не мутирует (все мутации — в in-range ветках,
+     * вернувших {@code true}).
+     */
+    private void completePhased(UUID serviceTaskId, List<ProcessVariable> variables,
+            String dispatchPhase, Integer dispatchIndex, String completionId,
+            UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
+            BpmnElementModel bpmnElement, Activity activity, TokenExecutor executor) {
+        switch (dispatchPhase) {
+            case ServiceTaskDispatchPhase.START -> {
+                Integer pending = dbService.getServiceTaskPendingListenerIndex(serviceTaskId);
+                if (pending != null && pending.equals(dispatchIndex)) {
+                    if (!handleStartListeners(serviceTaskId, variables, processInstanceId, tokenId,
+                            bpmnElement, activity)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
+                } else {
+                    ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                }
+            }
+            case ServiceTaskDispatchPhase.END -> {
+                Integer pending = dbService.getServiceTaskPendingEndListenerIndex(serviceTaskId);
+                if (pending != null && pending.equals(dispatchIndex)) {
+                    // Последний end-listener падает в хвост: handleEndListeners
+                    // чистит индекс и возвращает false (= "иди в хвост") — но
+                    // хвост здесь НЕ вся legacy-цепочка (она переоткрыла бы
+                    // end-фазу: индекс уже null — поймано живьём, двойное
+                    // "Real job done, opening end-listener phase"), а ПРЯМО
+                    // finishServiceTaskCompletion, как падает legacy-хвост.
+                    if (!handleEndListeners(serviceTaskId, variables, processInstanceId, tokenId,
+                            bpmnElement, activity)) {
+                        finishServiceTaskCompletion(serviceTaskId, variables, processInstanceId, tokenId,
+                            bpmn, bpmnElement, activity, executor);
+                    }
+                } else {
+                    ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                }
+            }
+            case ServiceTaskDispatchPhase.CREATING -> {
+                Integer pending = dbService.getPendingCreatingListenerIndex(serviceTaskId);
+                if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
+                    if (!handleCreatingListeners(serviceTaskId, variables, processInstanceId, tokenId,
+                            bpmnElement, activity)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
+                } else {
+                    ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                }
+            }
+            case ServiceTaskDispatchPhase.COMPLETING -> {
+                Integer pending = dbService.getPendingCompletingListenerIndex(serviceTaskId);
+                if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
+                    if (!handleCompletingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
+                } else {
+                    ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                }
+            }
+            case ServiceTaskDispatchPhase.ASSIGNING -> {
+                Integer pending = dbService.getPendingAssigningListenerIndex(serviceTaskId);
+                if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
+                    if (!handleAssigningListeners(serviceTaskId, variables, processInstanceId, tokenId,
+                            bpmnElement, activity)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
+                } else {
+                    ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                }
+            }
+            case ServiceTaskDispatchPhase.UPDATING -> {
+                Integer pending = dbService.getPendingUpdatingListenerIndex(serviceTaskId);
+                if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
+                    if (!handleUpdatingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement,
+                            activity, executor)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
+                } else {
+                    ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                }
+            }
+            case ServiceTaskDispatchPhase.CANCELING -> {
+                Integer pending = dbService.getPendingCancelingListenerIndex(serviceTaskId);
+                if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
+                    if (!handleCancelingListeners(serviceTaskId, processInstanceId, tokenId, bpmn, bpmnElement,
+                            activity, executor)) {
+                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                            bpmnElement, activity, executor);
+                    }
+                } else {
+                    ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                }
+            }
+            case ServiceTaskDispatchPhase.REAL -> {
+                if (allListenerPhasesClosed(serviceTaskId, bpmnElement)) {
+                    // Ни одна фаза не открыта — все фазовые ветки legacy-цепочки
+                    // no-op, end-фаза при её наличии откроется штатно, затем хвост.
+                    completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                        bpmnElement, activity, executor);
+                } else {
+                    ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, null);
+                }
+            }
+            default ->
+                // Неизвестная фаза (будущий продюсер) — fail-closed игнор, не падение.
+                ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, null);
+        }
+    }
+
+    /**
+     * WO-C8-36: все ли фазовые колонки закрыты (зеркало чтения enqueue-штампа —
+     * читается только то, что элемент декларирует, как и везде в этом файле).
+     */
+    private boolean allListenerPhasesClosed(UUID serviceTaskId, BpmnElementModel bpmnElement) {
+        if (!elementSupport.userTaskCreatingListeners(bpmnElement).isEmpty()
+            && dbService.getPendingCreatingListenerIndex(serviceTaskId) != null) {
+            return false;
+        }
+        if (!elementSupport.userTaskCompletingListeners(bpmnElement).isEmpty()
+            && dbService.getPendingCompletingListenerIndex(serviceTaskId) != null) {
+            return false;
+        }
+        if (!elementSupport.userTaskAssigningListeners(bpmnElement).isEmpty()
+            && dbService.getPendingAssigningListenerIndex(serviceTaskId) != null) {
+            return false;
+        }
+        if (!elementSupport.userTaskUpdatingListeners(bpmnElement).isEmpty()
+            && dbService.getPendingUpdatingListenerIndex(serviceTaskId) != null) {
+            return false;
+        }
+        if (!elementSupport.userTaskCancelingListeners(bpmnElement).isEmpty()
+            && dbService.getPendingCancelingListenerIndex(serviceTaskId) != null) {
+            return false;
+        }
+        if (!elementSupport.serviceTaskStartListeners(bpmnElement).isEmpty()
+            && dbService.getServiceTaskPendingListenerIndex(serviceTaskId) != null) {
+            return false;
+        }
+        if (!elementSupport.serviceTaskEndListeners(bpmnElement).isEmpty()
+            && dbService.getServiceTaskPendingEndListenerIndex(serviceTaskId) != null) {
+            return false;
+        }
+        return true;
+    }
+
+    /** WO-C8-36: единый игнор устаревшего/дубликатного completion (лог + метрика, без эффекта). */
+    private void ignoreStaleCompletion(UUID serviceTaskId, String dispatchPhase, Integer dispatchIndex,
+            Integer pending) {
+        log.info("Ignoring stale/duplicate completion of service task {} (phase={}, index={}, pending={})",
+            serviceTaskId, dispatchPhase, dispatchIndex, pending);
+        bpmMetrics.activityTransitionIgnored("stale_phase");
+    }
+
+    /**
      * WO-DEBT-6 S1: status guard of {@link #completeServiceTask} (WO-C8-28).
      * Extracted byte-identical except mechanical return plumbing. Returns true when the completion may proceed.
      */
-    private boolean isCompletionAllowed(UUID serviceTaskId, Activity activity) {
+    private boolean isCompletionAllowed(UUID serviceTaskId, Activity activity, String dispatchPhase) {
         if (activity.getStatus() != ActivityStatus.CREATED && activity.getStatus() != ActivityStatus.IN_PROGRESS) {
             // WO-C8-28: a CANCELLED activity with an open canceling phase is NOT done —
             // its listener completions must reach the canceling branch below (the phase
@@ -468,7 +737,13 @@ public class CompletionService {
                 // (ERROR) that was superseded by incident-resolve re-execution.
                 log.info("Ignoring completion of service task {} in status {}", serviceTaskId, activity.getStatus());
                 // WO-QW-2: observability for the idempotent guard above (log level + no-op unchanged).
-                bpmMetrics.activityTransitionIgnored("stale_status");
+                // WO-C8-36 (F-5): тег причины РАЗДЕЛЁН — игнор без идентификатора
+                // вызова (legacy fail-open путь, dispatchPhase == null) иначе неотличим
+                // от игнора phased-сообщения, хотя у первого нет защиты CR-01 вовсе.
+                // Это тот же объект «принято осознанным риском» (E-3), но измеряемый:
+                // E-3a обязан быть виден по метрике, а не только по WARN в логе.
+                bpmMetrics.activityTransitionIgnored(dispatchPhase == null
+                    ? "legacy_null_phase" : "stale_status");
                 return false;
             }
         }
@@ -1143,18 +1418,56 @@ public class CompletionService {
      * {@code ActivityServiceImpl.failServiceTask}, which passes {@code this}.
      */
     public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries) {
-        failServiceTask(serviceTaskId, errorMessage, retries, null);
+        failServiceTask(serviceTaskId, errorMessage, retries, null, null, null);
     }
 
+    /**
+     * WO-C8-34 (CR-06, red-team B2): overload без идентификатора вызова, но с executor'ом —
+     * {@code ActivityServiceImpl.failServiceTask} (legacy/REST-путь) едет через него.
+     */
     public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries, TokenExecutor executor) {
-        // WO-C8-34 (CR-06, red-team B2): the executor travels as a parameter, not a
-        // thread-local — releasing a parked thrower has to continue its outgoing flow.
-        failServiceTaskInner(serviceTaskId, errorMessage, retries, executor);
+        failServiceTask(serviceTaskId, errorMessage, retries, null, null, null, executor);
     }
 
-    private void failServiceTaskInner(UUID serviceTaskId, String errorMessage, Integer retries,
-            TokenExecutor executor) {
+    public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries,
+            String dispatchPhase, Integer dispatchIndex) {
+        failServiceTask(serviceTaskId, errorMessage, retries, dispatchPhase, dispatchIndex, null);
+    }
+
+    /**
+     * WO-C8-36 (CR-01, крит.2): тот же fail с идентификатором вызова.
+     * Null-фаза = legacy без проверки. Не-null фаза = exact-match: бюджет трогает
+     * ТОЛЬКО FAILED ожидаемого вызова; устаревшая FAILED чужой (уже закрытой)
+     * фазы игнорятся и НЕ расходуют бюджет нового вызова.
+     *
+     * <p>WO-C8-36 (red-team HOLD-1): {@code completionId} — дедуп дубликатов
+     * ОТКРЫТОЙ фазы (confirm-loss переотправка той же отправки). Первый FAILED
+     * с этим id обрабатывается (бюджет −1, редispatch), повтор с тем же id —
+     * игнор. Null = legacy без дедупа.
+     *
+     * <p>Executor едет параметром (WO-C8-34 CR-06 red-team B2): thread-local тут
+     * не возвращаем — тихий {@code null} при смене пути оставил бы паркованный
+     * thrower ждать вечно.
+     */
+    public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries,
+            String dispatchPhase, Integer dispatchIndex, String completionId) {
+        failServiceTask(serviceTaskId, errorMessage, retries, dispatchPhase, dispatchIndex, completionId, null);
+    }
+
+    /**
+     * Единственная рабочая точка входа: идентификатор вызова и executor — параметрами.
+     * Видна {@code ActivityServiceImpl} (другой пакет) — он и есть прод-путь fail.
+     */
+    public void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries,
+            String dispatchPhase, Integer dispatchIndex, String completionId, TokenExecutor executor) {
         if (failElementListenerPhase(serviceTaskId, errorMessage, retries)) {
+            return;
+        }
+        if (ServiceTaskDispatchPhase.ELEMENT_START.equals(dispatchPhase)) {
+            // PK-фазы уже нет (см. комментарий в completeServiceTask выше) —
+            // игнор вместо orElseThrow лока ниже.
+            log.info("Ignoring failure of element-listener phase {} with no phase row", serviceTaskId);
+            bpmMetrics.activityTransitionIgnored("stale_phase");
             return;
         }
         // WO-REL-63: instance-lock ПЕРВЫМ (единый порядок захвата, см.
@@ -1164,7 +1477,133 @@ public class CompletionService {
             return;
         }
         String message = (errorMessage == null || errorMessage.isBlank()) ? "Service task failed" : errorMessage;
+        if (dispatchPhase != null) {
+            failPhased(serviceTaskId, message, retries, dispatchPhase, dispatchIndex, completionId, activity,
+                executor);
+            return;
+        }
+        // WO-C8-36 (red-team HOLD-2 — ОТКАЧЕНО, см. комментарий в completeServiceTask
+        // выше): null-phase FAILED идёт legacy-хвостом без изменений — shared-budget
+        // дизайн (WO-C8-21r2) и REST-семантика сохранены.
+        // WO-C8-36 (M-3): видимость та же, что у completion — счётчик + WARN.
+        bpmMetrics.legacyUnphasedCompletion();
+        log.warn("WO-C8-36: service-task failure {} accepted WITHOUT call identifier "
+                + "(dispatchPhase=null) — legacy fail-open path, CR-01 exact-match guard "
+                + "does NOT apply (old worker or REST caller)",
+            serviceTaskId);
+        failLegacyTail(serviceTaskId, retries, message, activity, executor);
+    }
+
+    /**
+     * WO-C8-36: legacy-хвост failServiceTask — побайтово вынесен из метода выше
+     * (нулевой diff поведения). Сюда же делегирует phased-путь при совпадении.
+     */
+    private void failLegacyTail(UUID serviceTaskId, Integer retries, String message, Activity activity,
+            TokenExecutor executor) {
         if (handleUserTaskListenerFailure(serviceTaskId, retries, message, activity)) {
+            return;
+        }
+        failSharedBudget(serviceTaskId, retries, message, activity, executor);
+    }
+
+    /**
+     * WO-C8-36: phased-маршрутизация failure (зеркало completePhased).
+     * Start/end/real делят общий бюджет-ряд с in-flight фазой (он выставляется
+     * listener-бюджетом при open/advance — см. WO-C8-21r2), поэтому при совпадении
+     * идут в failSharedBudget; user-task фазы — в свои fail-ветки.
+     */
+    private void failPhased(UUID serviceTaskId, String message, Integer retries,
+            String dispatchPhase, Integer dispatchIndex, String completionId, Activity activity,
+            TokenExecutor executor) {
+        switch (dispatchPhase) {
+            case ServiceTaskDispatchPhase.START -> {
+                Integer pending = dbService.getServiceTaskPendingListenerIndex(serviceTaskId);
+                if (pending != null && pending.equals(dispatchIndex)) {
+                    failSharedBudgetOnce(serviceTaskId, retries, message, activity, completionId, executor);
+                } else {
+                    ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                }
+            }
+            case ServiceTaskDispatchPhase.END -> {
+                Integer pending = dbService.getServiceTaskPendingEndListenerIndex(serviceTaskId);
+                if (pending != null && pending.equals(dispatchIndex)) {
+                    failSharedBudgetOnce(serviceTaskId, retries, message, activity, completionId, executor);
+                } else {
+                    ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                }
+            }
+            case ServiceTaskDispatchPhase.CREATING -> failUserTaskPhase(serviceTaskId, message, retries,
+                dispatchPhase, dispatchIndex, completionId, activity,
+                dbService.getPendingCreatingListenerIndex(serviceTaskId), executor);
+            case ServiceTaskDispatchPhase.COMPLETING -> failUserTaskPhase(serviceTaskId, message, retries,
+                dispatchPhase, dispatchIndex, completionId, activity,
+                dbService.getPendingCompletingListenerIndex(serviceTaskId), executor);
+            case ServiceTaskDispatchPhase.ASSIGNING -> failUserTaskPhase(serviceTaskId, message, retries,
+                dispatchPhase, dispatchIndex, completionId, activity,
+                dbService.getPendingAssigningListenerIndex(serviceTaskId), executor);
+            case ServiceTaskDispatchPhase.UPDATING -> failUserTaskPhase(serviceTaskId, message, retries,
+                dispatchPhase, dispatchIndex, completionId, activity,
+                dbService.getPendingUpdatingListenerIndex(serviceTaskId), executor);
+            case ServiceTaskDispatchPhase.CANCELING -> failUserTaskPhase(serviceTaskId, message, retries,
+                dispatchPhase, dispatchIndex, completionId, activity,
+                dbService.getPendingCancelingListenerIndex(serviceTaskId), executor);
+            case ServiceTaskDispatchPhase.REAL -> {
+                ProcessInstance failPi = dbService.getProcessInstance(activity.getProcessInstanceId());
+                BpmnProcessDefinitionModel failBpmn =
+                    bpmnService.getProcessDefinitionModelById(failPi.getProcessDefinitionId());
+                if (allListenerPhasesClosed(serviceTaskId, failBpmn.getElement(activity.getBpmnElementId()))) {
+                    failSharedBudgetOnce(serviceTaskId, retries, message, activity, completionId, executor);
+                } else {
+                    ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, null);
+                }
+            }
+            default ->
+                ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, null);
+        }
+    }
+
+    /**
+     * WO-C8-36: общий exact-match для user-task fail-фаз — при совпадении та же
+     * fail-ветка, что в legacy (перечитывает колонку, находит in-range).
+     */
+    private void failUserTaskPhase(UUID serviceTaskId, String message, Integer retries,
+            String dispatchPhase, Integer dispatchIndex, String completionId, Activity activity, Integer pending,
+            TokenExecutor executor) {
+        if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
+            failSharedBudgetOnce(serviceTaskId, retries, message, activity, completionId, executor);
+        } else {
+            ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+        }
+    }
+
+    /**
+     * WO-C8-36 (red-team HOLD-1): дедуп дубликатов ОТКРЫТОЙ фазы по completionId.
+     * Первый FAILED с этим id идёт в failSharedBudget (бюджет −1, редispatch —
+     * НОВАЯ отправка воркера получит НОВЫЙ completionId, цикл не застревает);
+     * повтор с тем же id — игнор. Null id = legacy без дедупа.
+     *
+     * <p>WO-C8-36 (H-2, правка раунда 3): маркер ЖИВЁТ В БД
+     * ({@link com.zorrodev.bpm.engine.service.CompletionDedupStore}), а не в памяти
+     * процесса — раньше здесь стояло «память — только in-process, рестарт движка
+     * очищает сет», и это было верно для ПЕРВОЙ версии фикса, но уже не для текущей:
+     * in-memory дедуп не работал на топологии N&gt;1 (проект гоняет три реплики на одном
+     * PG в {@code docker-compose.multi.yml}), где каждый процесс держал своё множество.
+     * Поле {@code processedCompletionIds} в дереве больше не существует — упоминание
+     * осталось только здесь и было враньём для следующего читателя.
+     *
+     * <p>Подтверждено на живом PostgreSQL двумя реальными транзакциями
+     * ({@code CompletionDedupClusterPgIT.criterionF1_twoRealTransactions_…}): ровно
+     * один расход бюджета, обе транзакции целы.
+     */
+    private void failSharedBudgetOnce(UUID serviceTaskId, Integer retries, String message, Activity activity,
+            String completionId, TokenExecutor executor) {
+        // WO-C8-36 (H-2): захват решает БД (INSERT в ЭТОЙ транзакции), поэтому
+        // откат транзакции убирает маркер сам — ручного remove не осталось
+        // (это же и закрывало «red-team 1.4»).
+        if (!completionDedupStore.claim(completionId)) {
+            log.info("Ignoring duplicate failure of service task {} (completionId={} already processed)",
+                serviceTaskId, completionId);
+            bpmMetrics.activityTransitionIgnored("duplicate_completion");
             return;
         }
         failSharedBudget(serviceTaskId, retries, message, activity, executor);

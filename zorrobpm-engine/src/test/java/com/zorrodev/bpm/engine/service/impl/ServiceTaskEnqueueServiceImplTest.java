@@ -1,5 +1,9 @@
 package com.zorrodev.bpm.engine.service.impl;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
@@ -21,6 +25,7 @@ import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.exchange.JobDetailModel;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -51,6 +56,50 @@ class ServiceTaskEnqueueServiceImplTest {
 
     @InjectMocks
     private ServiceTaskEnqueueServiceImpl service;
+
+    /**
+     * WO-C8-36 (H-1, п.б/д): флаг {@code zorrobpm.engine.dispatch-phase-stamping}
+     * выключен по умолчанию — тело задания при выключенном флаге побайтно то же,
+     * что до WO (golden-JSON ниже). Ставится явно, потому что дефолт проверяется
+     * отдельным тестом на прод-дефолте свойства, а не на угаданном значении.
+     */
+    private ServiceTaskEnqueueServiceImpl serviceWithStamping(boolean enabled) {
+        ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
+            realElementSupport(), mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+        sut.setDispatchPhaseStampingEnabled(enabled);
+        return sut;
+    }
+
+    private void stubPlainServiceTask(UUID serviceTaskId, UUID processInstanceId,
+            UUID processDefinitionId, String bpmnElementId, String job, String bpmn) {
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob(job);
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel model = new BpmnProcessDefinitionModel();
+        model.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(model);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+    }
 
     // WO-C8-9: реальный ElementSupport поверх мокнутого DBService — резолв гоняет прод-код
     // (литерал/blank не трогают DB вообще, стабы не нужны), а не дефолты Mockito
@@ -716,5 +765,278 @@ class ServiceTaskEnqueueServiceImplTest {
         service.enqueueAfterCommit(serviceTaskId);
 
         verify(dbService, never()).getServiceTaskPendingEndListenerIndex(any());
+    }
+
+    /**
+     * WO-C8-36 (H-1, п.д — golden-JSON): при ВЫКЛЮЧЕННОМ флаге тело задания
+     * побайтно то же, что до этого WO. Это и есть содержание решения CTO
+     * «сначала воркеры, потом флаг»: старый воркер не должен получать поле,
+     * которого его класс не знает, пока оператор не включил флаг осознанно.
+     *
+     * <p>Ассерт — на ОТСУТСТВИЕ ключей в РЕАЛЬНОМ outbox-JSON (реальный Jackson,
+     * прод-сериализация), а не на null геттера: нулевой геттер при
+     * {@code JsonInclude.ALWAYS} всё равно сериализовался бы в
+     * {@code "dispatchPhase":null} — то есть тело изменилось бы, а ассерт на
+     * null был бы зелёным.
+     */
+    @Test
+    void enqueueAfterCommit_stampingFlagOff_jobBodyIsByteIdenticalToPreWo() {
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        stubPlainServiceTask(serviceTaskId, processInstanceId, processDefinitionId,
+            "svcGoldenOff", "send-email", "golden-off");
+
+        serviceWithStamping(false).enqueueAfterCommit(serviceTaskId);
+
+        String payload = capturedPayload();
+        assertThat(payload)
+            .as("при выключенном флаге тело задания не содержит полей phased-штампа — "
+                + "старый воркер читает его как раньше")
+            .doesNotContain("dispatchPhase")
+            .doesNotContain("dispatchIndex");
+        // ...и всё остальное тело на месте (ассерт не проходит на пустом payload).
+        assertThat(payload).contains("\"serviceTaskId\":\"" + serviceTaskId + "\"");
+        assertThat(payload).contains("\"job\":\"send-email\"");
+    }
+
+    /**
+     * WO-C8-36 (H-1, п.б): при ВКЛЮЧЁННОМ флаге штамп возвращается — иначе флаг
+     * был бы декоративным (проверить это, сняв вызов setDispatchPhase, обязана
+     * ронять ЭТОТ тест, а не зелёный golden-тест).
+     */
+    @Test
+    void enqueueAfterCommit_stampingFlagOn_listenerJobCarriesPhaseAndIndex() {
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "svcGoldenOn";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("real-job");
+        ext.setStartListeners(List.of(new ListenerModel("listener-job", null, null)));
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(dbService.getServiceTaskPendingListenerIndex(serviceTaskId)).thenReturn(0);
+
+        serviceWithStamping(true).enqueueAfterCommit(serviceTaskId);
+
+        String payload = capturedPayload();
+        assertThat(payload)
+            .as("при включённом флаге phased-штамп обязателен в теле задания")
+            .contains("\"dispatchPhase\":\"start\"")
+            .contains("\"dispatchIndex\":0");
+    }
+
+    /**
+     * WO-C8-36 (H-1, п.б — реальный дефолт): прод-дефолт флага ВЫКЛЮЧЕН.
+     * Проверяется на новом экземпляре без вызова сеттера, то есть ровно то, что
+     * задаёт Java-инициализатор поля, — application-test не переопределяет
+     * свойство. «Дефолт выключен, иначе старый воркер падает» — это ровно то
+     * свойство, на котором держится порядок обновления, выбранный CTO. Смена
+     * дефолта на true обязана ронять этот тест.
+     *
+     * <p><b>Раунд 4 (verifier №5):</b> прежняя формулировка заявляла «на
+     * настоящем бине в Spring-контексте», чего здесь нет — бин собирается вручную.
+     * САМА связка property→поле (env-имя из compose → {@code @Value} → поле) проверяется
+     * в настоящем контексте отдельно: {@code C836ComposeEnvBindingTest}.
+     */
+    @Test
+    void dispatchPhaseStamping_defaultOffOnRealBean() {
+        // Новый экземпляр без явного вызова сеттера = прод-дефолт поля.
+        ServiceTaskEnqueueServiceImpl fresh = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
+            realElementSupport(), mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+        assertThat(fresh.isDispatchPhaseStampingEnabled())
+            .as("прод-дефолт phased-штампа ВЫКЛЮЧЕН: старый воркер не должен получать "
+                + "незнакомые поля до осознанного включения флага")
+            .isFalse();
+    }
+
+    /**
+     * WO-C8-36 (F-2): состояние флага печатается на старте, и уровень лога
+     * РАЗНЫЙ для включённого и выключенного состояния.
+     *
+     * <p>Зачем уровень различается: выключенный флаг = CR-01 выключен (legacy
+     * fail-open), и это должно быть видно в обычном логе реплики, а не только в
+     * счётчике ignored'ов. Мутация «всегда INFO» или «убрать вызов метода» валит
+     * один из двух ассертов; мутация «поменять ветки местами» — оба.
+     */
+    @Test
+    void dispatchPhaseStamping_startupLog_statesLevelPerFlagValue() {
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        // ListAppender без start() молча отбрасывает всё: AppenderBase.doAppend()
+        // проверяет started и уходит в warn. Старт — часть установки (WO-C8-36 F-2).
+        appender.start();
+        Logger logger = (Logger) LoggerFactory.getLogger(ServiceTaskEnqueueServiceImpl.class);
+        Level previous = logger.getLevel();
+        logger.setLevel(Level.INFO);
+        logger.addAppender(appender);
+        try {
+            ServiceTaskEnqueueServiceImpl on = freshService();
+            on.setDispatchPhaseStampingEnabled(true);
+            on.logStampStateOnStartup();
+            ServiceTaskEnqueueServiceImpl off = freshService();
+            off.setDispatchPhaseStampingEnabled(false);
+            off.logStampStateOnStartup();
+
+            List<ILoggingEvent> events = appender.list;
+            assertThat(events).hasSize(2);
+            assertThat(events.get(0).getLevel())
+                .as("включённый флаг — обычный INFO, это штатная конфигурация нашего стека")
+                .isEqualTo(Level.INFO);
+            assertThat(events.get(0).getFormattedMessage())
+                .contains("dispatch-phase-stamping=ON")
+                .contains("CR-01 exact-match guard active");
+            assertThat(events.get(1).getLevel())
+                .as("выключенный флаг = CR-01 выключен и путь fail-open — это WARN, "
+                    + "чтобы бросалось в глаза в логе реплики (в т.ч. soak-рига "
+                    + "docker-compose.multi.yml, где раньше флага не было вовсе)")
+                .isEqualTo(Level.WARN);
+            assertThat(events.get(1).getFormattedMessage())
+                .contains("dispatch-phase-stamping=OFF")
+                .contains("LEGACY fail-open path");
+        } finally {
+            logger.detachAppender(appender);
+            logger.setLevel(previous);
+        }
+    }
+
+    private ServiceTaskEnqueueServiceImpl freshService() {
+        return new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
+            mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+    }
+
+    private String capturedPayload() {
+        ArgumentCaptor<OutboxEntry> captor = ArgumentCaptor.forClass(OutboxEntry.class);
+        verify(outboxRepository).save(captor.capture());
+        return captor.getValue().getPayload();
+    }
+
+    @Test
+    void enqueueAfterCommit_listenerInFlight_stampsStartPhaseAndIndex() throws Exception {
+        // WO-C8-36 (CR-01, п.1): отправка listener-вызова штампуется фазой start/0 —
+        // assert на КОНКРЕТНЫЕ значения штампа (P-67: job "listener-job" сам по
+        // себе штамп не доказывает, его проверяет соседний тест выше).
+        ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
+            mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskListenerStamp";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("real-job");
+        ext.setStartListeners(List.of(new ListenerModel("listener-job", null, null)));
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(dbService.getServiceTaskPendingListenerIndex(serviceTaskId)).thenReturn(0);
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        // WO-C8-36 (H-1, п.б): штамп теперь за флагом — тест шалтлит его ВКЛЮЧИТЬ
+        // и проверяет то же самое (конкретные значения), что и до флага.
+        sut.setDispatchPhaseStampingEnabled(true);
+        sut.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
+        verify(objectMapper).writeValueAsString(detailCaptor.capture());
+        assertThat(detailCaptor.getValue().getDispatchPhase()).isEqualTo("start");
+        assertThat(detailCaptor.getValue().getDispatchIndex()).isEqualTo(0);
+    }
+
+    @Test
+    void enqueueAfterCommit_listenersDone_stampsRealPhase() throws Exception {
+        // WO-C8-36 (CR-01, п.1): отправка реального задания штампуется real/null.
+        ServiceTaskEnqueueServiceImpl sut = new ServiceTaskEnqueueServiceImpl(
+            dbService, bpmnService, outboxRepository, objectMapper, realElementSupport(),
+            mock(ElementListenerPhaseRepository.class),
+            com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
+        UUID serviceTaskId = UUID.randomUUID();
+        UUID processInstanceId = UUID.randomUUID();
+        UUID processDefinitionId = UUID.randomUUID();
+        String bpmnElementId = "serviceTaskRealStamp";
+
+        Activity activity = new Activity();
+        activity.setId(serviceTaskId);
+        activity.setProcessInstanceId(processInstanceId);
+        activity.setBpmnElementId(bpmnElementId);
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setProcessDefinitionId(processDefinitionId);
+
+        ServiceTaskExtensionModel ext = new ServiceTaskExtensionModel();
+        ext.setJob("real-job");
+        ext.setStartListeners(List.of(new ListenerModel("listener-job", null, null)));
+        BpmnElementExtensionModel extensions = new BpmnElementExtensionModel();
+        extensions.setServiceTaskExtension(ext);
+
+        BpmnElementModel element = new BpmnElementModel();
+        element.setId(bpmnElementId);
+        element.setExtensions(extensions);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        bpmn.addElement(element);
+
+        when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+        when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(dbService.getServiceTaskPendingListenerIndex(serviceTaskId)).thenReturn(null);
+        when(objectMapper.writeValueAsString(any())).thenReturn("{}");
+
+        // WO-C8-36 (H-1, п.б): тот же флаг — иначе тест проверял бы путь,
+        // который в проде по умолчанию выключен.
+        sut.setDispatchPhaseStampingEnabled(true);
+        sut.enqueueAfterCommit(serviceTaskId);
+
+        ArgumentCaptor<JobDetailModel> detailCaptor = ArgumentCaptor.forClass(JobDetailModel.class);
+        verify(objectMapper).writeValueAsString(detailCaptor.capture());
+        assertThat(detailCaptor.getValue().getJob()).isEqualTo("real-job");
+        assertThat(detailCaptor.getValue().getDispatchPhase()).isEqualTo("real");
+        assertThat(detailCaptor.getValue().getDispatchIndex()).isNull();
     }
 }

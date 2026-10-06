@@ -48,6 +48,19 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- WO-C8-36 (H-1): @JsonIgnoreProperties(ignoreUnknown=true) на DTO задания —
+             единственный слой, который спасает СТАРЫЙ воркер (голый new ObjectMapper(),
+             FAIL_ON_UNKNOWN_PROPERTIES=true) от потери КАЖДОГО задания после апгрейда
+             движка: незнакомое поле новой версии движка не должно ронять чтение.
+             optional=true: аннотация — только метаданные, потребитель без Jackson
+             (а он у всех потребителей свой, в т.ч. tools.jackson/Jackson 2) ничего
+             не теряет — нечитаемый набор аннотаций Jackson просто пропускает. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- WO-OBS-8: the module's first test (TraceHeadersTest) — versions from Boot BOM. -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
