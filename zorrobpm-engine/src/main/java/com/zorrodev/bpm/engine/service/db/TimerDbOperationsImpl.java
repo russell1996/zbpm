@@ -79,8 +79,8 @@ public class TimerDbOperationsImpl implements TimerDbOperations {
     }
 
     @Override
-    public List<com.zorrodev.bpm.engine.entity.TimerJobEntity> findArmedTimerJobs(UUID processInstanceId) {
-        return timerJobRepository.findArmedTimerJobs(processInstanceId);
+    public List<com.zorrodev.bpm.engine.entity.TimerJobEntity> findBoundaryTimerTriggers(UUID processInstanceId) {
+        return timerJobRepository.findBoundaryTimerTriggers(processInstanceId);
     }
 
     @Override

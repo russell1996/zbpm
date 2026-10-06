@@ -39,6 +39,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 import java.util.UUID;
@@ -48,7 +49,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -476,12 +479,12 @@ class DBServiceImplTest {
     // в который этот outlet мог ещё доставить ветвь, объявлялся готовым и срабатывал РАНЬШЕ
     // времени. Ровно та ошибка, ради которой armed-множество и появилось, только с другой стороны.
 
-    private TimerJobEntity armedJob(UUID hostId, String boundaryElementId) {
+    private TimerJobEntity boundaryTimer(UUID hostId, String boundaryElementId, boolean fired) {
         TimerJobEntity job = new TimerJobEntity();
         job.setId(UUID.randomUUID());
         job.setActivityId(hostId);
         job.setBoundaryElementId(boundaryElementId);
-        job.setFired(false);
+        job.setFired(fired);
         return job;
     }
 
@@ -492,71 +495,86 @@ class DBServiceImplTest {
         return a;
     }
 
-    @Test
-    void getArmedTriggerElementIds_sameOutletOnTwoHosts_staysArmedWhileAnyHostIsAlive() {
-        UUID pi = UUID.randomUUID();
-        UUID firstHost = UUID.randomUUID();   // первым прочитан — он и выигрывал при putIfAbsent
-        UUID secondHost = UUID.randomUUID();
-        when(timerDbOperations.findArmedTimerJobs(pi)).thenReturn(List.of(
-            armedJob(firstHost, "tmrCheck"),
-            armedJob(secondHost, "tmrCheck")));
-        when(messageSubscriptionDbOperations.findPendingSubscriptions(pi)).thenReturn(List.of());
-        when(signalSubscriptionDbOperations.findPendingSubscriptions(pi)).thenReturn(List.of());
-        when(activityDbOperations.getActivity(firstHost)).thenReturn(hostInStatus(firstHost, ActivityStatus.COMPLETED));
-        when(activityDbOperations.getActivity(secondHost)).thenReturn(hostInStatus(secondHost, ActivityStatus.CREATED));
-
-        assertThat(dbService.getArmedTriggerElementIds(pi))
-            .as("второй хост ещё жив — outlet обязан остаться взведённым, иначе join сработает раньше времени")
-            .containsExactly("tmrCheck");
-    }
+    // ── раунд 6 (BLOCKER-6): «исчерпана» вместо «взведена» ────────────────────────────────
 
     @Test
-    void getArmedTriggerElementIds_sameOutletOnTwoHosts_dropsOnlyWhenEveryHostIsDead() {
+    void getExhaustedBoundaryElementIds_hostNotStartedYet_theBoundaryIsStillADeliverer() {
+        // Диаграмма red-team BLOCKER-6: taskX ещё не стартовал, у tmrX нет ни строки job'а, ни
+        // строки activity. Живое вышестоящее исполнение (taskSvc) его запустит — значит ребро
+        // границы обязано остаться в «ещё может доставить».
         UUID pi = UUID.randomUUID();
-        UUID firstHost = UUID.randomUUID();
-        UUID secondHost = UUID.randomUUID();
-        when(timerDbOperations.findArmedTimerJobs(pi)).thenReturn(List.of(
-            armedJob(firstHost, "tmrCheck"),
-            armedJob(secondHost, "tmrCheck")));
-        when(messageSubscriptionDbOperations.findPendingSubscriptions(pi)).thenReturn(List.of());
-        when(signalSubscriptionDbOperations.findPendingSubscriptions(pi)).thenReturn(List.of());
-        when(activityDbOperations.getActivity(firstHost)).thenReturn(hostInStatus(firstHost, ActivityStatus.CANCELLED));
-        when(activityDbOperations.getActivity(secondHost)).thenReturn(hostInStatus(secondHost, ActivityStatus.COMPLETED));
+        when(timerDbOperations.findBoundaryTimerTriggers(pi)).thenReturn(List.of());
+        when(activityDbOperations.findDeadElementIds(eq(pi), any(), any())).thenReturn(List.of());
 
-        assertThat(dbService.getArmedTriggerElementIds(pi))
-            .as("оба хоста мертвы — граница на этом хосте больше не выстрелит, outlet обязан исчезнуть")
+        assertThat(dbService.getExhaustedBoundaryElementIds(pi, Map.of("tmrX", "taskX")))
+            .as("хост без activity-строк не мёртв (он ещё не начал) — граница остаётся доставщиком")
             .isEmpty();
     }
 
     @Test
-    void getArmedTriggerElementIds_startTriggerOfEventSubProcess_isNotADeliverer() {
-        // Решение CTO 2: старт event-subprocess доставляет ветвь в СВОЙ scope-токен, а не в join
-        // родительского scope, поэтому его outlet не должен попадать во вселенную «ещё может доставить».
+    void getExhaustedBoundaryElementIds_firedOneShotTimer_theBoundaryIsSpent() {
+        // B1 (armed-таймер раунда 5): непрерывающий таймер сработал, хост ЖИВ, но второй раз
+        // одноразовый таймер не выстрелит — граница отдала свою единственную ветвь.
         UUID pi = UUID.randomUUID();
-        UUID host = UUID.randomUUID();
-        MessageSubscriptionEntity evSub = new MessageSubscriptionEntity();
-        evSub.setId(UUID.randomUUID());
-        evSub.setProcessInstanceId(pi);
-        evSub.setMessageName("ping");
-        evSub.setConsumed(false);
-        evSub.setEventSubprocessId("pingHandler");
-        MessageSubscriptionEntity boundary = new MessageSubscriptionEntity();
-        boundary.setId(UUID.randomUUID());
-        boundary.setProcessInstanceId(pi);
-        boundary.setMessageName("escalate");
-        boundary.setConsumed(false);
-        boundary.setActivityId(host);
-        boundary.setBoundaryElementId("msgBnd");
-        when(timerDbOperations.findArmedTimerJobs(pi)).thenReturn(List.of());
-        when(messageSubscriptionDbOperations.findPendingSubscriptions(pi))
-            .thenReturn(List.of(evSub, boundary));
-        when(signalSubscriptionDbOperations.findPendingSubscriptions(pi)).thenReturn(List.of());
-        when(activityDbOperations.getActivity(host)).thenReturn(hostInStatus(host, ActivityStatus.CREATED));
+        when(timerDbOperations.findBoundaryTimerTriggers(pi))
+            .thenReturn(List.of(boundaryTimer(UUID.randomUUID(), "tmrCheck", true)));
+        when(activityDbOperations.findDeadElementIds(eq(pi), any(), any())).thenReturn(List.of());
 
-        assertThat(dbService.getArmedTriggerElementIds(pi))
-            .as("правило «не доставщик» действует на outlet, а не на весь read: граничная подписка "
-                + "в том же наборе остаётся взведённой, старт event-subprocess — нет")
-            .containsExactly("msgBnd");
+        assertThat(dbService.getExhaustedBoundaryElementIds(pi, Map.of("tmrCheck", "taskWait")))
+            .as("отстрелявший одноразовый таймер исключается из «ещё может доставить»")
+            .containsExactly("tmrCheck");
+    }
+
+    @Test
+    void getExhaustedBoundaryElementIds_repeatingCycleRearmedAfterFiring_theBoundaryStays() {
+        // Повторяющийся timeCycle после срабатывания получает НОВУЮ строку с fired = false, то
+        // есть выстрелит ещё — исчерпанной границу считать нельзя (иначе join ждал бы вечно).
+        UUID pi = UUID.randomUUID();
+        when(timerDbOperations.findBoundaryTimerTriggers(pi)).thenReturn(List.of(
+            boundaryTimer(UUID.randomUUID(), "tmrCycle", true),
+            boundaryTimer(UUID.randomUUID(), "tmrCycle", false)));
+        when(activityDbOperations.findDeadElementIds(eq(pi), any(), any())).thenReturn(List.of());
+
+        assertThat(dbService.getExhaustedBoundaryElementIds(pi, Map.of("tmrCycle", "taskWait")))
+            .as("есть невыстрелившая строка — цикл будет ещё, граница остаётся возможным доставщиком")
+            .isEmpty();
+    }
+
+    @Test
+    void getExhaustedBoundaryElementIds_deadHost_theBoundaryIsGoneEvenWithoutAnyRow() {
+        // У conditional/error/escalation-границы НЕТ персистентной armed-записи никогда: снять её
+        // может только смерть хоста. Живой прогон BLOCKER-3 держался ровно на этом.
+        UUID pi = UUID.randomUUID();
+        when(timerDbOperations.findBoundaryTimerTriggers(pi)).thenReturn(List.of());
+        when(activityDbOperations.findDeadElementIds(eq(pi), any(), any()))
+            .thenReturn(List.of("taskHold"));
+
+        assertThat(dbService.getExhaustedBoundaryElementIds(pi, Map.of("condB", "taskHold")))
+            .as("хост мёртв — граница снята, и неважно, что у неё нет ни одной строки")
+            .containsExactly("condB");
+    }
+
+    @Test
+    void getExhaustedBoundaryElementIds_liveCopyOfAMultiInstanceHost_keepsTheBoundary() {
+        // Раунд 4, «outlet на нескольких хостах»: элемент мёртв только когда мертвы ВСЕ копии.
+        // Один элемент, одна запись в findDeadElementIds — если бы он там был, вторая живая копия
+        // потеряла бы доставку (join сработал бы раньше времени).
+        UUID pi = UUID.randomUUID();
+        when(timerDbOperations.findBoundaryTimerTriggers(pi)).thenReturn(List.of());
+        when(activityDbOperations.findDeadElementIds(eq(pi), any(), any())).thenReturn(List.of("otherTask"));
+
+        assertThat(dbService.getExhaustedBoundaryElementIds(pi, Map.of("tmrMi", "taskMi")))
+            .as("живая копия MI-хоста держит границу в доставщиках")
+            .isEmpty();
+    }
+
+    @Test
+    void getExhaustedBoundaryElementIds_noBoundariesInDefinition_noQueriesAtAll() {
+        // Горячий путь правила готовности: у определений без границ не должно быть НИ ОДНОГО запроса.
+        UUID pi = UUID.randomUUID();
+        assertThat(dbService.getExhaustedBoundaryElementIds(pi, Map.of())).isEmpty();
+        verifyNoInteractions(timerDbOperations);
+        verify(activityDbOperations, never()).findDeadElementIds(any(), any(), any());
     }
 
 }

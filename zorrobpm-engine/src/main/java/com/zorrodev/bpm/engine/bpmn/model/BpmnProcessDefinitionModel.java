@@ -67,6 +67,10 @@ public class BpmnProcessDefinitionModel {
     private final Map<String, List<BpmnElementModel>> boundaryEventsByHost = new ConcurrentHashMap<>();
     /** Мемо для {@link #hasRowBackedBoundaryEvent()} (см. комментарий метода). */
     private volatile Boolean rowBackedBoundary;
+    /** Мемо для {@link #getBoundaryHostByBoundaryElementId()} (см. комментарий метода). */
+    private volatile Map<String, String> boundaryHostByOutlet;
+    /** Мемо для {@link #hasBoundaryEvent()} (см. комментарий метода). */
+    private volatile Boolean hasBoundaryEventMemo;
     @Getter
     @Setter
     private BpmnElementModel startEvent;
@@ -191,6 +195,40 @@ public class BpmnProcessDefinitionModel {
             .sorted(Comparator.comparing(BpmnElementModel::getId,
                 Comparator.nullsLast(Comparator.naturalOrder())))
             .toList());
+    }
+
+    /**
+     * WO-C8-35 раунд 6 (BLOCKER-6): обратная карта «хост → его границы» в виде пары
+     * «element id границы → id её хоста». Нужна правилу готовности inclusive-join: оно исключает
+     * границу, у которой хост МЁРТВ, а «мёртв» определяется по activity-строкам хоста — то есть
+     * по идентификатору элемента, а не по самой границе.
+     *
+     * <p>Тот же ленивый мемо, что у {@link #getBoundaryEventsAttachedTo}: модель разбирается один
+     * раз и живёт в общем Caffeine-кэше на все потоки.
+     */
+    public Map<String, String> getBoundaryHostByBoundaryElementId() {
+        if (boundaryHostByOutlet == null) {
+            Map<String, String> map = new java.util.LinkedHashMap<>();
+            elements.values().stream()
+                .filter(e -> e.getExtensions() != null && e.getExtensions().getBoundaryEventExtension() != null)
+                .forEach(e -> map.putIfAbsent(e.getId(), e.getExtensions().getBoundaryEventExtension().getAttachedToRef()));
+            boundaryHostByOutlet = java.util.Collections.unmodifiableMap(map);
+        }
+        return boundaryHostByOutlet;
+    }
+
+    /**
+     * WO-C8-35 раунд 6: есть ли в определении ХОТЯ БЫ ОДНА граница любого типа. Нужен как
+     * «делать ли вообще запросы» для правила готовности inclusive-join: у подавляющего
+     * большинства определений границ нет, и тогда стоимость правила — ноль запросов (проверка
+     * мемоизирована, как и остальные).
+     */
+    public boolean hasBoundaryEvent() {
+        if (hasBoundaryEventMemo == null) {
+            hasBoundaryEventMemo = elements.values().stream()
+                .anyMatch(e -> e.getExtensions() != null && e.getExtensions().getBoundaryEventExtension() != null);
+        }
+        return hasBoundaryEventMemo;
     }
 
     /**

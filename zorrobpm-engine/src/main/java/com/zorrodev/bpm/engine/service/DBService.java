@@ -488,13 +488,31 @@ public interface DBService {
     java.util.Set<String> getGatewaysWithOpenArrivals(UUID processInstanceId);
 
     /**
-     * WO-C8-35 (CR-09, ШАГ 2/B1; раунд 4 — Решение 2): element ids of this instance's still-ARMED
-     * event triggers that continue somewhere else — ТОЛЬКО boundary timer/message/signal. Именно они
-     * делают «доставка ещё возможна» невидимой для {@code getActiveActivities}: у взведённого
-     * boundary-события нет строки activity, потому что оно ещё не выстрелило.
-     * Catch-события (message/signal/timer catch) исключены — их покрывает живая activity хоста.
-     * Старт event-subprocess исключён (Решение 2 раунда 4): он доставляет ветвь в СВОЙ scope-токен
-     * ({@code EventTrigger.triggerEventSubprocess}), а не в join, поэтому доставщиком ветви не является.
+     * WO-C8-35 раунд 6 (BLOCKER-6): element ids граничных событий инстанса, которые УЖЕ НЕ МОГУТ
+     * доставить ветвь в припаркованный inclusive-join, — то есть исключаются из «ещё может
+     * доставить».
+     *
+     * <p>Именно «исключать отработавшие», а не «включать взведённые» (решение CTO раунда 6):
+     * прежний гейт по {@code armed} был слеп к двум разным состояниям сразу. Граница на хосте,
+     * который ЕЩЁ НЕ СТАРТОВАЛ, туда не входила (нет строки job'а), и join срабатывал раньше
+     * времени, а потом ещё раз — по границе (BLOCKER-6). Ребро границы считается, когда хост
+     * достижим по графу или жив, И граница не отработала.
+     *
+     * <p>Два независимых признака, оба — «доставить больше нечем»:
+     * <ul>
+     *   <li>хост МЁРТВ (все его activity-строки терминальные) — граница снята, стрелять нечему;</li>
+     *   <li>одноразовый граничный таймер ВЫСТРЕЛИЛ и не перевзведён — своей ветви он отдал.
+     *       У message/signal/conditional/error/escalation-границ такого состояния нет: они
+     *       срабатывают повторно, пока хост жив, и снимаются только смертью хоста (первый пункт).</li>
+     * </ul>
+     *
+     * <p>Запросов ровно два, оба вместо прежних четырёх (armed-таймеры + message + signal + N+1
+     * {@code getActivity} на каждый хост): запрос граничных таймеров инстанса и ОДИН запрос
+     * «мёртвые элементы» по списку элементов, у которых есть границы. Опрос
+     * {@code message_subscriptions}/{@code signal_subscriptions} удалён целиком — индексов по
+     * {@code process_instance_id} у них нет, и незачем держать неиндексированный запрос на
+     * горячем пути (MAJOR-1 рецензии раунда 3 закрывается этим же изменением).
      */
-    java.util.Set<String> getArmedTriggerElementIds(UUID processInstanceId);
+    java.util.Set<String> getExhaustedBoundaryElementIds(UUID processInstanceId,
+                                                        java.util.Map<String, String> boundaryHostByOutlet);
 }

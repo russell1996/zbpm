@@ -29,6 +29,14 @@ public interface ActivityDbOperations {
 
     List<Activity> getActiveActivities(UUID processInstanceId);
 
+    /**
+     * WO-C8-35 раунд 6: element id элементов инстанса, у которых нет НИ ОДНОЙ живой activity-строки
+     * (см. {@code ActivityRepository.findDeadElementIds}). Один запрос на весь список — вместо
+     * {@code getActivity} на каждый хост границы.
+     */
+    java.util.List<String> findDeadElementIds(UUID processInstanceId, java.util.Collection<String> elementIds,
+                                              java.util.Collection<com.zorrodev.bpm.engine.entity.ActivityStatus> liveStatuses);
+
     List<Activity> getActivitiesByTokenAndBpmnElementId(UUID tokenId, String incoming);
 
     List<Activity> getCompletedActivities(UUID processInstanceId);

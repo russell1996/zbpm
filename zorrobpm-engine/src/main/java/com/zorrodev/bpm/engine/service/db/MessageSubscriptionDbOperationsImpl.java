@@ -84,11 +84,6 @@ public class MessageSubscriptionDbOperationsImpl implements MessageSubscriptionD
     }
 
     @Override
-    public List<MessageSubscriptionEntity> findPendingSubscriptions(UUID processInstanceId) {
-        return messageSubscriptionRepository.findByProcessInstanceIdAndConsumedFalse(processInstanceId);
-    }
-
-    @Override
     public void deleteMessageSubscriptionsByProcessInstanceId(UUID processInstanceId) {
         messageSubscriptionRepository.deleteByProcessInstanceId(processInstanceId);
     }

@@ -20,15 +20,6 @@ public interface SignalSubscriptionRepository extends JpaRepository<SignalSubscr
 
     List<SignalSubscriptionEntity> findFirst500ByConsumedFalseAndSignalNameAndIdLessThanOrderByIdDesc(String signalName, UUID id);
 
-    /**
-     * WO-C8-35 (CR-09, ШАГ 2/B1; раунд 4 — контракт уточнён): this instance's unconsumed
-     * signal subscriptions, UNFILTERED — the query returns EVERY pending row of the instance
-     * (boundary trigger, event-sub-process trigger and plain catch alike). Callers narrow it: only
-     * a row with a non-null boundary element id is an armed trigger, and the event-sub-process start
-     * trigger is deliberately not counted as a branch deliverer (Решение 2). A plain signal catch needs
-     * no entry here because its host activity row already covers it in the live-execution universe.
-     */
-    List<SignalSubscriptionEntity> findByProcessInstanceIdAndConsumedFalse(UUID processInstanceId);
 
     @Modifying
     @Query("UPDATE SignalSubscriptionEntity e SET e.consumed = true WHERE e.id = :id AND e.consumed = false")

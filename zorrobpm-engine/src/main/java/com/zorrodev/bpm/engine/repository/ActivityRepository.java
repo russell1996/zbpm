@@ -71,6 +71,25 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
      */
     List<ActivityEntity> findByProcessInstanceIdAndStatusInOrderByIdAsc(UUID processInstanceId, Collection<ActivityStatus> statuses);
 
+    /**
+     * WO-C8-35 раунд 6 (minor а рецензии r4): element id тех элементов инстанса, у которых ЕСТЬ
+     * activity-строки, но НИ ОДНОЙ живой (все COMPLETED/CANCELLED/ERROR) — то есть хост умер.
+     *
+     * <p>Нужен, чтобы исключить границу на мёртвом хосте, и нужен ОДНИМ запросом: прежний путь
+     * спрашивал {@code getActivity} на каждый хост границы (N+1 на горячем пути правила
+     * готовности inclusive-join). Список элементов приходит от модели (только элементы, у
+     * которых вообще есть границы), поэтому результат маленький и не растёт с длиной инстанса.
+     *
+     * <p>Multi-instance: элемент считается мёртвым, только если мертвы ВСЕ его копии — одна
+     * живая копия возвращает элемент в возможные доставщики (раунд 4, «outlet на нескольких
+     * хостах»). Элемент, который ещё НЕ начинался, строк не имеет и потому в результат не
+     * попадает — он и есть «достижим по графу» (BLOCKER-6).
+     */
+    @Query("SELECT DISTINCT a.bpmnElementId FROM ActivityEntity a WHERE a.processInstanceId = :processInstanceId "
+        + "AND a.bpmnElementId IN :elementIds AND a.status NOT IN :liveStatuses")
+    List<String> findDeadElementIds(UUID processInstanceId, Collection<String> elementIds,
+                                    Collection<ActivityStatus> liveStatuses);
+
     List<ActivityEntity> findByProcessInstanceIdOrderByCreatedAtAsc(UUID processInstanceId);
 
     org.springframework.data.domain.Page<ActivityEntity> findByProcessInstanceIdOrderByCreatedAtAsc(UUID processInstanceId, org.springframework.data.domain.Pageable pageable);

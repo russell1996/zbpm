@@ -27,8 +27,6 @@ public interface MessageSubscriptionDbOperations {
      * WO-C8-35 (CR-09, ШАГ 2/B1): unconsumed message subscriptions of this instance — the caller
      * keeps only the boundary / event-sub-process forms (the ones that continue elsewhere).
      */
-    List<com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity> findPendingSubscriptions(UUID processInstanceId);
-
     void deleteMessageSubscriptionsByProcessInstanceId(UUID processInstanceId);
 
     List<MessageStartSubscription> findMessageStartSubscriptions(String messageName);

@@ -725,80 +725,69 @@ public class DBServiceImpl implements DBService {
     }
 
     /**
-     * WO-C8-35 (CR-09, ШАГ 2/B1): element ids of this instance's still-ARMED triggers that
-     * continue somewhere else — boundary timer/message/signal triggers.
-     * Наружу отдаётся только МНОЖЕСТВО element id выходов: сколько именно там строк, движку
-     * знать не надо, решает {@code canReach}.
+     * WO-C8-35 раунд 6 (BLOCKER-6): element ids граничных событий инстанса, которые УЖЕ НЕ МОГУТ
+     * доставить ветвь — их надо ИСКЛЮЧАТЬ из вселенной «ещё может доставить» (контракт и обоснование:
+     * {@link DBService#getExhaustedBoundaryElementIds}).
      *
-     * <p>Два источника: взведённые timer jobs и взведённые message/signal boundary-подписки.
-     * Catch-события (message/signal/timer catch) сюда НЕ попадают: у них есть строка activity хоста,
-     * их покрывает вселенная живых исполнений.
+     * <p>Два признака, оба означают «доставить больше нечем»:
+     * <ol>
+     *   <li>хост МЁРТВ — ОДИН запрос на весь список элементов с границами. Прежний путь спрашивал
+     *       {@code getActivity} на каждый хост (N+1 на горячем пути правила готовности, minor (а)
+     *       рецензии раунда 4). Element-уровень «мёртв» = мертвы ВСЕ его копии, поэтому одна
+     *       живая копия multi-instance возвращает элемент в возможные доставщики (раунд 4,
+     *       «outlet на нескольких хостах»), а элемент, который ещё НЕ начинался, строк не имеет и
+     *       доставщиком остаётся (BLOCKER-6);</li>
+     *   <li>одноразовый граничный таймер ВЫСТРЕЛИЛ и не перевзведён. Outlet исчерпан, только если
+     *       по нему есть выстрелившая строка И НЕТ ни одной невыстрелившей: у повторяющегося
+     *       цикла после срабатывания появляется новая строка {@code fired = false}, у
+     *       multi-instance — своя на каждую копию.</li>
+     * </ol>
+     * Запросов ровно два (было четыре плюс N+1). Опрос {@code message_subscriptions} и
+     * {@code signal_subscriptions} удалён целиком: у message/signal-границ состояния «отработала»
+     * нет — они срабатывают повторно, пока жив хост, и снимаются его смертью (пункт 1).
      *
-     * <p><b>Стартовый триггер event-subprocess СЮДА НЕ ВХОДИТ (Решение CTO 2, раунд 4).</b> Подписка
-     * непрерывающего event-subprocess не consume'ится никогда, поэтому её outlet висел бы в
-     * armed-множестве до конца инстанса. Проверено условие решения: запуск event-subprocess создаёт
-     * СВОЙ scope-экземпляр ({@code EventTrigger.triggerEventSubprocess} — свой корневой токен плюс
-     * scope-токен на контейнере), то есть ни в join родительского scope, ни в уже идущий
-     * scope-экземпляр он токен не доставляет. Новый запуск — это новый scope, а не «ещё одна ветвь
-     * того же join'а».
-     *
-     * <p>Замечание честности: пока эта запись была в множестве, она была и оставалась ИНЕРТНОЙ —
-     * элемент-контейнер event-subprocess по BPMN не имеет исходящих потоков (ни один из 10
-     * event-subprocess в фикстурах репозитория не объявляет {@code <outgoing>}), а {@code canReach}
-     * идёт ровно по исходящим потокам, поэтому такой outlet не мог повлиять на решение ни одного
-     * join'а. Проверено мутацией: возврат этих трёх вызовов не меняет ни одного ПОВЕДЕНЧЕСКОГО
-     * ассерта тестов (a)/(b) — только прямую проверку самого множества (POF-4 в отчёте). Запись удалена не ради поведения, а ради правды: во вселенной «ещё может доставить»
-     * старт event-subprocess доставщиком ветви НЕ является, и оставлять его там — значит оставлять
-     * в коде ложь, на которую уже ушло три раунда ревью.
+     * @param boundaryHostElementIds element id хостов границ — из модели, только элементы,
+     *                               у которых границы вообще есть (у остальных правило не
+     *                               делает ни одного запроса)
      */
     @Override
-    public java.util.Set<String> getArmedTriggerElementIds(UUID processInstanceId) {
-        // outlet element id -> the host activity ids it is armed on. NOT a single value and NOT
-        // putIfAbsent: the same outlet element id can be armed on SEVERAL live hosts (multi-instance
-        // hosts, a loop re-entering the same task), and first-wins silently dropped the outlet the
-        // moment the first host died — a second, still-armed host could then deliver a branch into a
-        // join that had already fired. Correct rule: the outlet stays armed while ANY of its hosts is
-        // active (WO-C8-35 раунд 4, ШАГ D).
-        java.util.Map<String, java.util.Set<UUID>> armed = new java.util.LinkedHashMap<>();
-        for (com.zorrodev.bpm.engine.entity.TimerJobEntity job : timerDbOperations.findArmedTimerJobs(processInstanceId)) {
-            putArmed(armed, job.getBoundaryElementId(), job.getActivityId());
+    public java.util.Set<String> getExhaustedBoundaryElementIds(UUID processInstanceId,
+                                                               java.util.Map<String, String> boundaryHostByOutlet) {
+        java.util.Set<String> exhausted = new java.util.LinkedHashSet<>();
+        if (processInstanceId == null || boundaryHostByOutlet == null || boundaryHostByOutlet.isEmpty()) {
+            return exhausted;
         }
-        for (com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity sub : messageSubscriptionDbOperations.findPendingSubscriptions(processInstanceId)) {
-            putArmed(armed, sub.getBoundaryElementId(), sub.getActivityId());
-        }
-        for (com.zorrodev.bpm.engine.entity.SignalSubscriptionEntity sub : signalSubscriptionDbOperations.findPendingSubscriptions(processInstanceId)) {
-            putArmed(armed, sub.getBoundaryElementId(), sub.getActivityId());
-        }
-        // A trigger armed on a host that is NO LONGER ACTIVE can never fire: EventTrigger skips a
-        // boundary whose host is COMPLETED/CANCELLED ("Boundary ... fired but host activity ... is
-        // ..., ignoring"), so counting it would hold every join it could reach forever — the
-        // over-conservative twin of BLOCKER-2, and it bit the B1 test the moment taskWait
-        // completed (the join then waited for a PT10H timer on a dead host — i.e. for ten hours).
-        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
-        for (java.util.Map.Entry<String, java.util.Set<UUID>> e : armed.entrySet()) {
-            if (e.getValue().isEmpty() || e.getValue().stream().anyMatch(this::isActivityActive)) {
-                ids.add(e.getKey());
+        // (1) мёртвые хосты — ОДИН запрос на все значения карты (элементы с границами)
+        java.util.Set<String> deadHosts = new java.util.LinkedHashSet<>(
+            activityDbOperations.findDeadElementIds(processInstanceId, boundaryHostByOutlet.values(),
+                java.util.List.of(com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED,
+                    com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS)));
+        for (java.util.Map.Entry<String, String> e : boundaryHostByOutlet.entrySet()) {
+            if (deadHosts.contains(e.getValue())) {
+                exhausted.add(e.getKey());
             }
         }
-        return ids;
-    }
-
-    private static void putArmed(java.util.Map<String, java.util.Set<UUID>> armed,
-                                 String outletElementId, UUID hostActivityId) {
-        if (outletElementId != null && !outletElementId.isEmpty()) {
-            armed.computeIfAbsent(outletElementId, k -> new java.util.LinkedHashSet<>())
-                .add(hostActivityId);
+        // (2) исчерпанные одноразовые таймерные outlet'ы
+        java.util.Map<String, Boolean> everFired = new java.util.LinkedHashMap<>();
+        java.util.Map<String, Boolean> pending = new java.util.LinkedHashMap<>();
+        for (com.zorrodev.bpm.engine.entity.TimerJobEntity job
+                : timerDbOperations.findBoundaryTimerTriggers(processInstanceId)) {
+            String outlet = job.getBoundaryElementId();
+            if (outlet == null || outlet.isEmpty()) {
+                continue;
+            }
+            if (job.isFired()) {
+                everFired.put(outlet, Boolean.TRUE);
+            } else {
+                pending.put(outlet, Boolean.TRUE);
+            }
         }
-    }
-
-    private boolean isActivityActive(UUID activityId) {
-        if (activityId == null) {
-            return false;
+        for (String outlet : everFired.keySet()) {
+            if (!pending.containsKey(outlet)) {
+                exhausted.add(outlet);
+            }
         }
-        Activity activity = getActivity(activityId);
-        return activity != null
-            && (activity.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED
-                || activity.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS);
+        return exhausted;
     }
 
     @Override
