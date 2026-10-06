@@ -10,7 +10,9 @@ import com.zorrodev.bpm.engine.entity.UserGroupEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
+import com.zorrodev.bpm.engine.repository.UserTaskCandidateRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.service.db.UserTaskCandidateWriter;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
@@ -63,6 +65,8 @@ public class UserTaskQueryGuardrailsIntegrationTests {
     @Autowired private RuntimeService runtimeService;
     @Autowired private QueryService queryService;
     @Autowired private UserTaskRepository userTaskRepository;
+    @Autowired private UserTaskCandidateWriter userTaskCandidateWriter;
+    @Autowired private UserTaskCandidateRepository userTaskCandidateRepository;
     @Autowired private UiUserRepository uiUserRepository;
     @Autowired private UserGroupRepository userGroupRepository;
     @Autowired private PasswordHasher passwordHasher;
@@ -255,6 +259,12 @@ public class UserTaskQueryGuardrailsIntegrationTests {
         return taskWith(assignee, candidateGroups, null);
     }
 
+    /**
+     * WO-IN-3: фикстура пишет кандидатов ТЕМ ЖЕ рабочим кодом, что и живой путь
+     * ({@code UserTaskCandidateWriter}), а не только в колонку. Иначе фикстура описывала бы
+     * состояние, которого движок создать не может: строка без строк-кандидатов — это ровно то,
+     * что получается, когда писатель молча сломался.
+     */
     private UserTaskEntity taskWith(String assignee, String candidateGroups, String formKey) throws Exception {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(pdId);
@@ -265,7 +275,14 @@ public class UserTaskQueryGuardrailsIntegrationTests {
         task.setAssignee(assignee);
         task.setCandidateGroups(candidateGroups);
         task.setFormKey(formKey);
-        return userTaskRepository.save(task);
+        UserTaskEntity saved = userTaskRepository.save(task);
+        // СНАЧАЛА снести то, что написал живой путь (в BPMN этой фикстуры candidateGroups="sales"),
+        // и только потом записать набор фикстуры — иначе задача получила бы ОБЕ группы и
+        // перестала быть «задачей, у которой единственная группа sa les».
+        userTaskCandidateRepository.deleteAll(
+            userTaskCandidateRepository.findByUserTaskId(saved.getId()));
+        userTaskCandidateWriter.writeCandidates(saved.getId(), candidateGroups, null);
+        return saved;
     }
 
     private UiUserEntity createUser(String username) {

@@ -10,6 +10,7 @@ import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -21,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -30,6 +32,8 @@ class UserTaskDbOperationsImplTest {
     @Mock private UserTaskRepository userTaskRepository;
     @Mock private ActivityRepository activityRepository;
     @Mock private ProcessInstanceRepository processInstanceRepository;
+    /** WO-IN-3: писатель кандидатов — новая зависимость класса; без мока тут NPE. */
+    @Mock private UserTaskCandidateWriter userTaskCandidateWriter;
     @Mock private DomainEventEmitter domainEventEmitter;
     @InjectMocks private UserTaskDbOperationsImpl db;
 
@@ -40,11 +44,32 @@ class UserTaskDbOperationsImplTest {
         ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(activity.getProcessInstanceId()); pi.setProcessDefinitionId(UUID.randomUUID());
         when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
         when(processInstanceRepository.findById(activity.getProcessInstanceId())).thenReturn(Optional.of(pi));
-        db.createUserTask(activityId, "ivanov", "managers", "form1", null, null, null, null, null);
+        db.createUserTask(activityId, "ivanov", "managers", null, "form1", null, null, null, null, null);
         ArgumentCaptor<UserTaskEntity> captor = ArgumentCaptor.forClass(UserTaskEntity.class);
         verify(userTaskRepository).save(captor.capture());
         assertThat(captor.getValue().getAssignee()).isEqualTo("ivanov");
         verify(domainEventEmitter).emitUserTaskCreated(eq(activity.getProcessInstanceId()), any(UUID.class), eq("ut1"), eq(activityId), eq("ivanov"), eq("managers"));
+    }
+
+    /**
+     * WO-IN-3: кандидаты уходят в писателю РЯДОМ со строкой задачи и из того же вызова — значит
+     * в той же транзакции. Проверяется порядок (сначала save задачи, потом кандидаты) и само
+     * значение: заглушка принимает оба списка как есть, разбор — в писателе (там же тест).
+     */
+    @Test
+    void createUserTask_writesCandidatesRightAfterTheRow() {
+        UUID activityId = UUID.randomUUID();
+        ActivityEntity activity = new ActivityEntity(); activity.setId(activityId); activity.setProcessInstanceId(UUID.randomUUID()); activity.setBpmnElementId("ut1"); activity.setCreatedAt(java.time.Instant.now());
+        ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(activity.getProcessInstanceId()); pi.setProcessDefinitionId(UUID.randomUUID());
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
+        when(processInstanceRepository.findById(activity.getProcessInstanceId())).thenReturn(Optional.of(pi));
+
+        db.createUserTask(activityId, null, "managers", "ivanov,petrov", "form1", null, null, null, null, null);
+
+        InOrder order = inOrder(userTaskRepository, userTaskCandidateWriter);
+        order.verify(userTaskRepository).save(any(UserTaskEntity.class));
+        order.verify(userTaskCandidateWriter)
+            .writeCandidates(activityId, "managers", "ivanov,petrov");
     }
 
     @Test
@@ -54,7 +79,7 @@ class UserTaskDbOperationsImplTest {
         ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(activity.getProcessInstanceId()); pi.setProcessDefinitionId(UUID.randomUUID());
         when(activityRepository.findById(activityId)).thenReturn(Optional.of(activity));
         when(processInstanceRepository.findById(activity.getProcessInstanceId())).thenReturn(Optional.of(pi));
-        db.createUserTask(activityId, "ivanov", "managers", "form1", null, null, "2030-01-01", "2030-01-05", 75);
+        db.createUserTask(activityId, "ivanov", "managers", null, "form1", null, null, "2030-01-01", "2030-01-05", 75);
         ArgumentCaptor<UserTaskEntity> captor = ArgumentCaptor.forClass(UserTaskEntity.class);
         verify(userTaskRepository).save(captor.capture());
         assertThat(captor.getValue().getDueDate()).isEqualTo("2030-01-01");

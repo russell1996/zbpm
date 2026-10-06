@@ -92,16 +92,14 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
             specifications.add(
                 UserTaskRepository.byCandidateGroup(storableGroupName(query.getCandidateGroup())));
         }
-        // WO-IN-2 C0.2 — the same defect one parameter over: ?candidateUser= was DECLARED and read
-        // nowhere, so it silently answered with MORE than was asked for. There is no
-        // user_tasks.candidate_users column and no candidates table (escalation E-IN2-1), so this
-        // WO creates neither. CTO decision 2026-10-06 — variant (B): refuse the request out loud
-        // instead of pretending to filter. A silently ignored filter is strictly worse than a
-        // broken call, and a blank value stays "no filter" like every other optional parameter.
+        // WO-IN-3: candidateUser перестал быть отказом. До этого значения не существовало ни в
+        // одной строке (эскалация E-IN2-1), и CTO решил тогда не притворяться, что фильтр
+        // работает, — отказом 400 (вариант B). Вариант (A), нормализованная таблица
+        // user_task_candidates, теперь написан: роль USER хранится рядом с GROUP, и оба
+        // фильтра читают её одним EXISTS по индексу (kind, candidate, user_task_id).
         if (hasText(query.getCandidateUser())) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_CANDIDATE_USER_FILTER",
-                "candidateUser is not supported: candidate users are not stored",
-                Map.of("candidateUser", query.getCandidateUser()));
+            specifications.add(
+                UserTaskRepository.byCandidateUser(storableCandidateUser(query.getCandidateUser())));
         }
         // WO-IN-2 criterion 3
         if (hasText(query.getBpmnElementId())) {
@@ -194,6 +192,9 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
      * <p>Unreachable through the REST layer today — nothing in the {@code src/main} trees writes
      * {@code user_group} (there is no group-management endpoint), so this only guards the moment a
      * group UI appears (group-UI, EPIC-EXTERNAL-INTEGRATION).
+     *
+     * <p>WO-IN-3: тело и код ошибки остались БАЙТ-ВО-БАЙТ прежними — фильтр Groups переехал на
+     * таблицу кандидатов, но контракт отказа не менялся (это публичный код ответа).
      */
     private static String storableGroupName(String groupName) {
         String trimmed = groupName.trim();
@@ -201,6 +202,22 @@ public class UserTaskQueryOperationsImpl implements UserTaskQueryOperations {
             throw new ApiException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_GROUP_NAME",
                 "A group name may not contain the '" + CandidateGroups.DELIMITER + "' list delimiter",
                 Map.of("group", groupName));
+        }
+        return trimmed;
+    }
+
+    /**
+     * WO-IN-3: то же правило для кандидата-ПОЛЬЗОВАТЕЛЯ, отдельным кодом — контракт группы не
+     * трогаем. Причина та же: список кандидатов приходит из BPMN-атрибута через запятую, и имя с
+     * запятой в нём не представимо. Молча вернуть пустую выборку здесь нельзя — это был бы ответ
+     * «у тебя таких задач нет» на вопрос о существующей задаче.
+     */
+    private static String storableCandidateUser(String userName) {
+        String trimmed = userName.trim();
+        if (!CandidateGroups.isStorable(trimmed)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "UNSUPPORTED_CANDIDATE_USER_NAME",
+                "A candidate user name may not contain the '" + CandidateGroups.DELIMITER + "' list delimiter",
+                Map.of("candidateUser", userName));
         }
         return trimmed;
     }
