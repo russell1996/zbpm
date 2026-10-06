@@ -38,14 +38,27 @@ public final class BpmnSupportScanner {
     private static final String BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL";
 
     /**
+     * The XML Schema-instance namespace, read for {@code xsi:type}. Looked up by NAMESPACE, so a
+     * document may bind it to any prefix ({@code xsi:}, {@code xi:}, the default namespace).
+     * The JDK exposes no constant for it ({@code XMLConstants} has none), hence the literal.
+     */
+    private static final String XSI_NS = "http://www.w3.org/2001/XMLSchema-instance";
+
+    /**
      * The element kinds multi-instance is NOT implemented for. MI binds only on serviceTask and
      * userTask (both call {@code attachMultiInstance}); on a container it parses into an ordinary
      * single-instance element and runs once — the silent semantic change this WO closes.
      *
      * <p>Deliberately a positive list, not "everything except serviceTask/userTask": CTO scoped this
      * WO to containers, and widening it silently would change behaviour for element kinds this WO
-     * never characterised (see the report's "найдено рядом" for multiInstanceLoopCharacteristics on
-     * intermediateThrowEvent, which keeps today's behaviour).
+     * never characterised. WO-ENG-34 раунд 10 уточнил формулировку: прежняя версия этого javadoc
+     * обосновывала сужение тем, что multiInstanceLoopCharacteristics встречается на
+     * {@code intermediateThrowEvent}, — но {@code tThrowEvent} по XSD не содержит
+     * {@code loopCharacteristics}, так что такого документа не бывает. Реальное основание: MI не
+     * привязывается ещё на шести видах activity ({@code task}, {@code scriptTask},
+     * {@code manualTask}, {@code businessRuleTask}, {@code sendTask}, {@code receiveTask}), и они
+     * сохраняют сегодняшнее поведение; решение о расширении списка — за CTO (рецензия Н-2,
+     * follow-up WO).
      */
     private static final Set<String> MULTI_INSTANCE_UNSUPPORTED_HOSTS =
         Set.of("subProcess", "transaction", "adHocSubProcess", "callActivity");
@@ -133,7 +146,10 @@ public final class BpmnSupportScanner {
 
         // 3. the standard BPMN loop: no loop field exists anywhere in the model, so the activity
         //    executed exactly ONCE while the XML asked for up to loopMaximum iterations.
-        List<String> standardLoops = idsOfElementsWithChild(document, null, "standardLoopCharacteristics");
+        //    Both schema-legal spellings count — see loopMarkerOf for why the element NAME alone
+        //    was not enough (an independent red-team pass defeated the name-only check with one
+        //    XSD-legal `xsi:type` attribute on 22 of 22 host × type combinations).
+        List<String> standardLoops = idsOfElementsWithLoopKind(document, null, LoopKind.STANDARD);
         if (!standardLoops.isEmpty()) {
             findings.add(new UnsupportedBpmnConstruct(
                 UnsupportedBpmnConstructCodes.UNSUPPORTED_STANDARD_LOOP, standardLoops,
@@ -144,8 +160,8 @@ public final class BpmnSupportScanner {
         }
 
         // 4. multi-instance on a container: parsed into an ordinary single-instance container.
-        List<String> multiInstanceOnContainers = idsOfElementsWithChild(
-            document, MULTI_INSTANCE_UNSUPPORTED_HOSTS, "multiInstanceLoopCharacteristics");
+        List<String> multiInstanceOnContainers = idsOfElementsWithLoopKind(
+            document, MULTI_INSTANCE_UNSUPPORTED_HOSTS, LoopKind.MULTI_INSTANCE);
         if (!multiInstanceOnContainers.isEmpty()) {
             findings.add(new UnsupportedBpmnConstruct(
                 UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_CONTAINER,
@@ -154,6 +170,24 @@ public final class BpmnSupportScanner {
                     + String.join(", ", multiInstanceOnContainers) + " carries "
                     + "multiInstanceLoopCharacteristics on a container and would run once. "
                     + "Move the multi-instance marker onto a task inside the container, or drop it."));
+        }
+
+        // 4b. multi-instance written as the schema head element <loopCharacteristics xsi:type=…>,
+        //     on a host that is NOT a refused container. Distinct code on purpose: the marker is
+        //     refused here because it is UNREADABLE, not because multi-instance is unsupported on
+        //     that kind — the direct spelling on the same host is checked by rule 4, and the two
+        //     answers must not be folded into one code whose message would be false here.
+        List<String> unreadableMultiInstance = idsOfUnreadableMultiInstance(document);
+        if (!unreadableMultiInstance.isEmpty()) {
+            findings.add(new UnsupportedBpmnConstruct(
+                UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE,
+                unreadableMultiInstance,
+                "Multi-instance written as <loopCharacteristics xsi:type=\"…"
+                    + "tMultiInstanceLoopCharacteristics\"> is not readable by this engine: "
+                    + String.join(", ", unreadableMultiInstance) + " would run once instead of "
+                    + "creating one instance per item, on every activity kind including the ones "
+                    + "that do support multi-instance. Write the concrete element "
+                    + "<multiInstanceLoopCharacteristics> instead."));
         }
 
         // 5. conditional start event: became an ordinary none-start (the condition was parsed but
@@ -180,6 +214,169 @@ public final class BpmnSupportScanner {
         }
 
         return List.copyOf(findings);
+    }
+
+    /**
+     * Ids of every BPMN element of one of {@code hostNames} that carries a loop marker of
+     * {@code kind} (null = any host). Document order, de-duplicated: a stable answer keeps the 400
+     * message deterministic for the same model.
+     */
+    private static List<String> idsOfElementsWithLoopKind(Document document,
+                                                           Set<String> hostNames,
+                                                           LoopKind kind) {
+        Set<String> seen = new LinkedHashSet<>();
+        collectLoopMarkers(document.getDocumentElement(), seen, hostNames, kind);
+        return List.copyOf(seen);
+    }
+
+    /**
+     * Ids of the hosts whose multi-instance marker is written in the spelling the parser cannot
+     * read, and which rule 4 does not already refuse as containers — i.e. the honest remainder,
+     * with no overlap between the two findings.
+     */
+    private static List<String> idsOfUnreadableMultiInstance(Document document) {
+        Set<String> seen = new LinkedHashSet<>();
+        collectUnreadableMultiInstance(document.getDocumentElement(), seen);
+        return List.copyOf(seen);
+    }
+
+    private static void collectUnreadableMultiInstance(Element element, Set<String> ids) {
+        NodeList children = element.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node child = children.item(i);
+            if (child.getNodeType() != Node.ELEMENT_NODE || !isBpmn((Element) child)) {
+                continue;
+            }
+            Element childElement = (Element) child;
+            LoopMarker marker = loopMarkerOf(childElement);
+            if (marker.kind() == LoopKind.MULTI_INSTANCE && marker.unreadableSpelling()
+                && !MULTI_INSTANCE_UNSUPPORTED_HOSTS.contains(localName(childElement))) {
+                ids.add(label(childElement));
+            }
+            collectUnreadableMultiInstance(childElement, ids);
+        }
+    }
+
+    private static void collectLoopMarkers(Element element, Set<String> ids, Set<String> hostNames,
+                                           LoopKind kind) {
+        NodeList children = element.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node child = children.item(i);
+            if (child.getNodeType() != Node.ELEMENT_NODE || !isBpmn((Element) child)) {
+                continue;
+            }
+            Element childElement = (Element) child;
+            if ((hostNames == null || hostNames.contains(localName(childElement)))
+                && loopMarkerOf(childElement).kind() == kind) {
+                ids.add(label(childElement));
+            }
+            // recurse: sub-process/transaction/adHoc bodies carry the same element kinds, and a
+            // construct hidden inside a nested container must be found exactly like a top-level one
+            collectLoopMarkers(childElement, ids, hostNames, kind);
+        }
+    }
+
+    /** Which loop an element declares, if any: the two concrete kinds of {@code tLoopCharacteristics}. */
+    private enum LoopKind {
+        NONE, STANDARD, MULTI_INSTANCE
+    }
+
+    /**
+     * A loop marker on one host: which kind of loop it declares, and whether it is spelled in the
+     * form the parser cannot read.
+     *
+     * @param unreadableSpelling  true for {@code <loopCharacteristics xsi:type="…">} — the schema
+     *                             head element, which JAXB binds by ELEMENT NAME and therefore
+     *                             silently drops (a multi-instance marker this way leaves the
+     *                             activity running once, on every kind, including serviceTask and
+     *                             userTask where multi-instance itself IS implemented)
+     */
+    private record LoopMarker(LoopKind kind, boolean unreadableSpelling) {
+        private static final LoopMarker NONE = new LoopMarker(LoopKind.NONE, false);
+
+        static LoopMarker of(LoopKind kind) {
+            return kind == LoopKind.NONE ? NONE : new LoopMarker(kind, false);
+        }
+    }
+
+    /**
+     * The loop marker one host carries, classified by the TYPE it resolves to — never by the
+     * element name alone.
+     *
+     * <p>Why that matters, concretely: BPMN 2.0 declares the marker as a substitution group over an
+     * abstract type ({@code Semantic.xsd:974} declares {@code loopCharacteristics} of the abstract
+     * {@code tLoopCharacteristics} {@code :975}; {@code standardLoopCharacteristics} {@code :1409}
+     * and {@code multiInstanceLoopCharacteristics} {@code :1039} are its concrete members). Because
+     * the type is abstract, the head spelling is legal only WITH an {@code xsi:type} — and real
+     * exporters write it exactly that way. A name-only matcher therefore saw a loop marker, heard
+     * nothing, and let a {@code loopMaximum="3"} activity deploy as a once-run activity: the check
+     * this class exists for, defeated by one attribute.
+     *
+     * <p>{@code xsi:type} is resolved through the NAMESPACE, never through the prefix text: the
+     * prefix is looked up in the document ({@link Element#lookupNamespaceURI}) and only a type
+     * declared in the BPMN namespace counts. Matching the string instead would both miss a document
+     * that binds the BPMN namespace to a different prefix and invent a verdict about a
+     * foreign-namespace type that merely happens to be spelled the same.
+     */
+    private static LoopMarker loopMarkerOf(Element host) {
+        NodeList children = host.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node child = children.item(i);
+            if (child.getNodeType() != Node.ELEMENT_NODE || !isBpmn((Element) child)) {
+                continue;
+            }
+            Element childElement = (Element) child;
+            String name = localName(childElement);
+            switch (name) {
+                case "standardLoopCharacteristics" -> {
+                    return LoopMarker.of(LoopKind.STANDARD);
+                }
+                case "multiInstanceLoopCharacteristics" -> {
+                    return LoopMarker.of(LoopKind.MULTI_INSTANCE);
+                }
+                case "loopCharacteristics" -> {
+                    LoopKind kind = loopKindOfXsiType(childElement);
+                    return kind == LoopKind.NONE
+                        ? LoopMarker.NONE
+                        : new LoopMarker(kind, true);
+                }
+                default -> {
+                    // not a loop marker (a conditionalEventDefinition, an extension element, …)
+                }
+            }
+        }
+        return LoopMarker.NONE;
+    }
+
+    /**
+     * The loop kind the head element's {@code xsi:type} names, or {@link LoopKind#NONE}.
+     *
+     * <p>An unresolvable or foreign type yields NONE rather than a guess: the document would fail
+     * schema validation anyway, and a scanner that decided "that looks like a loop" would refuse a
+     * model over a type it could not read — the mirror image of the defect above.
+     */
+    private static LoopKind loopKindOfXsiType(Element head) {
+        String typeName = head.getAttributeNS(XSI_NS, "type");
+        if (typeName == null || typeName.isBlank()) {
+            return LoopKind.NONE;
+        }
+        int colon = typeName.indexOf(':');
+        String prefix = colon < 0 ? "" : typeName.substring(0, colon);
+        String local = colon < 0 ? typeName : typeName.substring(colon + 1);
+        if (local.isBlank()) {
+            return LoopKind.NONE;
+        }
+        // an unprefixed QName in an attribute value resolves through the DEFAULT namespace (XML
+        // Schema Part 1, §3.4.5) — resolving "" as "unknown" would miss a document that puts BPMN
+        // in the default namespace, which is how hand-written models are often written
+        if (!BPMN_NS.equals(head.lookupNamespaceURI(prefix.isEmpty() ? null : prefix))) {
+            return LoopKind.NONE;
+        }
+        return switch (local) {
+            case "tStandardLoopCharacteristics" -> LoopKind.STANDARD;
+            case "tMultiInstanceLoopCharacteristics" -> LoopKind.MULTI_INSTANCE;
+            default -> LoopKind.NONE;
+        };
     }
 
     /**
@@ -364,6 +561,7 @@ public final class BpmnSupportScanner {
         UnsupportedBpmnConstructCodes.UNSUPPORTED_COMPLEX_GATEWAY,
         UnsupportedBpmnConstructCodes.UNSUPPORTED_STANDARD_LOOP,
         UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_CONTAINER,
+        UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE,
         UnsupportedBpmnConstructCodes.UNSUPPORTED_CONDITIONAL_START_EVENT,
         UnsupportedBpmnConstructCodes.UNRESOLVED_SEQUENCE_FLOW_REF);
 
@@ -373,6 +571,12 @@ public final class BpmnSupportScanner {
         public static final String UNSUPPORTED_COMPLEX_GATEWAY = "UNSUPPORTED_COMPLEX_GATEWAY";
         public static final String UNSUPPORTED_STANDARD_LOOP = "UNSUPPORTED_STANDARD_LOOP";
         public static final String UNSUPPORTED_MULTI_INSTANCE_CONTAINER = "UNSUPPORTED_MULTI_INSTANCE_CONTAINER";
+        /**
+         * WO-ENG-34 раунд 10: multi-instance written as {@code <loopCharacteristics xsi:type=…>}.
+         * Separate from {@link #UNSUPPORTED_MULTI_INSTANCE_CONTAINER} so neither code's message can
+         * ever be false about the case it is now shown for.
+         */
+        public static final String UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE = "UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE";
         public static final String UNSUPPORTED_CONDITIONAL_START_EVENT = "UNSUPPORTED_CONDITIONAL_START_EVENT";
         public static final String UNRESOLVED_SEQUENCE_FLOW_REF = "UNRESOLVED_SEQUENCE_FLOW_REF";
 
