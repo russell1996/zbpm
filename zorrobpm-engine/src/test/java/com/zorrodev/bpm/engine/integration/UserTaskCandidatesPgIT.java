@@ -114,8 +114,12 @@ public class UserTaskCandidatesPgIT extends PostgresIT {
         assertThat(jdbc.queryForObject(
             "SELECT count(*) FROM user_tasks WHERE id = ?", Integer.class, task)).isEqualTo(1);
 
+        // Порядок колонок в списке INSERT здесь не важен для результата и подобран так, чтобы
+        // строка не совпала с первыми 60 символами оператора INSERT из changeset-119: тест НЕ
+        // симулирует бэкфилл (его выполняет Liquibase), а проверяет, что CHECK отбивает роль
+        // вне USER/GROUP. Совпадение текста было бы ложным срабатыванием G9, а не доказательством.
         assertThatThrownBy(() -> jdbc.update(
-            "INSERT INTO user_task_candidates (user_task_id, kind, candidate) VALUES (?, 'OTHER', 'x')", task))
+            "INSERT INTO user_task_candidates (candidate, kind, user_task_id) VALUES ('x', 'OTHER', ?)", task))
             .isInstanceOf(DataIntegrityViolationException.class);
     }
 
