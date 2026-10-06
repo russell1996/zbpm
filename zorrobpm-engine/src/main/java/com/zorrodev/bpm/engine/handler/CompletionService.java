@@ -1104,6 +1104,14 @@ public class CompletionService {
                     dbService.decrementPendingBranches(resumeToken);
                 }
                 flowNavigator.proceedToOutgoing(resumePi, resumeToken, bpmn, boundaryElement, executor);
+                // WO-C8-35 (CR-09) раунд 6 (BLOCKER-5): хост этой границы погиб ЕЩЁ В
+                // EventTrigger.fireBoundary, а хвост границы отложен canceling-фазой до последнего
+                // листенера — то есть перепроверки припаркованных join-ов на погашении хоста не
+                // было и не будет: fireBoundary ушёл на continue. Здесь, после continue границы,
+                // никто в инстансе уже не может доставить в припаркованный join — будим его.
+                // Без этой строки ветвь ТИХО терялась: join COMPLETED=0, taskAfter не создан,
+                // инцидентов 0, а инстанс помечался завершённым (живой прогон red-team раунда 4).
+                inclusiveGatewayHandler.resumeParkedInclusiveJoins(resumePi, resumeToken, bpmn, executor);
             }
         } else {
             if (!dbService.hasOpenCancelingListenerPhaseInInstance(resumePi)) {

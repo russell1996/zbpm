@@ -57,13 +57,41 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class DeactivationWakeupCoverageTest {
 
-    private static final Path MAIN = Path.of("src/main/java");
+    /**
+     * Деревья src/main, которые ОБЯЗАН быть под охватом: модуль движка и REST-модуль
+     * (операторская отмена инстанса — {@code ProcessInstanceRuntimeOperationsImpl}).
+     *
+     * <p>Раунд 6, minor (в) рецензии r4: тест заявлял, что находит ВСЕ места деактивации,
+     * а сканировал один модуль из девяти — путь {@code src/main/java} относительный, и cwd
+     * surefire у каждого модуля свой. Пути заданы ЯВНО, а не «относительно текущего каталога»:
+     * иначе добавление модуля снова сделало бы охват молчаливо неполным.
+     */
+    private static final List<Path> MAIN_ROOTS = List.of(
+        Path.of("src/main/java"),
+        Path.of("../zorrobpm-rest/src/main/java"));
+
+    /**
+     * Методы, которые ОБЯЗАНЫ содержать вызов {@code resumeParkedInclusiveJoins} — позитивное
+     * требование, дополняющее ветковый сканер.
+     *
+     * <p>Зачем оно нужно рядом с ветками: ветковый сканер отвечает на вопрос «есть ли перепроверка
+     * В ЭТОЙ ветке», а у {@code EventTrigger.fireBoundary} перепроверка стоит в КОНЦЕ ветки
+     * interrupting — ПОСЛЕ четырёх вариантов гашения хоста и ПОСЛЕ {@code continue} на
+     * canceling-фазу. Снять её — значит оставить четыре ветки без перепроверки, и ветковый
+     * сканер этого не видит: они в белом списке (причина обоснована), а вызова в их тексте нет.
+     * Именно этим держался мутационный прогон red-team раунда 4 («удаление резюма из
+     * {@code fireBoundary} не роняет НИ ОДИН тест»). Здесь проверяется сам факт вызова в методе,
+     * по тексту БЕЗ комментариев (упоминание резюма в комментарии вызовом не считается).
+     */
+    private static final List<String> RESUME_REQUIRED_METHODS = List.of(
+        "EventTrigger.java#fireBoundary",
+        "CompletionService.java#advanceOrFinishCanceling");
 
     /**
      * Число мест деактивации на этом дереве. ЛЮБОЕ его изменение валит тест: новое место
      * обязано быть либо разобрано (перепроверка в его ветке), либо внесено в белый список.
      */
-    private static final int EXPECTED_SITE_COUNT = 80;
+    private static final int EXPECTED_SITE_COUNT = 112;
 
     /** site key -> причина, почему перепроверка здесь не нужна. Непустая — проверяется тестом. */
     private static final Map<String, String> WHITELIST = new LinkedHashMap<>();
@@ -110,18 +138,39 @@ class DeactivationWakeupCoverageTest {
         + "activity). Родительский инстанс этим не тронут — его припаркованные join-ы не теряют "
         + "доставщика ";
     private static final String R12 =
-        "ветка ПРЕРЫВАЮЩЕЙ границы в EventTrigger.fireBoundary: хост (или его MI-копии) "
-        + "гасятся, и перепроверка припаркованных join-ов для ВСЕХ вариантов этой ветки стоит "
-        + "единственным вызовом в конце той же ветки interrupting — дублировать её в каждом "
-        + "варианте нельзя ";
+        "вариант гашения хоста ПРЕРЫВАЮЩЕЙ границы в EventTrigger.fireBoundary. Эти ветки "
+        + "исполняются только когда canceling-фаза НЕ открыта (openForActivities вернул false "
+        + "и continue не сработал) — тогда перепроверка стоит в конце той же ветки interrupting. "
+        + "ВАРИАНТ С canceling-листенером уходит на continue РАНЬШЕ и в эту ветку не попадает: "
+        + "её хвост отрабатывает в CompletionService.advanceOrFinishCanceling, и перепроверку "
+        + "делает он (см. R15) — прошлая формулировка причины утверждала обратное, и это держало "
+        + "мутацию «убрать резюм из fireBoundary» зелёной (BLOCKER-5, red-team раунда 4)";
+    private static final String R16 =
+        "операторская отмена инстанса (REST): гасятся ВСЕ activity инстанса и сам инстанс "
+        + "помечается отменённым в этом же методе (cancelProcessInstance). У припаркованного "
+        + "join этого инстанса нет продолжения — воскрешать его значит выполнять хвост "
+        + "ОТМЕНЁННОГО процесса, тот же класс, что R08/R10 ";
+    private static final String R17 =
+        "НЕПРЕРЫВАЮЩИЙ catch границы (escalation на границе сабпроцесса): в этой ветке НИЧЕГО не "
+        + "гасится — гашение scope стоит в СОСЕДНЕЙ ветке isInterrupting, и у неё своя причина "
+        + "(R08). Здесь создаётся новая ветвь токена и продолжается исходящий поток границы, то "
+        + "есть это собственное продолжение: доставщик не умирает ";
+    private static final String R15 =
+        "отложенный границей хвост: продолжение прерывающей границы выполняется ПОСЛЕ того, "
+        + "как её хост уже погашен (WO-C8-28 canceling-фаза откладывает хвост до последнего "
+        + "листенера). Хост погиб ДО этого continue, поэтому никто больше не перепроверит "
+        + "припаркованные join-ы, кроме этого места — без него ветвь теряется, а инстанс "
+        + "помечается завершённым (BLOCKER-5) ";
     private static final String R13 =
         "событийный шлюз: отменяются ПРОИГРАВШИЕ catch-братья, победитель идёт дальше в том "
         + "же signal(), где перепроверка припаркованных join-ов уже стоит "
         + "(CompletionService.signal, после proceedToOutgoing) ";
     private static final String R14 =
-        "это САМА строка срабатывающего join-а: activity join-а закрывается, а продолжение "
-        + "идёт вниз в том же методе (processFlow + executor.execute). Перепроверка здесь "
-        + "будила бы саму себя — бесконечный шаг resume; её место после continue ";
+        "шлюз-«проход» (ровно один вход, ни сплит ни join): activity этого шлюза закрывается, и "
+        + "тот же токен идёт дальше по исходящему потоку. Доставщик не умирает — ветвь остаётся "
+        + "в полёте, а её приход в шлюз ниже по потоку сам переоценивает готовность; припаркованная "
+        + "ветвь в таком шлюзе учитывается множеством hasParkedJoinReaching. Перепроверка здесь "
+        + "будила бы сам шлюз, через который прошла ветвь (бесконечный шаг resume) "; 
 
     static {
         // ── собственное продолжение элемента: activity этого элемента закрывается, и…
@@ -130,11 +179,11 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("ConditionalCatchHandler.java#handle[if (conditionHolds(bpmnElement, variables)) {]|dbService.completeActivity(activityId)", R01);
         WHITELIST.put("EndEventHandler.java#handle[]|dbService.completeActivity(activityId)", R01);
         WHITELIST.put("EventBasedGatewayHandler.java#handle[]|dbService.completeActivity(activityId)", R01);
-        WHITELIST.put("ExclusiveGatewayHandler.java#handle[if (defaultFlowId == null) {]|dbService.completeActivity(activityId)", R01);
+        WHITELIST.put("ExclusiveGatewayHandler.java#handle[if (outgoings.size() > 1 && incoming.size() == 1) {]|dbService.completeActivity(activityId)", R01);
         WHITELIST.put("ExclusiveGatewayHandler.java#handle[} else if (outgoings.size() == 1 && incoming.size() == 1) {]|dbService.completeActivity(activityId)", R01);
         WHITELIST.put("ExclusiveGatewayHandler.java#handle[} else if (outgoings.size() == 1 && incoming.size() > 1) {]|dbService.completeActivity(activityId)", R01);
-        WHITELIST.put("FlowNavigator.java#finishAdHocScope0[if (key != null) {]|dbService.completeActivity(scope.getId())", R01);
-        WHITELIST.put("FlowNavigator.java#finishBranch[&& subProcessElement.getExtensions().getIoMappingExtension() != null) {]|dbService.completeActivity(subProcessActivityId)", R01);
+        WHITELIST.put("FlowNavigator.java#finishAdHocScope0[]|dbService.completeActivity(scope.getId())", R01);
+        WHITELIST.put("FlowNavigator.java#finishBranch[if (endToken.getScopeActivityId() != null) {]|dbService.completeActivity(subProcessActivityId)", R01);
         WHITELIST.put("FlowNavigator.java#finishBranch[if (parentActivityId != null) {]|dbService.completeActivity(parentActivityId)", R01);
         WHITELIST.put("IntermediateThrowEventHandler.java#handle[]|dbService.completeActivity(activityId)", R01);
         WHITELIST.put("LinkThrowHandler.java#handle[]|dbService.completeActivity(activityId)", R01);
@@ -145,8 +194,8 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("SignalThrowHandler.java#handle[]|dbService.completeActivity(activityId)", R01);
         WHITELIST.put("StartThrowEventHandler.java#handle[]|dbService.completeActivity(activityId)", R01);
         WHITELIST.put("SyncTaskHandler.java#handle[]|dbService.completeActivity(activityId)", R01);
-        WHITELIST.put("SyncTaskHandler.java#handle[if (ext.getResultVariable() != null && !ext.getResultVariable().isBlank()) {]|dbService.completeActivity(activityId)", R01);
-        WHITELIST.put("SyncTaskHandler.java#handle[if (resultVariable != null && !resultVariable.isBlank()) {]|dbService.completeActivity(activityId)", R01);
+        WHITELIST.put("SyncTaskHandler.java#handle[]|dbService.completeActivity(activityId)", R01);
+        WHITELIST.put("SyncTaskHandler.java#handle[]|dbService.completeActivity(activityId)", R01);
         // ── элемент закрывается и НИЧЕГО не продолжает (нет исходящих потоков / ветв…
         WHITELIST.put("FlowNavigator.java#processFlow[if (flowActivityId != null) {]|dbService.completeActivity(flowActivityId)", R02);
         // ── ad-hoc scope закрывается: гасятся его СОБСТВЕННЫЕ незавершённые activity…
@@ -154,44 +203,44 @@ class DeactivationWakeupCoverageTest {
         // ── неподдерживаемый тип элемента: токен НЕ паркуется, а уходит в ERROR + ин…
         WHITELIST.put("ActivityServiceImpl.java#execute[if (handler == null) {]|dbService.errorActivity(activityId)", R04);
         // ── исход ВИДЕН: activity уходит в ERROR и поднимается инцидент — оператор р…
-        WHITELIST.put("ActivityServiceImpl.java#throwServiceTaskError[if (handled) {]|dbService.errorActivity(serviceTaskId)", R05);
+        WHITELIST.put("ActivityServiceImpl.java#throwServiceTaskError[]|dbService.errorActivity(serviceTaskId)", R05);
         WHITELIST.put("AdHocSubProcessHandler.java#raiseIncident[]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("CompensationThrowHandler.java#runCompensation[} catch (RuntimeException e) {]|dbService.errorActivity(activityId)", R05);
-        WHITELIST.put("ElementListenerPhaseService.java#failPhaseListener[if (remaining > 0) {]|dbService.errorActivity(activityId)", R05);
+        WHITELIST.put("ElementListenerPhaseService.java#failPhaseListener[]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("EndEventHandler.java#handle[if (!handled) {]|dbService.errorActivity(activityId)", R05);
-        WHITELIST.put("IncidentService.java#raiseIncident[if (activityId == null) {]|dbService.errorActivity(activityId)", R05);
+        WHITELIST.put("IncidentService.java#raiseIncident[]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("MultiInstanceExecutor.java#raiseCardinalityIncident[]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("MultiInstanceExecutor.java#spawnMiInstance[} catch (EngineException e) {]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("UserTaskHandler.java#createTaskRow[} catch (com.zorrodev.bpm.contract.exception.EngineException e) {]|dbService.errorActivity(activityId)", R05);
         // ── отказ слушателя исчерпал бюджет: activity в ERROR + инцидент (исход виде…
-        WHITELIST.put("CompletionService.java#failAssigningListener[if (remaining > 0) {]|dbService.errorActivity(serviceTaskId)", R06);
-        WHITELIST.put("CompletionService.java#failCancelingListener[if (remaining > 0) {]|dbService.errorActivity(serviceTaskId)", R06);
-        WHITELIST.put("CompletionService.java#failCompletingListener[if (remaining > 0) {]|dbService.errorActivity(serviceTaskId)", R06);
-        WHITELIST.put("CompletionService.java#failCreatingListener[if (remaining > 0) {]|dbService.errorActivity(serviceTaskId)", R06);
-        WHITELIST.put("CompletionService.java#failSharedBudget[if (remaining > 0) {]|dbService.errorActivity(serviceTaskId)", R06);
-        WHITELIST.put("CompletionService.java#failUpdatingListener[if (remaining > 0) {]|dbService.errorActivity(serviceTaskId)", R06);
-        WHITELIST.put("CompletionService.java#handleAssigningListeners[|| activity.getStatus() == ActivityStatus.IN_PROGRESS)) {]|dbService.errorActivity(serviceTaskId)", R06);
-        WHITELIST.put("CompletionService.java#handleCancelingListeners[if (pendingCanceling >= 0 && pendingCanceling < cancelingListenersRt.size()) {]|dbService.errorActivity(serviceTaskId)", R06);
-        WHITELIST.put("CompletionService.java#handleUpdatingListeners[if (pendingUpdating + 1 < updatingListenersRt.size()) {]|dbService.errorActivity(serviceTaskId)", R06);
+        WHITELIST.put("CompletionService.java#failAssigningListener[&& dbService.getPendingAssigningListenerIndex(serviceTaskId) != null) {]|dbService.errorActivity(serviceTaskId)", R06);
+        WHITELIST.put("CompletionService.java#failCancelingListener[&& dbService.getPendingCancelingListenerIndex(serviceTaskId) != null) {]|dbService.errorActivity(serviceTaskId)", R06);
+        WHITELIST.put("CompletionService.java#failCompletingListener[&& dbService.getPendingCompletingListenerIndex(serviceTaskId) != null) {]|dbService.errorActivity(serviceTaskId)", R06);
+        WHITELIST.put("CompletionService.java#failCreatingListener[&& dbService.getPendingCreatingListenerIndex(serviceTaskId) != null) {]|dbService.errorActivity(serviceTaskId)", R06);
+        WHITELIST.put("CompletionService.java#failSharedBudget[]|dbService.errorActivity(serviceTaskId)", R06);
+        WHITELIST.put("CompletionService.java#failUpdatingListener[&& dbService.getPendingUpdatingListenerIndex(serviceTaskId) != null) {]|dbService.errorActivity(serviceTaskId)", R06);
+        WHITELIST.put("CompletionService.java#handleAssigningListeners[if (pendingAssigning != null) {]|dbService.errorActivity(serviceTaskId)", R06);
+        WHITELIST.put("CompletionService.java#handleCancelingListeners[if (pendingCanceling != null) {]|dbService.errorActivity(serviceTaskId)", R06);
+        WHITELIST.put("CompletionService.java#handleUpdatingListeners[if (pendingUpdating != null) {]|dbService.errorActivity(serviceTaskId)", R06);
         // ── старая ERROR-строка отменяется, а элемент сразу переисполняется на том ж…
-        WHITELIST.put("IncidentService.java#resolveIncident[if (variables != null && !variables.isEmpty()) {]|dbService.cancelActivity(incident.getActivityId())", R07);
+        WHITELIST.put("IncidentService.java#resolveIncident[]|dbService.cancelActivity(incident.getActivityId())", R07);
         // ── погашен ВЕСЬ scope (scope сабпроцесса / scope-контейнер границы), все ег…
         WHITELIST.put("CancelEndHandler.java#processCancelEnd[]|dbService.completeActivity(activityId)", R08);
-        WHITELIST.put("CancelEndHandler.java#processCancelEnd[if (endToken == null || endToken.getScopeActivityId() == null) {]|dbService.cancelActiveActivitiesForToken(tokenId)", R08);
-        WHITELIST.put("CancelEndHandler.java#processCancelEnd[if (endToken == null || endToken.getScopeActivityId() == null) {]|dbService.cancelActivity(scopeActivityId)", R08);
+        WHITELIST.put("CancelEndHandler.java#processCancelEnd[]|dbService.cancelActiveActivitiesForToken(tokenId)", R08);
+        WHITELIST.put("CancelEndHandler.java#processCancelEnd[]|dbService.cancelActivity(scopeActivityId)", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwError[if (boundary != null) { #2]|dbService.cancelActiveActivitiesForToken(tok.getId())", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwError[if (boundary != null) { #2]|dbService.cancelActivity(scope.getId())", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[if (isInterrupting(boundary)) {]|dbService.cancelActiveActivitiesForToken(tok.getId())", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[if (isInterrupting(boundary)) {]|dbService.cancelActivity(scope.getId())", R08);
         // ── TERMINATE: гасится весь инстанс и доводится до конца в этом же хвосте. У…
         WHITELIST.put("EndEventHandler.java#handle[for (Activity active : inScope) {]|dbService.cancelActivity(active.getId())", R09);
-        WHITELIST.put("EndEventHandler.java#handle[for (Activity active : inScope) {]|dbService.cancelActivity(scopeActivityId)", R09);
+        WHITELIST.put("EndEventHandler.java#handle[]|dbService.cancelActivity(scopeActivityId)", R09);
         WHITELIST.put("EndEventHandler.java#handle[if (token == null || token.getScopeActivityId() == null) {]|dbService.cancelActiveActivities(ctx.processInstanceId())", R09);
         // ── прерывающий event-subprocess ЗАМЕЩАЕТ основной поток по BPMN: его запуск…
         WHITELIST.put("EventTrigger.java#triggerEventSubprocess[if (ext.isInterrupting()) {]|dbService.cancelActiveActivities(processInstanceId)", R10);
         // ── scope-контейнер границы: гасятся activity СВОЕГО scope и его ДОЧЕРНИЕ ИН…
         WHITELIST.put("EventTrigger.java#cancelScopeContainer[for (Activity active : inScope) {]|dbService.cancelActivity(active.getId())", R11);
-        WHITELIST.put("EventTrigger.java#cancelScopeContainer[for (Activity active : inScope) {]|dbService.cancelActivity(hostActivityId)", R11);
+        WHITELIST.put("EventTrigger.java#cancelScopeContainer[]|dbService.cancelActivity(hostActivityId)", R11);
         WHITELIST.put("EventTrigger.java#cancelScopeContainer[for (UUID childInstanceId : dbService.findRunningChildInstanceIds(hostActivityId)) {]|dbService.cancelActiveActivities(childInstanceId)", R11);
         // ── ветка ПРЕРЫВАЮЩЕЙ границы в EventTrigger.fireBoundary: хост (или его MI-…
         WHITELIST.put("EventTrigger.java#fireBoundary[for (Activity instance : ownInstances) {]|dbService.cancelActivity(instance.getId())", R12);
@@ -200,10 +249,34 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("EventTrigger.java#fireBoundary[} else {]|dbService.cancelActivity(hostActivityId)", R12);
         // ── событийный шлюз: отменяются ПРОИГРАВШИЕ catch-братья, победитель идёт да…
         WHITELIST.put("CompletionService.java#signal[if (isBehindEventBasedGateway(bpmn, bpmnElement)) {]|dbService.cancelActiveActivitiesForToken(tokenId)", R13);
-        WHITELIST.put("CompletionService.java#signal[if (variables != null && !variables.isEmpty()) {]|dbService.completeActivity(activityId)", R13);
+        WHITELIST.put("CompletionService.java#signal[]|dbService.completeActivity(activityId)", R13);
         // ── это САМА строка срабатывающего join-а: activity join-а закрывается, а пр…
-        WHITELIST.put("InclusiveGatewayHandler.java#completeInclusiveJoin[if (token == null) {]|dbService.completeActivity(activityId)", R14);
+        WHITELIST.put("InclusiveGatewayHandler.java#completeInclusiveJoin[]|dbService.completeActivity(activityId)", R14);
         WHITELIST.put("InclusiveGatewayHandler.java#handle[} else { #2]|dbService.completeActivity(activityId)", R14);
+        // ── продолжение ПОСЛЕ гашения (раунд 6, BLOCKER-5): собственный хвост элемента ────────
+        WHITELIST.put("CompensationThrowHandler.java#processCompensationThrow[]|dbService.completeActivity(activityId)", R01);
+        WHITELIST.put("CompensationThrowHandler.java#processCompensationThrow[]|flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor)", R01);
+        WHITELIST.put("CompensationThrowHandler.java#processCompensationThrow[if (!elementSupport.compensationThrowerHasPending(processInstanceId, activityId, bpmn, tar]|flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor)", R01);
+        WHITELIST.put("CompletionService.java#resumeParkedCompensationThrowers[forceTerminalHandlerIds)) {]|flowNavigator.proceedToOutgoing(processInstanceId, thrower.getToken(), bpmn, el, executor)", R01);
+        WHITELIST.put("ConditionalCatchHandler.java#handle[if (conditionHolds(bpmnElement, variables)) {]|flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, ctx.executor())", R01);
+        WHITELIST.put("EventBasedGatewayHandler.java#handle[]|flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, ctx.executor())", R01);
+        WHITELIST.put("IntermediateThrowEventHandler.java#handle[]|flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, ctx.executor())", R01);
+        WHITELIST.put("MessageThrowHandler.java#handle[]|flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, ctx.executor())", R01);
+        WHITELIST.put("ParallelGatewayHandler.java#handle[if (incomings.size() == 1 && outgoings.size() == 1 && !isSelfLoop(bpmn, bpmnElement, outgo]|flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor)", R01);
+        WHITELIST.put("SignalThrowHandler.java#handle[]|flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, ctx.executor())", R01);
+        WHITELIST.put("StartThrowEventHandler.java#handle[]|flowNavigator.proceedToOutgoing(ctx.processInstanceId(), ctx.tokenId(), bpmn, el, ctx.executor())", R01);
+        WHITELIST.put("SyncTaskHandler.java#handle[]|flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, el, ctx.executor())", R01);
+        WHITELIST.put("FlowNavigator.java#finishBranch[if (endToken.getScopeActivityId() != null) {]|proceedToOutgoing(processInstanceId, parentTokenId, bpmn, subProcessElement, executor)", R01);
+        WHITELIST.put("FlowNavigator.java#finishBranch[if (parentActivityId != null) {]|proceedToOutgoing(parentProcessInstanceId, parentToken, parentBpmn, parentBpmnElement, executor)", R01);
+        WHITELIST.put("InclusiveGatewayHandler.java#handle[} else { #2]|flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor)", R14);
+        // ── погашены ВЕСЬ scope / весь инстанс — воскрешать join отменённого потока нельзя ────
+        WHITELIST.put("EndEventHandler.java#handle[]|flowNavigator.proceedToOutgoing(ctx.processInstanceId(), token.getParentId(), bpmn, scopeElement, ctx.executor())", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwError[if (boundary != null) { #2]|flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor)", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[if (isInterrupting(boundary)) {]|flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor)", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[if (boundary != null) {]|flowNavigator.proceedToOutgoing(processInstanceId, branch.getId(), bpmn, boundary, executor)", R17);
+        WHITELIST.put("ProcessInstanceRuntimeOperationsImpl.java#cancelProcessInstance[]|dbService.cancelActiveActivities(id)", R16);
+        // ── ad-hoc scope: хвост одного scope, не последний доставщик ЧУЖОГО join ─────────────
+        WHITELIST.put("FlowNavigator.java#finishAdHocScope0[]|proceedToOutgoing(processInstanceId, tokenId, bpmn, scopeElement, executor)", R03);
     }
 
     @Test
@@ -253,13 +326,73 @@ class DeactivationWakeupCoverageTest {
 
     @Test
     void scannerSeesTheProductionTree() throws IOException {
-        List<String> files;
-        try (Stream<Path> stream = Files.walk(MAIN)) {
-            files = stream.filter(p -> p.toString().endsWith(".java")).map(Path::toString).toList();
-        }
+        List<Path> files = mainJavaFiles();
         assertThat(files)
-            .as("сканер должен читать реальное дерево src/main, а не пустоту")
+            .as("сканер должен читать реальные деревья src/main (движок + REST), а не пустоту")
             .hasSizeGreaterThan(100);
+        assertThat(files.stream().map(Path::toString).toList())
+            .as("охват обязан включать REST-модуль: операторская отмена инстанса — это место "
+                + "деактивации, и без него «находит ВСЕ места» было бы неправдой")
+            .anyMatch(p -> p.contains("zorrobpm-rest") && p.endsWith("ProcessInstanceRuntimeOperationsImpl.java"));
+    }
+
+    /**
+     * Раунд 6, BLOCKER-5: позитивное требование — в перечисленных методах вызов
+     * {@code resumeParkedInclusiveJoins} ОБЯЗАН стоять (по тексту без комментариев).
+     *
+     * <p>Это ровно та дыра, которой держался мутационный прогон red-team раунда 4: ветки
+     * {@code fireBoundary} в белом списке, а вызов — в конце ветки interrupting, вне их текста.
+     * Снять вызов — и ветки остаются «обоснованными», и тест остаётся зелёным.
+     */
+    @Test
+    void resumeRequiredMethodsReallyCallResume() throws IOException {
+        List<String> missing = new ArrayList<>();
+        for (String required : RESUME_REQUIRED_METHODS) {
+            String fileName = required.substring(0, required.indexOf('#'));
+            String method = required.substring(required.indexOf('#') + 1);
+            Path file = null;
+            for (Path candidate : mainJavaFiles()) {
+                if (candidate.getFileName().toString().equals(fileName)) {
+                    file = candidate;
+                    break;
+                }
+            }
+            if (file == null) {
+                missing.add(required + " — файла " + fileName + " нет в охвате");
+                continue;
+            }
+            String[] cleanLines = stripLiteralsAndComments(Files.readString(file)).split("\n", -1);
+            String body = methodBody(cleanLines, method);
+            if (body == null) {
+                missing.add(required + " — метода нет на диске");
+            } else if (!body.contains("resumeParkedInclusiveJoins(")) {
+                missing.add(required + " — в теле метода нет вызова resumeParkedInclusiveJoins(");
+            }
+        }
+        assertThat(missing)
+            .as("методы из RESUME_REQUIRED_METHODS обязаны будить припаркованные join-ы; "
+                + "белый список по веткам этот случай не ловит")
+            .isEmpty();
+    }
+
+    /** Тело метода (от строки открытия до закрывающей скобки), без комментариев. */
+    private String methodBody(String[] cleanLines, String method) {
+        List<Frame> frames = collectFrames(cleanLines);
+        List<int[]> extents = collectExtents(cleanLines);
+        Map<Integer, Integer> endByStart = new java.util.HashMap<>();
+        for (int[] e : extents) {
+            endByStart.putIfAbsent(e[0], e[1]);
+        }
+        for (Frame f : frames) {
+            if (f.isMethod() && f.label().equals(method)) {
+                int end = endByStart.getOrDefault(f.start(), -1);
+                if (end < 0) {
+                    return null;
+                }
+                return String.join("\n", java.util.Arrays.copyOfRange(cleanLines, f.start(), end + 1));
+            }
+        }
+        return null;
     }
 
     // ── сканер ──────────────────────────────────────────────────────────────────────────────
@@ -274,21 +407,78 @@ class DeactivationWakeupCoverageTest {
         "dbService\\.(cancelActivity|completeActivity|errorActivity|cancelActiveActivities"
         + "|cancelActiveActivitiesForToken)\\(");
 
+    /**
+     * Раунд 6, BLOCKER-5: продолжение потока ПОСЛЕ того, как элемент уже погашен, — второй
+     * класс мест, где перепроверка обязана быть. Сканер раунда 5 был к нему слеп: в
+     * {@code CompletionService.advanceOrFinishCanceling} нет ни одного вызова
+     * {@code dbService.cancelActivity} и компании (там только {@code proceedToOutgoing}), поэтому
+     * отложенный хвост границы не попадал ни в один сайт — а именно он терял ветвь.
+     *
+     * <p>Условие присутствия в карте: ветка продолжает поток И (сама гасит activity ИЛИ её метод
+     * читает признак отложенного продолжения {@code getPendingCancelBoundaryElementId}). Второе
+     * условие — про межметодный разрыв: гашение выполнил {@code EventTrigger.fireBoundary}, а
+     * продолжение — здесь, и без него местом деактивации этот код не выглядит.
+     */
+    private static final Pattern CONTINUATION_CALL = Pattern.compile(
+        "(flowNavigator\\.)?proceedToOutgoing\\(");
+
+    private static final Pattern DEFERRED_TAIL_MARKER = Pattern.compile(
+        "getPendingCancelBoundaryElementId\\(");
+
     private static final List<String> JAVA_KEYWORDS = List.of(
         "if", "for", "while", "switch", "catch", "else", "do", "try", "new", "return",
         "synchronized", "assert", "throw", "case", "record", "yield", "super", "this",
         "package", "import", "default");
 
+    /**
+     * Читает ли МЕТОД, окружающий строку {@code line}, признак отложенного продолжения
+     * ({@code getPendingCancelBoundaryElementId}). Именно этот признак отличает «продолжение
+     * своей ветки» от «продолжения хвоста, который отложен из-за ГАШЕНИЯ элемента в другом
+     * методе» (BLOCKER-5). Считается по СВОЕМУ методу строки, а не по файлу: в одном файле
+     * соседствуют методы с отложенным хвостом и без него.
+     */
+    private boolean methodDefersTail(String[] cleanLines, List<Frame> frames,
+            Map<Integer, Integer> endByStart, int line, int frameIndex) {
+        String method = enclosingMethod(frames, line);
+        for (Frame f : frames) {
+            if (f.isMethod() && f.label().equals(method)) {
+                int end = endByStart.getOrDefault(f.start(), -1);
+                if (end < 0) {
+                    return false;
+                }
+                for (int i = f.start(); i <= end; i++) {
+                    if (DEFERRED_TAIL_MARKER.matcher(cleanLines[i]).find()) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+        return false;
+    }
+
     private Map<String, List<Site>> scanAllDeactivationSites() throws IOException {
         Map<String, List<Site>> byKey = new TreeMap<>();
-        List<Path> files;
-        try (Stream<Path> stream = Files.walk(MAIN)) {
-            files = stream.filter(p -> p.toString().endsWith(".java")).sorted().toList();
-        }
-        for (Path file : files) {
+        for (Path file : mainJavaFiles()) {
             scanFile(file, byKey);
         }
         return byKey;
+    }
+
+    /** Реальные .java из всех охватываемых деревьев src/main (движок + REST). */
+    private static List<Path> mainJavaFiles() throws IOException {
+        List<Path> files = new ArrayList<>();
+        for (Path root : MAIN_ROOTS) {
+            if (!Files.isDirectory(root)) {
+                throw new IOException("охватываемое дерево отсутствует: " + root.toAbsolutePath()
+                    + " (путь считается от рабочего каталога модуля; поправь MAIN_ROOTS)");
+            }
+            try (Stream<Path> stream = Files.walk(root)) {
+                stream.filter(p -> p.toString().endsWith(".java")).forEach(files::add);
+            }
+        }
+        files.sort(java.util.Comparator.comparing(Path::toString));
+        return files;
     }
 
     private void scanFile(Path file, Map<String, List<Site>> byKey) throws IOException {
@@ -300,33 +490,45 @@ class DeactivationWakeupCoverageTest {
         // проход 1: ветки и места деактивации; проход 2: границы всех блоков и признак resume
         List<Frame> frames = collectFrames(cleanLines);
         List<int[]> extents = collectExtents(cleanLines);
-
+        Map<Integer, Integer> endByStart = new java.util.HashMap<>();
+        for (int[] e : extents) {
+            endByStart.putIfAbsent(e[0], e[1]);
+        }
+        
         for (int i = 0; i < cleanLines.length; i++) {
-            if (!DEACTIVATION_CALL.matcher(cleanLines[i]).find()) {
+            boolean deactivation = DEACTIVATION_CALL.matcher(cleanLines[i]).find();
+            boolean continuation = !deactivation && CONTINUATION_CALL.matcher(cleanLines[i]).find();
+            if (!deactivation && !continuation) {
                 continue;
             }
-            int frameIndex = innermostFrameAt(frames, i);
+            int frameIndex = innermostFrameAt(frames, endByStart, i);
             if (frameIndex < 0) {
                 continue;
             }
             Frame frame = frames.get(frameIndex);
+            if (continuation) {
+                // продолжение само по себе место деактивации не выглядит; оно им становится,
+                // когда ветка гасит activity либо ЕЁ МЕТОД продолжает ОТЛОЖЕННЫЙ хвост
+                int frameEnd = endByStart.getOrDefault(frame.start(), -1);
+                String branchClean = frameEnd >= 0
+                    ? String.join("\n", java.util.Arrays.copyOfRange(cleanLines, frame.start(), frameEnd + 1))
+                    : "";
+                if (!DEACTIVATION_CALL.matcher(branchClean).find() && !methodDefersTail(cleanLines, frames,
+                    endByStart, i, frameIndex)) {
+                    continue;
+                }
+            }
             String method = enclosingMethod(frames, i);
             String call = rawLines[i].trim();
             if (call.endsWith(";")) {
                 call = call.substring(0, call.length() - 1);
             }
-            boolean hasResume = false;
-            int end = -1;
-            for (int[] e : extents) {
-                if (e[0] == frame.start()) {
-                    end = e[1];
-                    break;
-                }
-            }
-            if (end >= 0) {
-                String body = String.join("\n", java.util.Arrays.copyOfRange(rawLines, frame.start(), end + 1));
-                hasResume = body.contains("resumeParkedInclusiveJoins");
-            }
+            // Признак перепроверки ищем по тексту БЕЗ комментариев: упоминание резюма в
+            // комментарии не является вызовом (иначе мутация «закомментировать вызов» была бы зелёной).
+            int end = endByStart.getOrDefault(frame.start(), -1);
+            boolean hasResume = end >= 0 && String.join("\n",
+                java.util.Arrays.copyOfRange(cleanLines, frame.start(), end + 1))
+                .contains("resumeParkedInclusiveJoins(");
             String branch = frame.branch();
             if (frame.isMethod()) {
                 branch = "";
@@ -376,11 +578,23 @@ class DeactivationWakeupCoverageTest {
         return method == null ? "<UNRESOLVED>" : method;
     }
 
-    private static int innermostFrameAt(List<Frame> frames, int line) {
+    private static int innermostFrameAt(List<Frame> frames, Map<Integer, Integer> endByStart, int line) {
         int best = -1;
         for (int i = 0; i < frames.size(); i++) {
             Frame f = frames.get(i);
-            if (f.start() <= line && (best < 0 || f.start() >= frames.get(best).start())) {
+            if (f.start() > line) {
+                continue;
+            }
+            // блок, закрывшийся ДО этой строки, не может быть внутренним для неё: без этой
+            // проверки закрытая ветка (например if (isInterrupting(...)) { … }) продолжала
+            // «владельцем» следующих за ней строк и сайты получали чужую ветку в ключе
+            // (обнаружено на throwEscalation:258 — непрерывающая ветка получила ключ
+            // прерывающей).
+            Integer end = endByStart.get(f.start());
+            if (end != null && end < line) {
+                continue;
+            }
+            if (best < 0 || f.start() >= frames.get(best).start()) {
                 best = i;
             }
         }
