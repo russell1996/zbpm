@@ -12,6 +12,11 @@ databaseChangeLog:
         split по запятой, trim каждого элемента, пустые элементы выброшены. Иначе группа была бы
         записана в таблицу в одном написании, а искалась в другом — и вопрос «мои задачи»
         стал бы отвечать по-разному в зависимости от того, как строка была записана.
+        Trim здесь — ТОЧНО String.trim(): режутся все символы ≤ U+0020 (пробел, \t, \n, \r,
+        \f, \v и остальные управляющие), а не только пробелы, как делал бы btrim(element).
+        Проверено на живой PG16 (WO-IN-3r3, Б-1): btrim(E'sales\t') оставляет 'sales\t', а
+        regexp_replace с '^[\x00-\x20]+|[\x00-\x20]+$' даёт 'sales' и режет даже chr(1)/chr(2),
+        которые класс [[:space:]] оставляет. Тест с \t/\n/\r — в UserTaskCandidatesBackfillPgIT.
         Кандидаты-ПОЛЬЗОВАТЕЛИ бэкфилля не имеют и не могут иметь: до этого changeset значения
         candidateUsers не сохранялись нигде (E-IN2-1), и легаси-данных для них не существует.
         ON CONFLICT DO NOTHING — конфликт не является ошибкой: повторный прогон (или ручной
@@ -26,7 +31,7 @@ databaseChangeLog:
         на N>1 оператор повторяет ровно этот INSERT — он идемпотентен (ON CONFLICT DO NOTHING) и
         добирает только недостающие строки. Проверка идемпотентности:
         UserTaskCandidatesBackfillPgIT.backfill_isRerunnable_withoutFailingOrDuplicating.
-        dbms: postgresql — unnest/string_to_array/btrim это диалект PostgreSQL. На H2 changeset
+        dbms: postgresql — unnest/string_to_array/regexp_replace это диалект PostgreSQL. На H2 changeset
         не применяется вовсе: там схему строит Hibernate из entity, а бэкфиллить нечего (таблица
         пустая — свежий in-memory). Прецедент разделения по dbms — P-26 / 20260809-071.
       changes:
@@ -34,11 +39,12 @@ databaseChangeLog:
             dbms: postgresql
             sql: >-
               INSERT INTO user_task_candidates (user_task_id, kind, candidate)
-              SELECT t.id, 'GROUP', btrim(element)
+              SELECT t.id, 'GROUP',
+                regexp_replace(element, '^[\x00-\x20]+|[\x00-\x20]+$', '', 'g')
               FROM user_tasks t
               CROSS JOIN LATERAL unnest(string_to_array(t.candidate_groups, ',')) AS element
               WHERE t.candidate_groups IS NOT NULL
-                AND btrim(element) <> ''
+                AND regexp_replace(element, '^[\x00-\x20]+|[\x00-\x20]+$', '', 'g') <> ''
               ON CONFLICT DO NOTHING
       rollback:
         # Откат удаляет строки, которых до бэкфилла не было. Ограничение честно названо: если
