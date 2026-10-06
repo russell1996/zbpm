@@ -166,25 +166,34 @@ services:
       ZORROBPM_RESET_EMAIL_WINDOW: ${ZORROBPM_RESET_EMAIL_WINDOW:-3600}
       ZORROBPM_RESET_IP_CAPACITY: ${ZORROBPM_RESET_IP_CAPACITY:-20}
       ZORROBPM_RESET_IP_WINDOW: ${ZORROBPM_RESET_IP_WINDOW:-3600}
-      # WO-REL-27: stuck service-task watchdog (conservative defaults, see application.properties)
-      SERVICETASK_DISPATCH_TIMEOUT: ${SERVICETASK_DISPATCH_TIMEOUT:-}
-      SERVICETASK_WATCHDOG_INTERVAL_MS: ${SERVICETASK_WATCHDOG_INTERVAL_MS:-}
-      SERVICETASK_WATCHDOG_BATCH_SIZE: ${SERVICETASK_WATCHDOG_BATCH_SIZE:-}
+      # WO-REL-27: stuck service-task watchdog (defaults mirror
+      # zorrobpm-engine/src/main/resources/zorrobpm-engine.properties).
+      SERVICETASK_DISPATCH_TIMEOUT: ${SERVICETASK_DISPATCH_TIMEOUT:-15m}
+      SERVICETASK_WATCHDOG_INTERVAL_MS: ${SERVICETASK_WATCHDOG_INTERVAL_MS:-60000}
+      SERVICETASK_WATCHDOG_BATCH_SIZE: ${SERVICETASK_WATCHDOG_BATCH_SIZE:-100}
       # WO-REL-46: FEEL/script pool size (default 8 in application.properties).
       # Listed here so a host .env value reaches the container (WO-INT-6 class).
       SCRIPT_POOL_SIZE: ${SCRIPT_POOL_SIZE:-8}
-      # WO-ENG-24: admission control для того же пула (дефолты 10/5 в
-      # application.properties; пусто = дефолт свойства).
-      SCRIPT_QUEUE_CAPACITY: ${SCRIPT_QUEUE_CAPACITY:-}
-      SCRIPT_QUEUE_WAIT_SECONDS: ${SCRIPT_QUEUE_WAIT_SECONDS:-}
+      # WO-ENG-24: admission control для того же пула.
+      SCRIPT_QUEUE_CAPACITY: ${SCRIPT_QUEUE_CAPACITY:-10}
+      SCRIPT_QUEUE_WAIT_SECONDS: ${SCRIPT_QUEUE_WAIT_SECONDS:-5}
       # WO-PERF-8: retention chunk + outbox chunk/gauge-sampling cadence (see
-      # application.properties; empty = property default applies).
-      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-}
-      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-}
-      OUTBOX_METRICS_SAMPLE_EVERY: ${OUTBOX_METRICS_SAMPLE_EVERY:-}
+      # zorrobpm-engine.properties).
+      RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-25}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-50}
+      OUTBOX_METRICS_SAMPLE_EVERY: ${OUTBOX_METRICS_SAMPLE_EVERY:-30}
       # WO-ENG-30: strict io-mapping compat flag (default false in
-      # application.properties; empty = property default applies).
-      IO_MAPPING_STRICT_MISSING: ${IO_MAPPING_STRICT_MISSING:-}
+      # zorrobpm-engine.properties).
+      IO_MAPPING_STRICT_MISSING: ${IO_MAPPING_STRICT_MISSING:-false}
+      # WO-CFG-1: эти четыре ручки не были объявлены в compose ВООБЩЕ, поэтому даже
+      # после починки импорта оператор не мог до них дотянуться (в docker-compose.yml
+      # НЕТ env_file — в контейнер попадает только перечисленное ниже). Умолчания
+      # совпадают с zorrobpm-engine.properties; ModuleConfigImportGuardTest (Guard D)
+      # сверяет их между собой, так что разъехаться они не могут.
+      SCRIPT_TIMEOUT_SECONDS: ${SCRIPT_TIMEOUT_SECONDS:-10}
+      RETENTION_TTL_DAYS: ${RETENTION_TTL_DAYS:-0}
+      RETENTION_POLL_INTERVAL_MS: ${RETENTION_POLL_INTERVAL_MS:-3600000}
+      BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-Asia/Almaty}
       # WO-C8-36 (H-1): phased-штамп вызова в теле задания. В нашем стеке engine
       # и http-connector released together, все воркеры этого релиза новые —
       # поэтому true (прод-дефолт в application.properties остаётся false для
