@@ -111,9 +111,9 @@ class MultiInstanceOnContainersParseTest {
     }
 
     @Test
-    void multiInstanceOnUserTaskAndServiceTask_ISAttached_andStillDeploys() {
-        // the control pair: the same fixture's task elements DO get the extension and DO deploy, so
-        // the assertions above are about container support, not a parser that dropped MI everywhere
+    void multiInstanceOnUserTaskAndServiceTask_ISAttached() {
+        // the control pair: the same fixture's task elements DO get the extension, so the assertions
+        // above are about container support, not a parser that dropped MI everywhere
         BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmn());
 
         BpmnElementModel userTask = bpmn.getElement("miUser");
@@ -127,10 +127,14 @@ class MultiInstanceOnContainersParseTest {
         assertThat(service.getExtensions().getMultiInstanceExtension())
             .as("MI on a service task still parses (control)")
             .isNotNull();
+    }
 
-        // and the supported cousin of the same construct deploys through the production path
+    @Test
+    void multiInstanceOnTheSupportedKinds_stillDeploys() {
+        // and the supported cousin of the refused construct goes through the production deploy path
         ProcessDefinition supported = processDefinitionService.addProcessDefinition(
             read("test-eng34-mi-on-tasks.bpmn").replace("mi-on-tasks", "mi-on-tasks-" + UUID.randomUUID()));
+
         assertThat(supported.getKey()).isNotBlank();
     }
 
