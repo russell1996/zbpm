@@ -7,7 +7,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
@@ -178,16 +177,6 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
         }
     }
 
-    /**
-     * Deletes rows in a transaction of its OWN, committed.
-     *
-     * <p>{@code criterion1} is {@code @Transactional} so that {@code findDueLocked} can hold
-     * {@code FOR UPDATE} row locks for the whole assertion. That makes the test's transaction
-     * rollback-only, which would also roll back a plain {@code DELETE} in {@code finally} — while the
-     * writer thread's inserts commit independently. The result measured by @verifier was a growing pile
-     * of committed due {@code timer_jobs} rows left in the shared database, i.e. this guard would have
-     * been doing exactly what WO-QW-13 forbids. Hence an explicit committed cleanup.
-     */
     /**
      * Criterion 2: the deployment's own timer-start job, and nothing else.
      *

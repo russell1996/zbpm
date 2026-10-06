@@ -5,6 +5,7 @@ import com.zorrodev.bpm.engine.PostgresIT;
 import com.zorrodev.bpm.engine.entity.TimerJobEntity;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.TimerStartJobRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -56,6 +57,35 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
     @Autowired JdbcTemplate jdbc;
 
     /**
+     * Rows this class inserted, removed in {@code @AfterEach} — WO-QW-13's own rule applied to itself:
+     * a class that stops wiping the whole table must stop leaving crumbs in it. Measured: with the old
+     * whole-table {@code @BeforeEach} wipe gone and no cleanup, this class left 2 committed due
+     * {@code timer_jobs} rows behind (@verifier round 4 finding 6).
+     *
+     * <p>{@code @AfterEach} and not {@code @BeforeEach}: this deliberately touches only its OWN ids, so
+     * it can never destroy a neighbour's fixture — which is what the removed whole-table wipe used to do
+     * to everyone else in the suite.
+     */
+    private final List<UUID> insertedTimerJobIds = new ArrayList<>();
+
+    @AfterEach
+    void removeOwnTimerRows() {
+        if (insertedTimerJobIds.isEmpty()) {
+            return;
+        }
+        List<UUID> ids = List.copyOf(insertedTimerJobIds);
+        insertedTimerJobIds.clear();
+        PgItIsolation.deleteTimerJobs(jdbc, ids);
+    }
+
+    /** Inserts a catch timer and remembers its id for {@link #removeOwnTimerRows()}. */
+    private UUID ownCatchTimerJob(UUID activityId, Instant dueAt) {
+        UUID id = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), activityId, dueAt);
+        insertedTimerJobIds.add(id);
+        return id;
+    }
+
+    /**
      * WO-QW-13: park the background poller — this class owns the timer tables while it runs and
      * drives its own threads, so a second writer would make the claim counts non-deterministic.
      * The class therefore needs no {@code @BeforeEach} wipe of the shared tables at all.
@@ -72,8 +102,7 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
         // One due timer job, inserted by this test. Both threads look at THIS id only: the SKIP LOCKED
         // guarantee under test is about one row, and a foreign due row from another class would
         // otherwise change the counts (the old whole-table form counted the whole shared table).
-        UUID jobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
-            Instant.now().minusSeconds(10));
+        UUID jobId = ownCatchTimerJob(UUID.randomUUID(), Instant.now().minusSeconds(10));
 
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch go = new CountDownLatch(1);
@@ -223,8 +252,7 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
 
     @Test
     void pof_withoutSkipLocked_bothThreadsSeeRow() throws Exception {
-        UUID jobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
-            Instant.now().minusSeconds(10));
+        UUID jobId = ownCatchTimerJob(UUID.randomUUID(), Instant.now().minusSeconds(10));
 
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch go = new CountDownLatch(1);
@@ -291,8 +319,8 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
     @Transactional
     void notDueTimer_notInFindDue() {
         Instant now = Instant.now();
-        UUID futureJobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now.plusSeconds(3600));
-        UUID dueJobId = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now.minusSeconds(10));
+        UUID futureJobId = ownCatchTimerJob(UUID.randomUUID(), now.plusSeconds(3600));
+        UUID dueJobId = ownCatchTimerJob(UUID.randomUUID(), now.minusSeconds(10));
 
         List<UUID> claimedByEngine = timerJobRepository.findDueLocked(now, 100).stream()
             .map(TimerJobEntity::getId)
@@ -314,7 +342,7 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
     void batchLimit_returnsAtMostBatchSize() {
         Instant now = Instant.now().minusSeconds(10);
         for (int i = 0; i < 500; i++) {
-            PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now);
+            ownCatchTimerJob(UUID.randomUUID(), now);
         }
 
         List<TimerJobEntity> batch1 = timerJobRepository.findDueLocked(now, 100);
@@ -331,7 +359,7 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
         Instant now = Instant.now().minusSeconds(10);
         Set<UUID> ownIds = new LinkedHashSet<>();
         for (int i = 0; i < 500; i++) {
-            ownIds.add(PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now));
+            ownIds.add(ownCatchTimerJob(UUID.randomUUID(), now));
         }
 
         // WO-QW-13: this test's verdict must rest on ITS OWN rows. The production query returns whatever
@@ -374,7 +402,7 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
         Instant now = Instant.now().minusSeconds(10);
         List<UUID> ownIds = new ArrayList<>();
         for (int i = 0; i < 50; i++) {
-            ownIds.add(PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(), now));
+            ownIds.add(ownCatchTimerJob(UUID.randomUUID(), now));
         }
 
         // "All 50 come back in one batch" asked about THIS test's 50 ids: a due row of another class
