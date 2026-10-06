@@ -58,10 +58,15 @@ public class GraphRobustnessIntegrationTests {
         // WO-ENG-34 (CR-08, criterion 4) — the ROUTE changed, the subject did not. The deploy gate now
         // refuses a model whose sourceRef/targetRef names no flow node (UnsupportedConstructDeploy
         // IntegrationTests.criterion4_...), so a broken model can no longer be DEPLOYED to reach this
-        // guard. The state is still real and still reachable: the engine re-parses the STORED FILE on
-        // every load (BpmnServiceImpl.getProcessDefinitionModelById), so a definition whose stored
-        // artifact disagrees with its registry row parks exactly like this. Hence: deploy the valid
-        // twin, then put the broken artifact in the store. Every assertion below is untouched.
+        // guard. The state is still real and still reachable: on a cache miss the engine re-parses the
+        // STORED FILE (BpmnServiceImpl.getProcessDefinitionModelById → FileService.getFileBytes), so a
+        // definition whose stored artifact disagrees with its registry row — a model written by an
+        // earlier release, a restored backup, a manual DB edit — parses into a model that is missing
+        // the element, and parks exactly like this. Note the CACHE (60 min by default,
+        // bpmn-cache-ttl-minutes; filled at deploy by ProcessDefinitionServiceImpl), so in production
+        // this shows up after a restart or a TTL expiry, not instantly. Hence: deploy the valid twin,
+        // then put the broken artifact in the store before anything loads the model. Every assertion
+        // below is untouched.
         ProcessDefinition model = processDefinitionService.addProcessDefinition(
             Files.readString(Paths.get("src/test/files/test-eng34-dangling-flow-base.bpmn")));
         fileService.saveFile(model.getId(),
