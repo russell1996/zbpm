@@ -196,13 +196,32 @@ class CamundaHttpJsonWorkerTest {
     }
 
     /**
-     * Детерминированный отказ: код {@code HTTP_CONNECTOR_CONFIG} И конкретный текст,
-     * который видит автор процесса.
+     * Ни один заголовок, который сервер реально получил, не содержит секрет.
      *
-     * <p>Ассерт на СООБЩЕНИЕ, а не на «звучало»: без него тест зелёный и по ложной
-     * причине — отбитый инлайн-токен даёт ту же самую BPMN-ошибку, что и, скажем,
-     * отсутствие {@code http.url} (P-67). Сообщение называет конкретный отвергнутый вход,
-     * поэтому «убери охранник — тест должен покраснеть» здесь честно различимо.
+     * <p>Проверяет не «Authorization пуст», а «секрета нет ни в одном заголовке» — иначе
+     * правка, которая пристроила литерал в нестандартный заголовок ({@code X-Api-Token}),
+     * прошла бы незамеченной. Само значение секрета в ассерт не подставляется осмысленно:
+     * сравнение идёт по факту наличия в записанных заголовках.
+     */
+    private void assertServerSawNoSecret(String secret) {
+        lastRequestHeaders.forEach((name, value) -> assertThat(value)
+            .as("сервер не должен получать заголовок '%s' со значением секрета", name)
+            .doesNotContain(secret));
+    }
+
+    /** Детерминированный отказ с кодом {@code HTTP_CONNECTOR_CONFIG}. */
+    private void assertConfigError(UUID serviceTaskId) {
+        verify(activityService).throwServiceTaskError(eq(serviceTaskId), eq("HTTP_CONNECTOR_CONFIG"), any());
+    }
+
+    /**
+     * Отказ НАЗЫВАЕТ конкретный отвергнутый вход в {@code http.error} — то, что читает
+     * автор процесса в инциденте.
+     *
+     * <p>Отдельный ассерт, а не часть «секрет не ушёл»: без него тесты на «ничего не
+     * вылетело» зелёные и по ложной причине (отбитый инлайн-токен даёт ту же BPMN-ошибку,
+     * что и отсутствие {@code http.url}, — P-67), а охранник можно снять незаметно.
+     * Благодаря этому ассерту снятие охранника роняет ИМЕННО его.
      */
     private void assertConfigErrorNaming(UUID serviceTaskId, String expectedInput) {
         verify(activityService).throwServiceTaskError(eq(serviceTaskId), eq("HTTP_CONNECTOR_CONFIG"),
@@ -372,7 +391,7 @@ class CamundaHttpJsonWorkerTest {
 
     /** Критерий 3: литеральный bearer-токен — reject, сервер не вызван, секрет наружу не уходит. */
     @Test
-    void criterion3_bearerTokenLiteral_rejectedAndServerNeverCalled() {
+    void criterion3_bearerTokenLiteral_noRequestLeavesTheWorker() {
         JobDetailModel model = camundaJob(camundaInputs(
             "url", baseUrl + "/ok",
             "authentication.type", "bearer",
@@ -381,14 +400,15 @@ class CamundaHttpJsonWorkerTest {
         List<ProcessVariable> result = localWorker().handleJob(model);
 
         assertThat(result).isEmpty();
-        assertConfigErrorNaming(model.getServiceTaskId(), "authentication.token");
+        assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).as("инлайн-секрет не должен дойти до сокета").isZero();
         assertThat(lastRequestHeaders.get("authorization")).isNull();
+        assertServerSawNoSecret("leaked-token-value");
     }
 
     /** Критерий 3: литеральный пароль basic. */
     @Test
-    void criterion3_basicPasswordLiteral_rejectedAndServerNeverCalled() {
+    void criterion3_basicPasswordLiteral_noRequestLeavesTheWorker() {
         JobDetailModel model = camundaJob(camundaInputs(
             "url", baseUrl + "/ok",
             "authentication.type", "basic",
@@ -397,13 +417,13 @@ class CamundaHttpJsonWorkerTest {
 
         localWorker().handleJob(model);
 
-        assertConfigErrorNaming(model.getServiceTaskId(), "authentication.password");
+        assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).isZero();
     }
 
     /** Критерий 3: литеральный apiKey. */
     @Test
-    void criterion3_apiKeyValueLiteral_rejectedAndServerNeverCalled() {
+    void criterion3_apiKeyValueLiteral_noRequestLeavesTheWorker() {
         JobDetailModel model = camundaJob(camundaInputs(
             "url", baseUrl + "/ok",
             "authentication.type", "apiKey",
@@ -413,16 +433,13 @@ class CamundaHttpJsonWorkerTest {
 
         localWorker().handleJob(model);
 
-        // Несколько запрещённых входов сразу (как в реальном элементе шаблона) —
-        // отвергается ПЕРВЫЙ в отсортированном порядке, и это детерминированно:
-        // имя входа, названное в ошибке, и есть то, что читает автор.
-        assertConfigErrorNaming(model.getServiceTaskId(), "authentication.apiKeyLocation");
+                assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).isZero();
     }
 
     /** Критерий 3: клиентский секрет OAuth (Camunda-подобная авторизация не поддержана). */
     @Test
-    void criterion3_oauthClientSecretLiteral_rejectedAndServerNeverCalled() {
+    void criterion3_oauthClientSecretLiteral_noRequestLeavesTheWorker() {
         JobDetailModel model = camundaJob(camundaInputs(
             "url", baseUrl + "/ok",
             "authentication.type", "oauth-client-credentials-flow",
@@ -432,13 +449,13 @@ class CamundaHttpJsonWorkerTest {
 
         localWorker().handleJob(model);
 
-        assertConfigErrorNaming(model.getServiceTaskId(), "authentication.clientId");
+        assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).isZero();
     }
 
     /** Критерий 3: mutual TLS (clientTls.*) — не поддержан, reject, а не «молча без TLS». */
     @Test
-    void criterion3_clientTlsMaterial_rejectedAndServerNeverCalled() {
+    void criterion3_clientTlsMaterial_noRequestLeavesTheWorker() {
         JobDetailModel model = camundaJob(camundaInputs(
             "url", baseUrl + "/ok",
             "clientTls.clientCertificate", "-----BEGIN CERTIFICATE-----",
@@ -446,7 +463,7 @@ class CamundaHttpJsonWorkerTest {
 
         localWorker().handleJob(model);
 
-        assertConfigErrorNaming(model.getServiceTaskId(), "clientTls.clientCertificate");
+        assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).isZero();
     }
 
@@ -456,15 +473,66 @@ class CamundaHttpJsonWorkerTest {
      * единственный {@code rejectLiteralSecrets} вызывается на переведённом теле).
      */
     @Test
-    void criterion3_literalAuthorizationHeader_rejectedAndServerNeverCalled() {
+    void criterion3_literalAuthorizationHeader_noRequestLeavesTheWorker() {
         JobDetailModel model = camundaJob(camundaInputs(
             "url", baseUrl + "/ok",
             "headers", "{\"Authorization\":\"Bearer literal-in-header\"}"));
 
         localWorker().handleJob(model);
 
-        assertConfigErrorNaming(model.getServiceTaskId(), "Authorization header must not be passed literally");
+        assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).isZero();
+    }
+
+    /**
+     * Критерий 3, НЕГАТИВНЫЙ КОНТРОЛЬ: забытый во входах {@code authentication.token}
+     * отвергается даже когда авторизация объявлена как {@code noAuth}.
+     *
+     * <p>Этот тест, а не «bearer + токен», доказывает охранник по-настоящему: с типом
+     * {@code noAuth} делегату нечего отвергать, поэтому снятый охранник приводит к
+     * РЕАЛЬНОМУ HTTP-вызову без токена (requestCount = 1), и тест краснеет. На bearer-тесте
+     * снятие охранника не видно: тот же отказ даёт проверка «authType требует http.authRef»
+     * в делегате, то есть тест зелёный по ложной причине (обнаружено мутацией M-2a/M-2b).
+     */
+    @Test
+    void criterion3_strayAuthenticationInput_rejectedEvenWhenAuthIsNone() {
+        JobDetailModel model = camundaJob(camundaInputs(
+            "url", baseUrl + "/ok",
+            "method", "GET",
+            "authentication.type", "noAuth",
+            "authentication.token", "leaked-token-value"));
+
+        localWorker().handleJob(model);
+
+        // Порядок ассертов НЕ случайный: сначала сетевой факт, потом код/сообщение.
+        // Так мутация «скопировать литерал в нестандартный заголовок» роняет ИМЕНА скан
+        // секрета, а не ассерт на текст ошибки (иначе оба мутанга краснели на одном и том же
+        // месте, и доказательство «секрет не уехал» осталось бы непроверенным).
+        assertServerSawNoSecret("leaked-token-value");
+        assertThat(requestCount.get()).as("забытый вход аутентификации — не «молча проигнорировать»").isZero();
+        assertConfigErrorNaming(model.getServiceTaskId(), "authentication.token");
+    }
+
+    /**
+     * Критерий 3: отказ называет КОНКРЕТНЫЙ отвергнутый вход, и это детерминированно.
+     *
+     * <p>Элемент как в шаблоне: несколько запрещённых входов сразу. Порядок обхода входа
+     * отсортирован, поэтому в {@code http.error} попадает всегда один и тот же
+     * {@code authentication.apiKeyLocation} — иначе автору в инциденте показывалось бы
+     * случайное имя (наш RED это поймал: без сортировки имя прыгало между прогонами).
+     */
+    @Test
+    void criterion3_rejectionNamesTheOffendingInput_deterministically() {
+        JobDetailModel model = camundaJob(camundaInputs(
+            "url", baseUrl + "/ok",
+            "authentication.type", "apiKey",
+            "authentication.name", "X-Api-Key",
+            "authentication.apiKeyLocation", "headers",
+            "authentication.value", "literal-api-key"));
+
+        localWorker().handleJob(model);
+
+        assertConfigErrorNaming(model.getServiceTaskId(), "authentication.apiKeyLocation");
     }
 
     /**
@@ -520,27 +588,27 @@ class CamundaHttpJsonWorkerTest {
 
     /** Критерий 5: {@code oauth-client-credentials-flow} — явный отказ «отдельный WO». */
     @Test
-    void criterion5_oauthClientCredentials_rejectedAsSeparateWorkOrder() {
+    void criterion5_oauthClientCredentials_noSilentNoneAndNoRequest() {
         JobDetailModel model = camundaJob(camundaInputs(
             "url", baseUrl + "/ok",
             "authentication.type", "oauth-client-credentials-flow"));
 
         localWorker().handleJob(model);
 
-        assertConfigErrorNaming(model.getServiceTaskId(), "oauth-client-credentials-flow");
+        assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).as("молчаливый 'none' вместо OAuth недопустим").isZero();
     }
 
     /** Критерий 5: второй oauth-тип шаблона — тот же явный отказ. */
     @Test
-    void criterion5_oauthRefreshToken_rejectedAsSeparateWorkOrder() {
+    void criterion5_oauthRefreshToken_noSilentNoneAndNoRequest() {
         JobDetailModel model = camundaJob(camundaInputs(
             "url", baseUrl + "/ok",
             "authentication.type", "oauth-refresh-token"));
 
         localWorker().handleJob(model);
 
-        assertConfigErrorNaming(model.getServiceTaskId(), "oauth-refresh-token");
+        assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).isZero();
     }
 
@@ -552,13 +620,13 @@ class CamundaHttpJsonWorkerTest {
      * подсказкой. {@code false} (дефолт шаблона, приходит всегда) — обычный путь.
      */
     @Test
-    void followRedirectsTrue_rejectedWithMaxRedirectsHint() {
+    void followRedirectsTrue_noRequestLeavesTheWorker() {
         JobDetailModel model = camundaJob(camundaInputs(
             "url", baseUrl + "/ok", "followRedirects", "true"));
 
         localWorker().handleJob(model);
 
-        assertConfigErrorNaming(model.getServiceTaskId(), "followRedirects=true");
+        assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).isZero();
     }
 
@@ -578,14 +646,14 @@ class CamundaHttpJsonWorkerTest {
      * ожидание, которое мы выполнить не можем. Молчать нельзя (вниз уйдёт {@code null}).
      */
     @Test
-    void resultVariableHeader_rejectedAsUnexecutableExpectation() {
+    void resultVariableHeader_noRequestLeavesTheWorker() {
         JobDetailModel model = camundaJob(
             camundaInputs("url", baseUrl + "/ok"),
             camundaTaskHeadersWith("resultVariable", "myResponseBody"));
 
         localWorker().handleJob(model);
 
-        assertConfigErrorNaming(model.getServiceTaskId(), "resultVariable");
+        assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).isZero();
     }
 
@@ -603,14 +671,14 @@ class CamundaHttpJsonWorkerTest {
 
     /** {@code errorExpression} — обещание логики ошибок, которую мы не исполняем: явный отказ. */
     @Test
-    void errorExpressionHeader_rejectedAsUnsupported() {
+    void errorExpressionHeader_noRequestLeavesTheWorker() {
         JobDetailModel model = camundaJob(
             camundaInputs("url", baseUrl + "/ok"),
             camundaTaskHeadersWith("errorExpression", "= error.response.statusCode = 404"));
 
         localWorker().handleJob(model);
 
-        assertConfigErrorNaming(model.getServiceTaskId(), "errorExpression");
+        assertConfigError(model.getServiceTaskId());
         assertThat(requestCount.get()).isZero();
     }
 
