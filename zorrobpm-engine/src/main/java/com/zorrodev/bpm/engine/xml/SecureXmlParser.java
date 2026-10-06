@@ -90,4 +90,36 @@ public final class SecureXmlParser {
             }
         }
     }
+
+    /**
+     * WO-ENG-34: DOM view of the same XML, hardened IDENTICALLY to {@link #unmarshal} —
+     * the DOCTYPE string reject is the primary gate and is reused, plus the same
+     * JAXP feature set (no DTD, no external entities, no XInclude, secure processing).
+     *
+     * <p>Why a second entry point at all: {@link #unmarshal} binds a fixed JAXB shape, and the whole
+     * point of WO-ENG-34 is elements that shape has NO field for — JAXB drops them silently, so a
+     * JAXB-only parser structurally CANNOT see {@code <complexGateway>} or
+     * {@code <standardLoopCharacteristics>}. Walking the document is what makes them visible;
+     * it is the same single secure XML entry point, not a bypass of it.
+     */
+    public static org.w3c.dom.Document parseDocument(String xml) {
+        rejectDoctype(xml);
+        try {
+            javax.xml.parsers.DocumentBuilderFactory dbf = javax.xml.parsers.DocumentBuilderFactory.newInstance();
+            dbf.setNamespaceAware(true);
+            dbf.setXIncludeAware(false);
+            dbf.setExpandEntityReferences(false);
+            dbf.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+            dbf.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            dbf.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            dbf.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            dbf.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            javax.xml.parsers.DocumentBuilder builder = dbf.newDocumentBuilder();
+            // mirrors the SAX path: no custom resolver can be installed by callers, and the
+            // builder is created per call (DocumentBuilder is not thread-safe)
+            return builder.parse(new org.xml.sax.InputSource(new StringReader(xml)));
+        } catch (Exception e) {
+            throw new EngineException("XML parsing failed: " + e.getMessage(), e);
+        }
+    }
 }

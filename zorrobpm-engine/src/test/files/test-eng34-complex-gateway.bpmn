@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-ENG-34 (б): complexGateway is not an element kind of this engine. The gateway was
+     dropped, the flow parked on a "Target element 'cg' of sequence flow ... not found" incident
+     at the first token that reached it. Deploy must refuse the model instead. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_eng34_cg" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-eng34-complex-gateway" name="test-eng34-complex-gateway" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="cg" />
+
+    <bpmn:complexGateway id="cg" name="cg">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:complexGateway>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="cg" targetRef="endEvent" />
+
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
