@@ -67,15 +67,23 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
      * to everyone else in the suite.
      */
     private final List<UUID> insertedTimerJobIds = new ArrayList<>();
+    private final List<UUID> insertedTimerStartJobIds = new ArrayList<>();
 
     @AfterEach
     void removeOwnTimerRows() {
-        if (insertedTimerJobIds.isEmpty()) {
-            return;
+        if (!insertedTimerJobIds.isEmpty()) {
+            List<UUID> ids = List.copyOf(insertedTimerJobIds);
+            insertedTimerJobIds.clear();
+            PgItIsolation.deleteTimerJobs(jdbc, ids);
         }
-        List<UUID> ids = List.copyOf(insertedTimerJobIds);
-        insertedTimerJobIds.clear();
-        PgItIsolation.deleteTimerJobs(jdbc, ids);
+        if (!insertedTimerStartJobIds.isEmpty()) {
+            // timer_start_jobs too: an armed due start timer is picked up by a live TimerBatchProcessor
+            // of ANOTHER cached context, which then fails on fk_process_instances__process_definition_id
+            // — the very FK noise this WO removes. Measured: +1 due row per run without this (@verifier r5).
+            List<UUID> ids = List.copyOf(insertedTimerStartJobIds);
+            insertedTimerStartJobIds.clear();
+            PgItIsolation.deleteTimerStartJobs(jdbc, ids);
+        }
     }
 
     /** Inserts a catch timer and remembers its id for {@link #removeOwnTimerRows()}. */
@@ -183,6 +191,7 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
             "INSERT INTO timer_start_jobs (id, process_key, process_definition_id, element_id, due_at, fired, created_at) " +
             "VALUES (?, 'test-proc', ?, 'start1', ?, false, ?)",
             jobId, UUID.randomUUID(), Timestamp.from(Instant.now().minusSeconds(10)), Timestamp.from(Instant.now()));
+        insertedTimerStartJobIds.add(jobId);
 
         CountDownLatch ready = new CountDownLatch(2);
         CountDownLatch go = new CountDownLatch(1);
@@ -420,10 +429,12 @@ public class TimerBatchProcessorPgIT extends PostgresIT {
     void batchLimit_timerStartJobs_returnsAtMostBatchSize() {
         Instant now = Instant.now().minusSeconds(10);
         for (int i = 0; i < 200; i++) {
+            UUID startJobId = UUID.randomUUID();
+            insertedTimerStartJobIds.add(startJobId);
             jdbc.update(
                 "INSERT INTO timer_start_jobs (id, process_key, process_definition_id, element_id, due_at, fired, created_at) " +
                 "VALUES (?, 'test-proc', ?, 'start1', ?, false, ?)",
-                UUID.randomUUID(), UUID.randomUUID(), Timestamp.from(now), Timestamp.from(Instant.now()));
+                startJobId, UUID.randomUUID(), Timestamp.from(now), Timestamp.from(Instant.now()));
         }
 
         List<?> batch = timerStartJobRepository.findDueLocked(now, 100);

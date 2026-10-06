@@ -13,6 +13,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -105,7 +106,10 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
         rowsToClean.add(foreignLeftover);
         AtomicBoolean writerRunning = new AtomicBoolean(true);
         AtomicReference<Throwable> writerError = new AtomicReference<>();
-        List<UUID> writtenByWriter = new ArrayList<>();
+        // Concurrent: the writer thread appends every ~2 ms while the main thread reads. A bare
+        // ArrayList would give a torn snapshot (or CME) in the very test whose job is to be a reliable
+        // guard — @verifier r5 finding 5. CopyOnWriteArrayList makes List.copyOf() a consistent snapshot.
+        List<UUID> writtenByWriter = new CopyOnWriteArrayList<>();
         // WO-OPS-11 pattern: coordinate by FACT, never by a fixed sleep — the writer signals after its
         // first committed insert, so the assertion below can never lose a race with thread start-up.
         CountDownLatch firstWrite = new CountDownLatch(1);
@@ -119,10 +123,10 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
                 while (writerRunning.get()) {
                     UUID written = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
                         Instant.now().minusSeconds(5));
+                    writtenByWriter.add(written);
                     synchronized (rowsToClean) {
                         rowsToClean.add(written);
                     }
-                    writtenByWriter.add(written);
                     firstWrite.countDown();
                     Thread.sleep(2);
                 }
@@ -173,7 +177,12 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
                 .containsAll(writtenSnapshot);
         } finally {
             writerRunning.set(false);
-            writer.join(5000);
+            // Assert the writer really stopped. If it outlived the join it would append ids AFTER
+            // @AfterEach took its snapshot, and that row would survive — the exact residue this guard
+            // exists to prevent (@verifier r5 finding 6). Failing loudly beats silently leaking.
+            writer.join(TimeUnit.SECONDS.toMillis(10));
+            assertThat(writer.isAlive())
+                .as("writer thread must stop before the cleanup takes its snapshot").isFalse();
         }
     }
 

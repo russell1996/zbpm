@@ -3,6 +3,7 @@ package com.zorrodev.bpm.engine.processdefinition;
 import com.zorrodev.bpm.engine.PgItIsolation;
 import com.zorrodev.bpm.engine.PostgresIT;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -71,6 +72,20 @@ public class DeploymentAtomicityPgIT extends PostgresIT {
     void setUp() throws Exception {
         msgBpmn = Files.readString(Path.of("src/test/files/test-rel15-msg-deploy.bpmn"));
         timerBpmn = Files.readString(Path.of("src/test/files/test-rel15-timer-deploy.bpmn"));
+        cleanup(MSG_KEY);
+        cleanup(TIMER_KEY);
+    }
+
+    /**
+     * WO-QW-13, symmetric to {@code setUp}: this class deploys a PT5M timer start, and if its
+     * {@code timer_start_jobs} row survives the class it stays armed in the shared database — where a
+     * live {@code TimerScheduler} of another cached context claims it and fails on
+     * {@code fk_process_instances__process_definition_id} (measured: +1 due row per run without this,
+     * @verifier round 5 finding 4). Cleaning only in {@code @BeforeEach} also means the LAST test of the
+     * class leaves its deployment behind for whoever runs next.
+     */
+    @AfterEach
+    void tearDown() {
         cleanup(MSG_KEY);
         cleanup(TIMER_KEY);
     }
