@@ -11,7 +11,9 @@ import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
+import com.zorrodev.bpm.engine.repository.UserTaskCandidateRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
+import com.zorrodev.bpm.engine.service.db.UserTaskCandidateWriter;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
@@ -52,6 +54,8 @@ public class UserTaskSortAndElementFilterIntegrationTests {
     @Autowired private RuntimeService runtimeService;
     @Autowired private QueryService queryService;
     @Autowired private UserTaskRepository userTaskRepository;
+    @Autowired private UserTaskCandidateWriter userTaskCandidateWriter;
+    @Autowired private UserTaskCandidateRepository userTaskCandidateRepository;
     @Autowired private UiUserRepository uiUserRepository;
     @Autowired private UserGroupRepository userGroupRepository;
     @Autowired private PasswordHasher passwordHasher;
@@ -74,7 +78,15 @@ public class UserTaskSortAndElementFilterIntegrationTests {
         task.setAssignee(assignee);
         task.setCandidateGroups(candidateGroups);
         task.setFormKey(formKey);
-        return userTaskRepository.save(task);
+        // WO-IN-3: кандидаты — ТОТ ЖЕ состав, что даёт живой путь, и пишутся они тем же
+        // рабочим кодом (UserTaskCandidateWriter). Сначала сносим то, что написала живая
+        // активация (в этой BPMN candidateGroups="sales"), иначе задача получила бы ОБА набора
+        // и перестала описывать ту единственную группу, ради которой тест написан.
+        UserTaskEntity saved = userTaskRepository.save(task);
+        userTaskCandidateRepository.deleteAll(
+            userTaskCandidateRepository.findByUserTaskId(saved.getId()));
+        userTaskCandidateWriter.writeCandidates(saved.getId(), candidateGroups, null);
+        return saved;
     }
 
     private List<UUID> ids(UserTaskQuery q) {

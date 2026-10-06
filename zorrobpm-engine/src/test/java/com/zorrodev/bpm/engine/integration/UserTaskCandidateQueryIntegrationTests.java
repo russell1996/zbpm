@@ -10,6 +10,7 @@ import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.entity.UserGroupEntity;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
+import com.zorrodev.bpm.engine.repository.UserTaskCandidateRepository;
 import com.zorrodev.bpm.engine.repository.UserGroupRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
@@ -55,6 +56,7 @@ public class UserTaskCandidateQueryIntegrationTests {
     @Autowired private RuntimeService runtimeService;
     @Autowired private QueryService queryService;
     @Autowired private UserTaskRepository userTaskRepository;
+    @Autowired private UserTaskCandidateRepository userTaskCandidateRepository;
     @Autowired private UiUserRepository uiUserRepository;
     @Autowired private UserGroupRepository userGroupRepository;
     @Autowired private PasswordHasher passwordHasher;
@@ -172,6 +174,87 @@ public class UserTaskCandidateQueryIntegrationTests {
         assertThat(idsByRelatesTo(ghost.getId())).isEmpty();
     }
 
+    // ==================== писатель на живом пути: что реально лежит в таблице ====================
+
+    /**
+     * Прямое доказательство, что писатель стоит на ЖИВОМ пути, а роли не перепутаны: обе роли
+     * пишутся, обе нормализуются. Без строк с ролью USER тесты фильтра выше были бы зелёными на
+     * пустом результате, поэтому этот ассерт — тот самый, который ломается, если убрать вызов
+     * писателя из {@code UserTaskDbOperationsImpl.createUserTask}.
+     */
+    @Transactional
+    @Test
+    void livePath_persistsGroupAndUserCandidatesWithTheRightRoles() {
+        UUID task = startTaskWithCandidates("sales,east", "alice,bob");
+
+        assertThat(candidateLabels(task))
+            .containsExactlyInAnyOrder("GROUP:sales", "GROUP:east", "USER:alice", "USER:bob");
+    }
+
+    /**
+     * Нормализация на записи — та же, что у авторизации: пробелы у запятых не часть имени.
+     * «sales , east» это ДВЕ группы, а не одна с пробелами (иначе «кто кандидат?» и «что за
+     * группа?» отвечали бы разными вопросами — ровно тот дрейф, ради которого живёт
+     * {@code CandidateGroups}).
+     */
+    @Transactional
+    @Test
+    void livePath_trimsGroupsAndUsersLikeTheAuthorizationSide() {
+        UUID task = startTaskWithCandidates(" sales , east ", " alice , bob ");
+
+        assertThat(candidateLabels(task))
+            .containsExactlyInAnyOrder("GROUP:sales", "GROUP:east", "USER:alice", "USER:bob");
+    }
+
+    /** Мусор в списке не превращается в кандидата: пустые элементы выбрасываются разбором. */
+    @Transactional
+    @Test
+    void livePath_dropsBlankEntriesFromTheCandidateLists() {
+        UUID task = startTaskWithCandidates("sales,,  ,east", "alice,");
+
+        assertThat(candidateLabels(task))
+            .containsExactlyInAnyOrder("GROUP:sales", "GROUP:east", "USER:alice");
+    }
+
+    // ==================== читатель читает ТАБЛИЦУ, а не колонку ====================
+
+    /**
+     * Расхождение «колонка говорит одно, таблица — другое», и проверяется Обе стороны.
+     *
+     * <p>Утверждение, которое должно упасть при мутации «вернуть чтение колонки»: строки
+     * кандидатов удалены (как будто писатель не отработал или бэкфилла не было), а колонка
+     продолжает называть группу — и фильтр всё равно НЕ находит задачу. Считать по колонке
+     * здесь нельзя: тогда «миграция прошла, писатель молча перестал писать» выглядел бы как
+     * полностью рабочая фича.
+     */
+    @Transactional
+    @Test
+    void candidateGroupFilter_followsTheTableNotTheLegacyColumn() {
+        UUID task = startTaskWithCandidates("sales", null);
+        assertThat(idsByCandidateGroup("sales")).containsExactly(task);
+
+        userTaskCandidateRepository.deleteAll(userTaskCandidateRepository.findByUserTaskId(task));
+
+        assertThat(legacyGroups(task))
+            .as("легаси-колонка продолжает называть группу — стерта только таблица")
+            .isEqualTo("sales");
+        assertThat(idsByCandidateGroup("sales")).isEmpty();
+    }
+
+    /** Обратная половина: строка в ТАБЛИЦЕ находится, даже когда колонка пуста. */
+    @Transactional
+    @Test
+    void candidateGroupFilter_findsTheTableRowEvenWhenTheLegacyColumnIsEmpty() {
+        UUID task = startTaskWithCandidates("sales", null);
+
+        UserTaskEntity row = userTaskRepository.findById(task).orElseThrow();
+        row.setCandidateGroups(null);
+        userTaskRepository.save(row);
+
+        assertThat(legacyGroups(task)).isNull();
+        assertThat(idsByCandidateGroup("sales")).containsExactly(task);
+    }
+
     // ==================== helpers ====================
 
     /** ЖИВОЙ путь: старт инстанса с кандидатами в переменных — строки пишет обработчик. */
@@ -218,6 +301,17 @@ public class UserTaskCandidateQueryIntegrationTests {
     private List<UUID> ids(UserTaskQuery q) {
         return queryService.findUserTasks(q, List.of(pdId)).getData().stream()
             .map(UserTask::getId).toList();
+    }
+
+    /** «РОЛЬ:имя» по строкам-кандидатам задачи — читается напрямую из таблицы. */
+    private List<String> candidateLabels(UUID taskId) {
+        return userTaskCandidateRepository.findByUserTaskId(taskId).stream()
+            .map(row -> row.getKind() + ":" + row.getCandidate())
+            .toList();
+    }
+
+    private String legacyGroups(UUID taskId) {
+        return userTaskRepository.findById(taskId).orElseThrow().getCandidateGroups();
     }
 
     private UiUserEntity createUser() {
