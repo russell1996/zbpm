@@ -351,7 +351,7 @@ class ModuleConfigImportGuardTest {
             }
             try (Stream<Path> javaFiles = Files.walk(mainJava)) {
                 for (Path java : javaFiles.filter(p -> p.toString().endsWith(".java")).toList()) {
-                    Matcher m = PROPERTY_SOURCE.matcher(read(java));
+                    Matcher m = PROPERTY_SOURCE.matcher(stripJavaComments(read(java)));
                     while (m.find()) {
                         names.add(m.group(1));
                     }
@@ -359,6 +359,94 @@ class ModuleConfigImportGuardTest {
             }
         }
         return names;
+    }
+
+    /**
+     * Java без комментариев и строковых литералов.
+     *
+     * <p><b>Зачем это здесь, а не «для красоты».</b> Поиск идёт по исходнику как по тексту, и
+     * без вырезания комментариев ЗАКОММЕНТИРОВАННАЯ аннотация считалась бы действующей: автор
+     * отключил бы подключение, оставив строку с аннотацией в комментарии, и стража сказала бы
+     * «файл подключён». Это не гипотетический сценарий — так сделал независимый проверяющий
+     * (verifier, находка 6 вердикта на `fb6e24c2`), и Guard B остался зелёным при отключённом
+     * подключении. Комментарии вырезаются целиком, строковые литералы заменяются на
+     * заглушку (иначе `//` внутри строки съел бы остаток файла).
+     */
+    private static String stripJavaComments(String source) {
+        StringBuilder out = new StringBuilder(source.length());
+        boolean inBlockComment = false;
+        boolean inLineComment = false;
+        boolean inString = false;
+        boolean inChar = false;
+        boolean escaped = false;
+        for (int i = 0; i < source.length(); i++) {
+            char c = source.charAt(i);
+            char next = i + 1 < source.length() ? source.charAt(i + 1) : '\0';
+            if (inBlockComment) {
+                if (c == '*' && next == '/') {
+                    inBlockComment = false;
+                    i++;
+                }
+                continue;
+            }
+            if (inLineComment) {
+                if (c == '\n') {
+                    inLineComment = false;
+                    out.append(c);
+                }
+                continue;
+            }
+            // Строковый литерал сохраняется ДОСЛОВНО (аргумент аннотации PropertySource —
+            // это строка, и вычистив её содержимое, мы поймали бы «аннотация есть» только
+            // потому, что есть комментарий). Задача этого метода — убрать комментарии, а не
+            // содержимое строк; опасность «//» внутри строки снята тем, что мы внутри строки
+            // и не смотрим на следующий символ как на начало комментария.
+            if (inString) {
+                out.append(c);
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (inChar) {
+                out.append(c);
+                if (c == '\\') {
+                    if (i + 1 < source.length()) {
+                        out.append(source.charAt(i + 1));
+                        i++;
+                    }
+                } else if (c == '\'') {
+                    inChar = false;
+                }
+                continue;
+            }
+            if (c == '/' && next == '*') {
+                inBlockComment = true;
+                i++;
+                continue;
+            }
+            if (c == '/' && next == '/') {
+                inLineComment = true;
+                i++;
+                continue;
+            }
+            if (c == '"') {
+                inString = true;
+                out.append(c);
+                continue;
+            }
+            if (c == '\'') {
+                inChar = true;
+                out.append(c);
+                continue;
+            }
+            out.append(c);
+        }
+        return out.toString();
     }
 
     private static Set<String> propertyKeysOf(Path path) {

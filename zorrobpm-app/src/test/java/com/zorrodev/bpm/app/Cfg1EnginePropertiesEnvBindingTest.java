@@ -46,15 +46,19 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code BOOT-INF/classes/} (zorrobpm-app, 70 ключей) и лежащие внутри
  * {@code BOOT-INF/lib/zorrobpm-engine-*.jar} / {@code zorrobpm-rest-*.jar}. Spring Boot грузит
  * {@code classpath:/application.properties} как ОДИН ресурс — первый на classpath, то есть
- * app-файл. 22 ключа движка с плейсхолдером {@code ${ENV:default}} в задеплоенном приложении
- * ОТСУТСТВОВАЛИ в Environment, значения оператора игнорировались — без ошибки и без
- * предупреждения. Проверено на реальном собранном jar, а не чтением исходников.
+ * app-файл. 24 ключа движка с плейсхолдером «переменная окружения, иначе умолчание» в
+ * задеплоенном приложении ОТСУТСТВОВАЛИ в Environment, значения оператора игнорировались —
+ * без ошибки и без предупреждения. Проверено на реальном собранном jar, а не чтением
+ * исходников. Числа сходятся так: 24 engine-only ключа = 23 с операторским именем переменной
+ * (они в {@link #CONTAINER_ENV}) + {@code spring.rabbitmq.host}, имя переменной у которого общее
+ * с app-файлом ({@code RABBITMQ_HOST}); всего в файле движка 31 плейсхолдер — 23 этих плюс
+ * 8, объявленных ещё и в app-файле.
  *
  * <p><b>Почему это боевая проверка, а не юнит (V11).</b> Контекст поднимается
  * {@code @SpringBootTest(classes = APP.class)} — тем же классом, что и в проде, с тем же
  * {@code BOOT-INF/classes/application.properties} на classpath и тем же набором модулей в
  * classpath, что и в fat-jar. Импорт проверяется не «есть ли строка в файле», а тем, дошло ли
- * значение до НАСТОЯЩЕГО бина (у всех 23 ключей потребитель найден на диске — см. ссылки в
+ * значение до НАСТОЯЩЕГО бина (у всех 24 ключей потребитель найден на диске — см. ссылки в
  * {@link #everyEngineKeyEnvVar_reachesItsBean()}).
  *
  * <p><b>Почему окружение эмулируется через {@link SystemEnvironmentPropertySource}.</b> В
@@ -270,7 +274,7 @@ class Cfg1EnginePropertiesEnvBindingTest {
     // ------------------------------------------------------- ключ → значение → бин
 
     /**
-     * Ядро критерия 3: все 23 engine-only ключа — от первого в списке
+     * Ядро критерия 3: все 24 engine-only ключа — от первого в списке
      * ({@code zorrobpm.engine.retention.ttl-days}) до добавленного C8-36
      * ({@code zorrobpm.engine.completion-dedup.ttl-seconds}) — доводят значение из
      * env-имени до своего НАСТОЯЩЕГО потребителя.
