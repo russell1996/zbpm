@@ -1898,7 +1898,20 @@ public class CompletionService {
                 java.util.Set.of(activity.getBpmnElementId()));
             // WO-C8-35 (CR-09, ШАГ 3/B2): the failed task is dead — if it was the last
             // deliverer of a parked inclusive-join, that join must be re-evaluated here too.
-            ProcessInstance failedPi = dbService.getProcessInstance(activity.getProcessInstanceId());
+            //
+            // getProcessInstance THROWS (orElseThrow в ProcessInstanceDbOperationsImpl:77), а не
+            // возвращает null. Этот код стоит ПОСЛЕ errorActivity + createIncident внутри
+            // классового @Transactional: бросок откатил бы и ошибку, и инцидент — то есть
+            // «мягкий» резюм стал бы жёстким и ломал хвост C8-34. Поэтому отсутствие инстанса
+            // здесь НЕ пробрасывается, а просто не резюмирует (находка @verifier раунда 7).
+            ProcessInstance failedPi;
+            try {
+                failedPi = dbService.getProcessInstance(activity.getProcessInstanceId());
+            } catch (java.util.NoSuchElementException missingInstance) {
+                log.warn("{}: instance gone — skipping parked inclusive-join resume in failServiceTask tail",
+                    activity.getProcessInstanceId());
+                return;
+            }
             inclusiveGatewayHandler.resumeParkedInclusiveJoins(activity.getProcessInstanceId(),
                 activity.getToken(),
                 bpmnService.getProcessDefinitionModelById(failedPi.getProcessDefinitionId()), executor);
