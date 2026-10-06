@@ -218,13 +218,7 @@ public class HttpConnectorWorker implements JobHandler {
             return execute(model);
         } catch (HttpSsrfGate.SsrfRejectedException | HttpConnectorConfigException e) {
             // Детерминированно: ретраить бессмысленно — BPMN-ошибка без пустых ретраев.
-            // WO-QW-11: в лог и переменные — только санитизированный текст (секрет
-            // из authRef мог попасть в сообщение через склеенный URI/Location/заголовок).
-            String code = e instanceof HttpSsrfGate.SsrfRejectedException ? ERR_CONFIG : ((HttpConnectorConfigException) e).errorCode;
-            log.warn("HTTP connector deterministic error for task {}: {}", model.getServiceTaskId(),
-                sanitizeDiag(e.getMessage()));
-            activityService.throwServiceTaskError(model.getServiceTaskId(), code,
-                List.of(contractErrorVar(sanitizeDiag(e.getMessage()))));
+            throwDeterministic(activityService, model, e);
             return List.of();
         } catch (IllegalArgumentException e) {
             // Red-team (G-H): URI.create/resolve/header-builder кидают unchecked IAE
@@ -253,6 +247,28 @@ public class HttpConnectorWorker implements JobHandler {
             throw new IllegalStateException(
                 "HTTP connector transient failure: " + sanitizeDiag(e.getMessage()), e);
         }
+    }
+
+    /**
+     * WO-ENG-32: ЕДИНАЯ раскладка детерминированной ошибки коннектора в BPMN-ошибку.
+     *
+     * <p>Вынесено из {@link #handleJob}, потому что детерминированный отказ теперь
+     * умеет приходить и ДО входа в {@link #execute} — из слоя перевода Camunda-входов
+     * ({@link CamundaHttpJsonWorker}). Копия этой раскладки в алиасе разошлась бы с
+     * оригиналом при первой же правке кода ошибки, а расхождение здесь невидимо: обе
+     * стороны зелёные, различается только текст, который увидит автор процесса.
+     *
+     * <p>WO-QW-11: в лог и переменные — только санитизированный текст (секрет из
+     * authRef мог попасть в сообщение через склеенный URI/Location/заголовок).
+     */
+    static void throwDeterministic(ActivityService activityService, JobDetailModel model, Exception e) {
+        String code = e instanceof HttpSsrfGate.SsrfRejectedException
+            ? ERR_CONFIG
+            : ((HttpConnectorConfigException) e).errorCode;
+        log.warn("HTTP connector deterministic error for task {}: {}", model.getServiceTaskId(),
+            sanitizeDiag(e.getMessage()));
+        activityService.throwServiceTaskError(model.getServiceTaskId(), code,
+            List.of(contractErrorVar(sanitizeDiag(e.getMessage()))));
     }
 
     private List<ProcessVariable> execute(JobDetailModel model) throws IOException, InterruptedException {
