@@ -83,8 +83,20 @@ public class EndEventHandler {
                 dbService.cancelActivity(active.getId());
             }
             Activity scope = dbService.getActivity(scopeActivityId);
-            dbService.cancelActivity(scopeActivityId);
+            // WO-C8-37 (C37-4): terminate closes the scope like a normal exit —
+            // the container's output mappings are promoted to root and the scope
+            // locals are dropped, exactly as FlowNavigator.finishBranch does
+            // (same gate: SUB_PROCESS with an ioMapping extension; otherwise zero
+            // behaviour change). Row status stays CANCELLED (terminate semantic).
             BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
+            if (scopeElement != null
+                && scopeElement.getType() == BpmnElementType.SUB_PROCESS
+                && scopeElement.getExtensions() != null
+                && scopeElement.getExtensions().getIoMappingExtension() != null) {
+                elementSupport.applyIoMappings(ctx.processInstanceId(), scopeActivityId, scopeElement, false);
+                dbService.deleteVariables(ctx.processInstanceId(), scopeActivityId);
+            }
+            dbService.cancelActivity(scopeActivityId);
             flowNavigator.proceedToOutgoing(ctx.processInstanceId(), token.getParentId(), bpmn, scopeElement, ctx.executor());
         }
     }
