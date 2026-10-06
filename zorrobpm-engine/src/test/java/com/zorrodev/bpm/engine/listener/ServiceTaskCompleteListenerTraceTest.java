@@ -67,7 +67,8 @@ class ServiceTaskCompleteListenerTraceTest {
 
         listener.on(completed);
 
-        verify(runtimeService).completeServiceTask(any(), any());
+        // WO-C8-36: listener пробрасывает фазу из сообщения (здесь null — legacy).
+        verify(runtimeService).completeServiceTask(any(), any(), any(), any());
         assertThat(exporter.getFinishedSpanItems())
             .filteredOn(span -> span.getName().equals("completion.process"))
             .hasSize(1)
@@ -85,7 +86,11 @@ class ServiceTaskCompleteListenerTraceTest {
 
         listener.on(completed);
 
-        verify(runtimeService).failServiceTask(any(), any(), any());
+        // WO-C8-36: 6-арная перегрузка (serviceTaskId, errorMessage, retries,
+        // dispatchPhase, dispatchIndex, completionId) — именно её зовёт listener
+        // на FAILED. Пять матчеров проверяли 5-арную и падали бы на mismatch
+        // арности (поймано полным clean verify, не точечным прогоном).
+        verify(runtimeService).failServiceTask(any(), any(), any(), any(), any(), any());
         assertThat(exporter.getFinishedSpanItems())
             .filteredOn(span -> span.getName().equals("completion.process"))
             .hasSize(1);
@@ -104,7 +109,7 @@ class ServiceTaskCompleteListenerTraceTest {
         com.zorrodev.bpm.engine.service.ScriptOverloadException overload =
             new com.zorrodev.bpm.engine.service.ScriptOverloadException("pool overloaded (test)", 5);
         org.mockito.Mockito.doThrow(overload).when(runtimeService)
-            .completeServiceTask(any(), any());
+            .completeServiceTask(any(), any(), any(), any());
         ServiceTaskCompleted completed = new ServiceTaskCompleted();
         completed.setServiceTaskId(UUID.randomUUID());
         completed.setStatus("SUCCESS");
@@ -115,6 +120,6 @@ class ServiceTaskCompleteListenerTraceTest {
             .as("overload обязана выйти наружу без обёртки — контейнер retry её переиграет")
             .isSameAs(overload);
         org.mockito.Mockito.verify(runtimeService, org.mockito.Mockito.never())
-            .failServiceTask(any(), any(), any());
+            .failServiceTask(any(), any(), any(), any(), any());
     }
 }

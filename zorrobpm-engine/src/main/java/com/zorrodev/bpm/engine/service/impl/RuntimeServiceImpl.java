@@ -80,7 +80,13 @@ public class RuntimeServiceImpl implements RuntimeService {
 
     @Override
     public IdDTO completeServiceTask(UUID id, List<ProcessVariable> variables) {
-        activityService.completeServiceTask(id, variables);
+        return completeServiceTask(id, variables, null, null);
+    }
+
+    @Override
+    public IdDTO completeServiceTask(UUID id, List<ProcessVariable> variables, String dispatchPhase,
+            Integer dispatchIndex) {
+        activityService.completeServiceTask(id, variables, dispatchPhase, dispatchIndex);
         IdDTO result = new IdDTO();
         result.setId(id);
         return result;
@@ -96,7 +102,19 @@ public class RuntimeServiceImpl implements RuntimeService {
 
     @Override
     public IdDTO failServiceTask(UUID id, String errorMessage, Integer retries) {
-        activityService.failServiceTask(id, errorMessage, retries);
+        return failServiceTask(id, errorMessage, retries, null, null);
+    }
+
+    @Override
+    public IdDTO failServiceTask(UUID id, String errorMessage, Integer retries, String dispatchPhase,
+            Integer dispatchIndex) {
+        return failServiceTask(id, errorMessage, retries, dispatchPhase, dispatchIndex, null);
+    }
+
+    @Override
+    public IdDTO failServiceTask(UUID id, String errorMessage, Integer retries, String dispatchPhase,
+            Integer dispatchIndex, String completionId) {
+        activityService.failServiceTask(id, errorMessage, retries, dispatchPhase, dispatchIndex, completionId);
         IdDTO result = new IdDTO();
         result.setId(id);
         return result;

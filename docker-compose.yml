@@ -185,6 +185,21 @@ services:
       # WO-ENG-30: strict io-mapping compat flag (default false in
       # application.properties; empty = property default applies).
       IO_MAPPING_STRICT_MISSING: ${IO_MAPPING_STRICT_MISSING:-}
+      # WO-C8-36 (H-1): phased-штамп вызова в теле задания. В нашем стеке engine
+      # и http-connector released together, все воркеры этого релиза новые —
+      # поэтому true (прод-дефолт в application.properties остаётся false для
+      # внешних воркеров: порядок «сначала воркеры, потом флаг» именно из-за них).
+      ZORROBPM_ENGINE_DISPATCH_PHASE_STAMPING: ${ZORROBPM_ENGINE_DISPATCH_PHASE_STAMPING:-true}
+      # WO-C8-36 (H-2): окно жизни durable-маркера дедупа отправок результата.
+      # Раунд 4, F-7: имя переменной — ТОЧНАЯ relaxed-binding форма ключа
+      # `zorrobpm.engine.completion-dedup.ttl-seconds`, т.е. с префиксом ENGINE_.
+      # Прежнее ZORROBPM_COMPLETION_DEDUP_TTL_SECONDS синонимом ключа НЕ было:
+      # в fat-jar BOOT-INF/classes/application.properties (этот стек) перекрывает
+      # engine-файл, так что placeholder из engine-свойств не разрешается ВООБЩЕ,
+      # и связь ручки с .env жила только на этом имени. Оператор ставил значение —
+      # контейнер стартовал с дефолтом 3600, зажим F-3 был недостижим, WARN молчал.
+      # Доказано: engine-тест C836ComposeEnvBindingTest берёт имя ОТСЮДА.
+      ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS: ${ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS:-3600}
       # WO-ENG-31 Фаза 2: HTTP-коннектор (дефолты fail-closed: выключен + deny-all;
       # пусто = дефолт свойства; compose пробрасывает явно — WO-INT-6 класс).
       ZORROBPM_HTTP_CONNECTOR_ENABLED: ${ZORROBPM_HTTP_CONNECTOR_ENABLED:-false}
