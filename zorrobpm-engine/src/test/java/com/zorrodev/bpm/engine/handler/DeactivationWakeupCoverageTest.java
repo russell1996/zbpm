@@ -217,7 +217,13 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("CompletionService.java#failCancelingListener[&& dbService.getPendingCancelingListenerIndex(serviceTaskId) != null) {]|dbService.errorActivity(serviceTaskId)", R06);
         WHITELIST.put("CompletionService.java#failCompletingListener[&& dbService.getPendingCompletingListenerIndex(serviceTaskId) != null) {]|dbService.errorActivity(serviceTaskId)", R06);
         WHITELIST.put("CompletionService.java#failCreatingListener[&& dbService.getPendingCreatingListenerIndex(serviceTaskId) != null) {]|dbService.errorActivity(serviceTaskId)", R06);
-        WHITELIST.put("CompletionService.java#failSharedBudget[]|dbService.errorActivity(serviceTaskId)", R06);
+        // Раунд 7: запись для failSharedBudget УДАЛЕНА. С резюмом в хвосте (WO-C8-35) этот
+        // сайт перестал быть исключением — причиной оставалось «исход виден оператору», но
+        // деактивация там будит припаркованные join'ы. Ложная причина R06 была ровно тем,
+        // из-за чего сканер этот сайт не видел (пробел покрытия находки @verifier раунда 7);
+        // удаление записи оставило тест зелёным, потому что сканер сайт больше не считает
+        // нарушением. Поведение теперь проверяет новый интеграционный тест
+        // failedServiceTaskWithExhaustedBudget_wakesTheParkedJoin (мутация 6, §17.11).
         WHITELIST.put("CompletionService.java#failUpdatingListener[&& dbService.getPendingUpdatingListenerIndex(serviceTaskId) != null) {]|dbService.errorActivity(serviceTaskId)", R06);
         WHITELIST.put("CompletionService.java#handleAssigningListeners[if (pendingAssigning != null) {]|dbService.errorActivity(serviceTaskId)", R06);
         WHITELIST.put("CompletionService.java#handleCancelingListeners[if (pendingCanceling != null) {]|dbService.errorActivity(serviceTaskId)", R06);
