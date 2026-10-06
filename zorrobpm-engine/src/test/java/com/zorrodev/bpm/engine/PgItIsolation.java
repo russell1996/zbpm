@@ -44,8 +44,17 @@ public final class PgItIsolation {
      * Parks the background timer poller for the whole Spring context of the calling test class.
      *
      * <p>Same recipe as {@code TimerBatchIsolationPgIT} / {@code RepeatingTimerSemanticsPgIT}: the test
-     * drives whatever it wants to drive explicitly, and no second thread writes the timer tables
-     * underneath it. Test-only configuration — production keeps the 5 s default.
+     * drives whatever it wants to drive explicitly, so no second thread writes the timer tables
+     * underneath it every few seconds. Test-only configuration — production keeps the 5 s default.
+     *
+     * <p><b>What this does and does not give (measured, @verifier round 6).</b> It makes the poller
+     * effectively silent for the rest of the run. It does NOT make the context writer-free forever:
+     * {@code TimerScheduler.fireDueTimers()} is {@code @Scheduled(fixedDelayString = …)} with no
+     * {@code initialDelay}, so <b>every freshly built context ticks once immediately</b>, and Spring
+     * builds a separate context per test class that differs in properties — three classes here means
+     * three first ticks. That is why no assertion in these classes may depend on how many rows the
+     * WHOLE table holds (see {@link #ownRowsAmong}): a tick that lands inside a test can still claim a
+     * foreign row.
      */
     public static void parkBackgroundTimerPollers(DynamicPropertyRegistry registry) {
         registry.add("zorrobpm.engine.timer-poll-interval-ms", () -> "3600000");

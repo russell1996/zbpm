@@ -200,8 +200,14 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
         Instant staleCreatedAt = Instant.now().minusSeconds(600);
         UUID staleDefinitionId = UUID.randomUUID();
         UUID staleJobId = UUID.randomUUID();
+        // fired = true ON PURPOSE. The row must LOOK stale to the predicate under test (due_at far in the
+        // past) yet be UNCLAIMABLE by a live TimerScheduler of a neighbouring, fully-unparked context:
+        // processBatch() selects `fired = false AND due_at <= now()`. Leaving fired=false here would arm a
+        // due timer start with a random process_definition_id, and the poller would claim it and fail on
+        // fk_process_instances__process_definition_id — the very FK noise §9 escalates, reproduced by this
+        // branch's own test (@verifier round 6).
         jdbc.update("INSERT INTO timer_start_jobs (id, process_key, process_definition_id, element_id, due_at,"
-                + " fired, created_at) VALUES (?, 'qw13-stale-key', ?, 'staleStart', ?, false, ?)",
+                + " fired, created_at) VALUES (?, 'qw13-stale-key', ?, 'staleStart', ?, true, ?)",
             staleJobId, staleDefinitionId, Timestamp.from(staleCreatedAt.plusSeconds(300)),
             Timestamp.from(staleCreatedAt));
 
