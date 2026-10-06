@@ -153,6 +153,56 @@ public class InclusiveJoinDeactivationWakeupIntegrationTests {
         assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
     }
 
+    // ── BLOCKER-5 (red-team раунда 4): отложенный границей хвост НЕ будит parked join ───────
+    @Transactional
+    @Test
+    void deferredCancelingTailOnTheBoundaryHost_wakesTheParkedJoin() throws Exception {
+        // Диаграмма red-team ДОСЛОВНО (WO-C8-35-independent-review-r4.md, §BLOCKER-5):
+        // pfork -> { taskA -> gC -> join ; taskHold [+canceling-listener,
+        //           +прерывающая граница holdBnd] -> taskHoldNext -> join },
+        // holdBnd -> escapeEnd.
+        UUID pdId = processDefinitionService.addProcessDefinition(
+            bpmn("test-c835-canceling-deferred-tail-incl-join.bpmn")).getId();
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(pdId);
+        UUID pi = runtimeService.startProcessInstance(dto).getId();
+
+        // taskA приходит в join; taskHold ЖИВ и достижим (taskHold -> taskHoldNext -> join) —
+        // join паркуется, это правильно.
+        complete(pi, "taskA");
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("taskHold is live and can still reach the join — the join must wait")
+            .isEqualTo(0L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED)).isEqualTo(0L);
+
+        // Прерывающая граница гасит taskHold — последнего возможного доставщика второй ветви.
+        // taskHold объявляет canceling-листенер, поэтому хвост границы ОТЛОЖЕН и fireBoundary
+        // возвращается ДО resumeParkedInclusiveJoins.
+        UUID taskHoldId = active(pi, "taskHold").getId();
+        activityService.fireBoundaryTimer(taskHoldId, "holdBnd");
+        assertThat(countOf(pi, "taskHold", ActivityStatus.CANCELLED))
+            .as("premise: the interrupting boundary cancelled its host")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("premise: the join is still parked — the deferred tail has not run yet")
+            .isEqualTo(0L);
+
+        // Последний canceling-листенер отрабатывает — отложенный хвост идёт по continue границы.
+        runtimeService.completeServiceTask(taskHoldId, List.of());
+
+        assertThat(countOf(pi, "escapeEnd", ActivityStatus.COMPLETED))
+            .as("premise: the deferred boundary tail really ran")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("nobody can reach the join any more (taskHold is cancelled, taskHoldNext never "
+                + "created) — the parked join must fire in the deferred tail, not be lost")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED))
+            .as("downstream of the join must be entered (red-team: taskAfter CREATED=0 — ветвь потеряна)")
+            .isEqualTo(1L);
+        assertThat(incidents(pi)).isEqualTo(0L);
+    }
+
     // ── ESCALATION: то же самое на escalation-семействе (call activity в родителе) ──────────
     @Transactional
     @Test

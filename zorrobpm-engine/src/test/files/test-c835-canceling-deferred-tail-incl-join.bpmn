@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c835_deftail" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c835-canceling-deferred-tail-incl-join" name="test-c835-canceling-deferred-tail-incl-join" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+
+    <!-- Диаграмма red-team BLOCKER-5 ДОСЛОВНО
+         (WO-C8-35-independent-review-r4.md, §BLOCKER-5):
+         pfork -> { taskA -> gC -> join ;
+                    taskHold [+canceling-listener, +ПРЕРЫВАЮЩАЯ граница holdBnd]
+                           -> taskHoldNext -> fNext -> join }
+         holdBnd -> escapeEnd. join — inclusive, 2 входа (gC, fNext) -> taskAfter -> end.
+
+         Наблюдение red-team (живой прогон): taskA завершён → join припаркован (1 из 2);
+         таймер holdBnd стреляет на taskHold → открывается canceling-фаза (taskHold CANCELLED),
+         и fireBoundary ВОЗВРАЩАЕТСЯ до resumeParkedInclusiveJoins; последний листенер
+         отрабатывает → отложенный хвост advanceOrFinishCanceling идёт по proceedToOutgoing
+         БЕЗ перепроверки → holdBnd => escapeEnd → «all branches consumed» →
+         join COMPLETED=0, taskAfter CREATED=0, инцидентов 0, completedAt != null.
+         То есть не «висит», а ТИХО ЗАВЕРШЁН с потерянной ветвью. -->
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fc</bpmn:outgoing>
+      <bpmn:outgoing>fHold</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fc" name="fc" sourceRef="pfork" targetRef="taskA" />
+    <bpmn:sequenceFlow id="fHold" name="fHold" sourceRef="pfork" targetRef="taskHold" />
+
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>fc</bpmn:incoming>
+      <bpmn:outgoing>gC</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="gC" name="gC" sourceRef="taskA" targetRef="join" />
+
+    <!-- taskHold: canceling-листенер (WO-C8-28) + прерывающая граничная тревога -->
+    <bpmn:userTask id="taskHold" name="taskHold">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:taskListeners>
+          <zeebe:taskListener eventType="canceling" type="canceling-job" />
+        </zeebe:taskListeners>
+      </bpmn:extensionElements>
+      <bpmn:incoming>fHold</bpmn:incoming>
+      <bpmn:outgoing>fHoldNext</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fHoldNext" name="fHoldNext" sourceRef="taskHold" targetRef="taskHoldNext" />
+    <bpmn:userTask id="taskHoldNext" name="taskHoldNext">
+      <bpmn:incoming>fHoldNext</bpmn:incoming>
+      <bpmn:outgoing>fNext</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fNext" name="fNext" sourceRef="taskHoldNext" targetRef="join" />
+
+    <bpmn:boundaryEvent id="holdBnd" name="holdBnd" attachedToRef="taskHold" cancelActivity="true">
+      <bpmn:outgoing>fEscape</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="holdBndTimer">
+        <bpmn:timeDuration>PT10M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fEscape" name="fEscape" sourceRef="holdBnd" targetRef="escapeEnd" />
+    <bpmn:endEvent id="escapeEnd" name="escapeEnd">
+      <bpmn:incoming>fEscape</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>gC</bpmn:incoming>
+      <bpmn:incoming>fNext</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="join" targetRef="taskAfter" />
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
