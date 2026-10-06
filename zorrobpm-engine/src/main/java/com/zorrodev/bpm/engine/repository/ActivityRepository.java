@@ -72,8 +72,9 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
     List<ActivityEntity> findByProcessInstanceIdAndStatusInOrderByIdAsc(UUID processInstanceId, Collection<ActivityStatus> statuses);
 
     /**
-     * WO-C8-35 раунд 6 (minor а рецензии r4): element id тех элементов инстанса, у которых ЕСТЬ
-     * activity-строки, но НИ ОДНОЙ живой (все COMPLETED/CANCELLED/ERROR) — то есть хост умер.
+     * WO-C8-35 раунд 6 (minor а рецензии r4), раунд 8 (БЛОКИРУЮЩАЯ №1 рецензии r5):
+     * element id тех элементов инстанса, у которых ЕСТЬ activity-строки, но НИ ОДНОЙ живой
+     * (все COMPLETED/CANCELLED/ERROR) — то есть хост умер.
      *
      * <p>Нужен, чтобы исключить границу на мёртвом хосте, и нужен ОДНИМ запросом: прежний путь
      * спрашивал {@code getActivity} на каждый хост границы (N+1 на горячем пути правила
@@ -82,11 +83,17 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
      *
      * <p>Multi-instance: элемент считается мёртвым, только если мертвы ВСЕ его копии — одна
      * живая копия возвращает элемент в возможные доставщики (раунд 4, «outlet на нескольких
-     * хостах»). Элемент, который ещё НЕ начинался, строк не имеет и потому в результат не
+     * хостах»). Поэтому предикат — NOT EXISTS живая строка того же elementId, а НЕ «есть
+     * любая нетерминальная строка»: смешанные строки COMPLETED + живая одного elementId —
+     * штатное состояние MI-копий (WO-ENG-23), и прежняя форма ложно объявляла такой хост
+     * мёртвым, снимая его границу с доставщиков (раунд 8, раннее срабатывание join).
+     * Элемент, который ещё НЕ начинался, строк не имеет и потому в результат не
      * попадает — он и есть «достижим по графу» (BLOCKER-6).
      */
     @Query("SELECT DISTINCT a.bpmnElementId FROM ActivityEntity a WHERE a.processInstanceId = :processInstanceId "
-        + "AND a.bpmnElementId IN :elementIds AND a.status NOT IN :liveStatuses")
+        + "AND a.bpmnElementId IN :elementIds AND a.status NOT IN :liveStatuses "
+        + "AND NOT EXISTS (SELECT 1 FROM ActivityEntity live WHERE live.processInstanceId = :processInstanceId "
+        + "AND live.bpmnElementId = a.bpmnElementId AND live.status IN :liveStatuses)")
     List<String> findDeadElementIds(UUID processInstanceId, Collection<String> elementIds,
                                     Collection<ActivityStatus> liveStatuses);
 

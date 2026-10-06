@@ -453,4 +453,63 @@ public class InclusiveJoinReadinessIntegrationTests {
         assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED)).isEqualTo(1L);
         assertThat(incidents(pi)).isEqualTo(0L);
     }
+
+    // ── БЛОКИРУЮЩАЯ №1 (red-team раунда 5): MI-хост, 1 копия завершена ──────────────
+    @Transactional
+    @Test
+    void miHostWithOneLiveCopy_conditionalBoundaryKeepsTheJoinParked() throws Exception {
+        // Диаграмма к репро red-team дословно (WO-C8-35-independent-review-r5.md, БЛОКИРУЮЩАЯ
+        // №1): pfork -> { miTask (parallel MI, 2 копии) -> endMi ; taskFlag -> join },
+        // condMi (непрерывающая conditional-граница на MI-хосте) -> join. У MI-хоста НЕТ
+        // исходящего потока в join — единственное ребро от живой копии к join идёт через
+        // границу. Завершена 1 копия (смешанные строки COMPLETED + CREATED одного elementId —
+        // штатное состояние MI-копий, WO-ENG-23), затем деактивация taskFlag. Старый
+        // findDeadElementIds видел ЛЮБУЮ нетерминальную строку, объявлял хост с живой копией
+        // мёртвым, снимал condMi с доставщиков — и join срабатывал на приходе taskFlag
+        // (COMPLETED=1 при ЖИВОМ хосте), а по границе — ВТОРЫМ. Правильно: join ждёт, пока
+        // жива хоть одна копия, и срабатывает РОВНО ОДИН РАЗ, когда умрёт последняя.
+        UUID pi = start("test-c835-mi-condbnd-incl-join.bpmn");
+
+        List<ActivityEntity> copies = activities(pi).stream()
+            .filter(a -> a.getBpmnElementId().equals("miTask"))
+            .filter(a -> a.getStatus() == ActivityStatus.CREATED)
+            .toList();
+        assertThat(copies).as("premise: parallel MI spawns exactly 2 copies").hasSize(2);
+
+        runtimeService.completeUserTask(copies.get(0).getId(), List.of());
+        assertThat(countOf(pi, "miTask", ActivityStatus.COMPLETED))
+            .as("premise: mixed rows — one copy done, one still live")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "miTask", ActivityStatus.CREATED))
+            .as("premise: the second copy is still live")
+            .isEqualTo(1L);
+
+        complete(pi, "taskFlag");
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("one MI copy is still LIVE and reaches the join through condMi — the join must wait")
+            .isEqualTo(0L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED))
+            .as("taskAfter before the last copy dies is the early-firing side effect")
+            .isEqualTo(0L);
+
+        // Последняя копия умирает: хост по-настоящему мёртв, condMi снята, доставить больше
+        // некому — перепроверка на этой деактивации обязана разбудить припаркованный join.
+        UUID lastCopyId = activities(pi).stream()
+            .filter(a -> a.getBpmnElementId().equals("miTask"))
+            .filter(a -> a.getStatus() == ActivityStatus.CREATED)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("second MI copy must be live"))
+            .getId();
+        runtimeService.completeUserTask(lastCopyId, List.of());
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("the join must pass through EXACTLY ONCE — not zero (hang), not twice (double delivery)")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED)).isEqualTo(1L);
+        assertThat(incidents(pi)).isEqualTo(0L);
+
+        complete(pi, "taskAfter");
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt())
+            .as("the instance must actually complete, not hang with a parked token")
+            .isNotNull();
+    }
 }
