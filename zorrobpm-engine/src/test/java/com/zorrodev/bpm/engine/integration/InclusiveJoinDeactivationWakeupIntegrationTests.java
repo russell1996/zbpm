@@ -244,4 +244,44 @@ public class InclusiveJoinDeactivationWakeupIntegrationTests {
         assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED)).isEqualTo(1L);
         assertThat(incidents(pi)).isEqualTo(0L);
     }
+
+    // ── Хвост failSharedBudget: сервисная задача с ИСЧЕРПАННЫМ бюджетом как последний доставщик ──
+    // @verifier раунда 7 (оформительская находка 6, но пробел в покрытии МОЕГО кода): снятие
+    // резюма в CompletionService.failSharedBudget оставляло зелёными все 11 модулей — на этом
+    // сайте не было НИ ОДНОГО теста. Тот же дефект, что BLOCKER-4 был на ErrorEscalationThrower:
+    // точка деактивации без перепроверки, и паркованный join засыпает навсегда.
+    @Transactional
+    @Test
+    void failedServiceTaskWithExhaustedBudget_wakesTheParkedJoin() throws Exception {
+        UUID pdId = processDefinitionService.addProcessDefinition(
+            bpmn("test-c835-failed-svc-last-deliverer-incl-join.bpmn")).getId();
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(pdId);
+        UUID pi = runtimeService.startProcessInstance(dto).getId();
+
+        // taskA приходит в join; taskSvc ЖИВ и достижим по графу (taskSvc -> join) — паркуем.
+        complete(pi, "taskA");
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("taskSvc is live and can still reach the join — the join must wait")
+            .isEqualTo(0L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED)).isEqualTo(0L);
+
+        // taskSvc падает с исчерпанным бюджетом (retries=0 в диаграмме) — хвост failSharedBudget:
+        // errorActivity + createIncident + резюм. Это последний возможный доставщик.
+        runtimeService.failServiceTask(active(pi, "taskSvc").getId(), "budget exhausted", null);
+
+        assertThat(countOf(pi, "taskSvc", ActivityStatus.ERROR))
+            .as("premise: the service task really died on the exhausted budget")
+            .isEqualTo(1L);
+        assertThat(incidents(pi))
+            .as("premise: the incident was raised (tail ran, not re-dispatch)")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("nobody can reach the join any more — it must fire in the failSharedBudget tail, "
+                + "not sleep forever")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED))
+            .as("downstream of the join must be entered (red-team форма: taskAfter CREATED=0)")
+            .isEqualTo(1L);
+    }
 }
