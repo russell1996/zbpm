@@ -166,3 +166,7 @@ curl -X POST https://<host>/user-tasks/$TASK/complete -H "$AUTH" -H 'Content-Typ
 - **User task не в инбоксе** — проверьте фильтр (`assignee` vs `candidateGroup`) и маркер `zeebe:userTask`.
 - **Шлюз → инцидент** — ни одно условие не истинно и нет **default flow**. Задайте default.
 - **Переменная не читается в FEEL** — неверный `type` (число как `STRING`). Число → `LONG`/`DOUBLE`, объект → `JSON`.
+- **Дата из io-mapping не парсится** — `=now()` и другие FEEL-даты движок кладёт в `STRING` как ISO-строку с офсетом
+  (`2026-09-30T15:49:48.966494894+05:00`, RFC 3339 — парсится Go-layout `2006-01-02T15:04:05Z07:00` без обработки;
+  WO-ENG-33). А `=string(now())` — это форматирование самого feel-движка (апстрим-паритет с Camunda 8), там суффикс
+  `@ZoneId` остаётся: для межсистемных дат используйте объект (`=now()`), не `string()`.
