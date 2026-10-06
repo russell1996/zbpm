@@ -113,6 +113,16 @@ class UserTaskCandidatesBackfillPgIT {
         }
     }
 
+    /**
+     * Останавливает мастер-чанжлог на {@code N-2} changeset'ах — на двух наших.
+     *
+     * <p>ЗАВИСИМОСТЬ, которую надо знать: наши два changeset'а обязаны быть ПОСЛЕДНИМИ в
+     * master-чанжлоге (includeAll сортирует по имени файла, а наши имена — самые новые). Если
+     * появится более поздняя миграция, счёт разойдётся. Падение будет ГРОМКИМ и понятным, а не
+     * тихим: следующая проверка требует, чтобы {@code user_task_candidates} ещё НЕ существовала,
+     * и при лишнем changeset'е она не сойдётся. Фикс на будущее — искать позицию своих
+     * changeset'ов по id, а не по «последние два».
+     */
     private void runMasterUpTo(int changesToRun) throws Exception {
         try (Connection c = open()) {
             liquibaseOn(c).update(changesToRun, new Contexts(), new LabelExpression());
