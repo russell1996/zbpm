@@ -100,6 +100,17 @@ public class BpmMetrics {
     private final Counter sseForeignSequenceDropped;
 
     /**
+     * WO-REL-66 (B): quarantined-loop cut visibility — unroutable domain-event
+     * notifications dropped WITH accounting instead of quarantined recursively.
+     * One series per event type (same shape as the activity-transition
+     * ignore-reasons above); unknown types are not counted.
+     */
+    private final Map<String, Counter> domainEventUnroutableByType;
+
+    /** Event types counted by {@link #domainEventUnroutable}. */
+    static final List<String> DOMAIN_EVENT_UNROUTABLE_TYPES = List.of("outbox.quarantined");
+
+    /**
      * WO-REL-48: feed-position backlog visibility. NOT new injected
      * dependencies — these three meters live in BpmMetrics because that is
      * the domain this class already owns (Micrometer registry → Prometheus;
@@ -237,6 +248,18 @@ public class BpmMetrics {
         this.sseForeignSequenceDropped = Counter.builder("zbpm.sse.foreign.dropped")
             .description("SSE live events dropped: sequence has no row in this DB (foreign installation/test publish)")
             .register(registry);
+
+        // WO-REL-66 (B): one series per dropped-as-unroutable notification type.
+        Map<String, Counter> unroutableByType = new LinkedHashMap<>();
+        for (String type : DOMAIN_EVENT_UNROUTABLE_TYPES) {
+            unroutableByType.put(type, Counter.builder("zbpm.domain.event.unroutable")
+                .description("Domain-event notifications dropped as unroutable "
+                    + "(no route on zorrobpm.events) instead of quarantined recursively. "
+                    + "A growing series means nobody is bound to that notification.")
+                .tag("type", type)
+                .register(registry));
+        }
+        this.domainEventUnroutableByType = Map.copyOf(unroutableByType);
     }
 
     // --- Process lifecycle ---
@@ -313,4 +336,17 @@ public class BpmMetrics {
 
     // --- SSE bridge (WO-REL-56, part B) ---
     public void sseForeignSequenceDropped() { sseForeignSequenceDropped.increment(); }
+
+    // --- Quarantine-notification drops (WO-REL-66, part B) ---
+    /**
+     * Counts a dropped-as-unroutable notification of a known type. Unknown
+     * types are not counted (same discipline as
+     * {@link #activityTransitionIgnored}).
+     */
+    public void domainEventUnroutable(String type) {
+        Counter counter = domainEventUnroutableByType.get(type);
+        if (counter != null) {
+            counter.increment();
+        }
+    }
 }

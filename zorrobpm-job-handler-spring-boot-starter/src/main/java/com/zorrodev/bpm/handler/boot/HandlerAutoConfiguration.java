@@ -70,6 +70,43 @@ public class HandlerAutoConfiguration {
     private ObjectMapper objectMapper;  // shared instance (CRIT-5)
 
     /**
+     * WO-REL-66 (A): worker-side known topology — every (handler, queue)
+     * pair subscribed by {@link #init()}. Replayed on each new broker
+     * connection by {@link #ensureTopologyRedeclareOnReconnect} (the
+     * 2026-10-07 incident: recreated broker, poison + work queues gone,
+     * {@code declarePoisonTopology} ran once from {@code init()} and never
+     * again → {@code not_found} until manual restart).
+     */
+    private final java.util.List<HandlerQueue> handlerQueues =
+        new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
+     * WO-REL-66 (A): work queues pinned as legacy (pre-REL-45, no DLX —
+     * broker 406s on redeclare-with-args, can never succeed). Terminal for
+     * this JVM: skipped by reconnect-redeclare, exactly like the engine-side
+     * {@code legacyDeclared} (criterion 4 — REL-51 does not regress).
+     * Poison-queue 406s are pinned under their own queue names in the same set.
+     */
+    private final java.util.Set<String> workerLegacyPinned =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * WO-REL-66 (A): minimum interval between worker topology redeclare
+     * rounds (connection flaps must not storm the broker). First reconnect
+     * always runs (fresh instance starts at 0).
+     */
+    static final long WORKER_REDECLARE_DEBOUNCE_MS = 30_000L;
+
+    private final java.util.concurrent.atomic.AtomicBoolean workerRedeclareInFlight =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+    private final java.util.concurrent.atomic.AtomicLong lastWorkerRedeclareMs =
+        new java.util.concurrent.atomic.AtomicLong(0);
+
+    /** WO-REL-66 (A): one subscribed (handler, queue) pair. */
+    private record HandlerQueue(JobHandler handler, String queueName) {
+    }
+
+    /**
      * WO-REL-62: с какой каденцией контейнер перепроверяет missing queue
      * (ms). Дефолт Spring AMQP — 60с: воркер, поднявшийся раньше своей очереди,
      * ждал бы минуту даже при живом брокере; 2с — достаточно быстро для
@@ -173,6 +210,10 @@ public class HandlerAutoConfiguration {
             JobHandler handler = entry.getValue();
             SimpleMessageListenerContainer container = connectionFactory.createListenerContainer();
             String queueName = "zorrobpm.jobs." + handler.getJob();
+            // WO-REL-66 (A): record BEFORE any declare attempt — the
+            // reconnect-redeclare below must also cover queues whose startup
+            // declare never ran (broker was down at startup).
+            handlerQueues.add(new HandlerQueue(handler, queueName));
             container.setQueueNames(queueName);
             // WO-REL-62: очередь может появиться позже, чем стартует контейнер
             // (брокер лежал на старте и declare ушёл на reconnect; движок тоже
@@ -236,6 +277,13 @@ public class HandlerAutoConfiguration {
             log.info("Subscribing to {}", CompletionPoisonRetryListener.POISON_QUEUE);
         }
 
+        // WO-REL-66 (A): permanent redeclare on every new broker connection —
+        // covers BOTH the startup-failure path above (its one-shot listener
+        // self-removes after the first success, so a LATER broker flap would
+        // otherwise lose the topology again) and the steady-state loss from
+        // the 2026-10-07 incident. Declares are idempotent on the broker;
+        // the round is debounced and legacy-aware inside.
+        ensureTopologyRedeclareOnReconnect();
     }
 
     /**
@@ -359,6 +407,98 @@ public class HandlerAutoConfiguration {
         };
         cachingCf.addConnectionListener(self[0]);
         log.info("Scheduled redeclare of {} on broker reconnect", queueName);
+    }
+
+    /**
+     * WO-REL-66 (A): permanent worker-topology redeclare on every new broker
+     * connection. Standard Spring AMQP pattern ({@code ConnectionListener.onCreate},
+     * same as the startup one-shot above): a recreated broker means a new
+     * physical connection, which is exactly the heal signal.
+     *
+     * <p>Replays the poison topology (when parking is enabled) plus every
+     * recorded work queue, skipping REL-51 legacy-pinned names (terminal for
+     * this JVM — criterion 4). Never throws out of {@code onCreate} (a throw
+     * there would poison the connection-recovery path itself); failures are
+     * warn-logged and retried on the next reconnect. Non-caching factories
+     * get a warn (same fallback contract as the one-shot path: the queues
+     * then rely on the peer side declaring them).
+     */
+    private void ensureTopologyRedeclareOnReconnect() {
+        org.springframework.amqp.rabbit.connection.ConnectionFactory cf =
+            rabbitTemplate.getConnectionFactory();
+        if (!(cf instanceof CachingConnectionFactory cachingCf)) {
+            log.warn("WO-REL-66: cannot redeclare worker topology on reconnect: "
+                + "connection factory is {} (not caching)",
+                cf == null ? "null" : cf.getClass().getSimpleName());
+            return;
+        }
+        cachingCf.addConnectionListener(new ConnectionListener() {
+            @Override
+            public void onCreate(Connection connection) {
+                redeclareWorkerTopology();
+            }
+        });
+        log.info("WO-REL-66: worker topology redeclare on broker reconnect registered "
+            + "({} work queue(s), poison={})", handlerQueues.size(), completionPoisonEnabled);
+    }
+
+    /**
+     * WO-REL-66 (A): one redeclare round over the known worker topology.
+     * Package-visible for the unit test (fire without a broker).
+     */
+    void redeclareWorkerTopology() {
+        if (!workerRedeclareInFlight.compareAndSet(false, true)) {
+            return;
+        }
+        try {
+            long now = System.currentTimeMillis();
+            if (now - lastWorkerRedeclareMs.get() < WORKER_REDECLARE_DEBOUNCE_MS) {
+                return;
+            }
+            lastWorkerRedeclareMs.set(now);
+            int redeclared = 0;
+            if (completionPoisonEnabled
+                    && !workerLegacyPinned.contains(CompletionPoisonRetryListener.POISON_QUEUE)) {
+                try {
+                    declarePoisonTopology(amqpAdmin);
+                    redeclared++;
+                } catch (RuntimeException e) {
+                    if (isPreconditionFailed(e)) {
+                        workerLegacyPinned.add(CompletionPoisonRetryListener.POISON_QUEUE);
+                        log.warn("WO-REL-66: poison topology exists with legacy arguments — "
+                            + "not retrying (see docs/runbooks/rabbitmq-legacy-queue-dlx-migration.md)");
+                    } else {
+                        log.warn("WO-REL-66: poison topology redeclare on reconnect failed "
+                            + "(will retry on next reconnect): {}", e.getMessage());
+                    }
+                }
+            }
+            for (HandlerQueue hq : handlerQueues) {
+                if (workerLegacyPinned.contains(hq.queueName())) {
+                    continue;
+                }
+                try {
+                    declareQueue(hq.handler(), hq.queueName());
+                    redeclared++;
+                } catch (RuntimeException e) {
+                    if (isPreconditionFailed(e)) {
+                        // WO-REL-51 mirror (same terminal semantics as the
+                        // engine side): warn exactly once, pin for this JVM.
+                        workerLegacyPinned.add(hq.queueName());
+                        log.warn("WO-REL-66: queue {} exists with legacy arguments (no DLX — "
+                            + "DLQ inactive for this job type); not retrying. "
+                            + "Migrate per docs/runbooks/rabbitmq-legacy-queue-dlx-migration.md",
+                            hq.queueName());
+                    } else {
+                        log.warn("WO-REL-66: redeclare of {} on reconnect failed (will retry "
+                            + "on next reconnect): {}", hq.queueName(), e.getMessage());
+                    }
+                }
+            }
+            log.info("WO-REL-66: worker topology redeclare round done ({} declare(s))", redeclared);
+        } finally {
+            workerRedeclareInFlight.set(false);
+        }
     }
 
     /**

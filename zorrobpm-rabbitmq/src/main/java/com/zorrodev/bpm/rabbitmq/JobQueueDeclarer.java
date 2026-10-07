@@ -4,6 +4,7 @@ import com.rabbitmq.client.AMQP;
 import com.rabbitmq.client.Method;
 import com.rabbitmq.client.ShutdownSignalException;
 import com.zorrodev.bpm.exchange.JobQueuesRequested;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
@@ -71,6 +72,18 @@ public class JobQueueDeclarer {
      */
     private final Set<String> legacyDeclared = ConcurrentHashMap.newKeySet();
 
+    /**
+     * WO-REL-66: per-queue last attempt of {@link #redeclareForSend}, monotonic
+     * millis. The returns-callback runs on the connection thread per returned
+     * message — without a window a lost queue would redeclare on EVERY redelivered
+     * send (declare storm on the broker). One attempt per queue per window; the
+     * retry itself comes from the outbox poller tick (at-least-once resend), not
+     * from repeating the declare here.
+     */
+    static final long REDECLARE_DEBOUNCE_MS = 10_000L;
+
+    private final java.util.Map<String, Long> lastRedeclareAttemptMs = new ConcurrentHashMap<>();
+
     private volatile MeterRegistry meterRegistry;
 
     public static String queueNameFor(String jobType) {
@@ -102,6 +115,82 @@ public class JobQueueDeclarer {
     /** WO-REL-51: snapshot of the queue names currently pinned as legacy. */
     public Set<String> legacyDeclaredQueueNames() {
         return Set.copyOf(legacyDeclared);
+    }
+
+    /**
+     * WO-REL-66: queue names this JVM has declared (work queues). DLQ names
+     * ride along inside {@link #declare} and are intentionally NOT listed here —
+     * a DLQ is never sent to directly, so its loss is healed by the same
+     * redeclare that heals its work queue. Read-only snapshot for the
+     * reconnect-redeclare listener and the topology monitor.
+     */
+    public Set<String> declaredQueueNames() {
+        return Set.copyOf(declared);
+    }
+
+    /**
+     * WO-REL-66: job types whose work queue this JVM has declared (derived
+     * from {@link #declared} by stripping {@link #JOB_QUEUE_PREFIX}).
+     * Read-only snapshot for the reconnect-redeclare listener.
+     */
+    public Set<String> declaredJobTypes() {
+        Set<String> types = new java.util.HashSet<>();
+        for (String queueName : declared) {
+            if (queueName.startsWith(JOB_QUEUE_PREFIX)) {
+                types.add(queueName.substring(JOB_QUEUE_PREFIX.length()));
+            }
+        }
+        return Set.copyOf(types);
+    }
+
+    /**
+     * WO-REL-66: single redeclare attempt after an unroutable return on the
+     * send path (the broker lost the queue — e.g. recreated — while this JVM
+     * still has it cached as declared, so {@link #declare} would be a no-op).
+     *
+     * <p>Semantics: REL-51 legacy-pinned queues stay pinned (terminal for this
+     * JVM — a redeclare can never succeed); calls inside the debounce window
+     * are skipped (no declare storm); otherwise the name is dropped from the
+     * cache and {@link #declare} runs for real, and the redeclare counter is
+     * bumped. Never throws (same contract as {@link #declare}).
+     *
+     * <p>NOT a resend: redelivery comes from the outbox poller tick
+     * (at-least-once), this only heals the topology. Safe to call from the
+     * broker returns-callback (connection thread): bounded work, one broker
+     * round-trip at most per window.
+     *
+     * @return true if a redeclare was attempted (false = legacy-pinned,
+     *         debounced, or blank type — nothing healed)
+     */
+    public boolean redeclareForSend(String jobType) {
+        if (jobType == null || jobType.isBlank()) return false;
+        String queueName = queueNameFor(jobType);
+        // WO-REL-51: terminal for this JVM — redeclaring a legacy queue 406s
+        // forever; only the operator migration (delete + redeclare, see the
+        // runbook) changes the broker-side definition.
+        if (legacyDeclared.contains(queueName)) return false;
+        long now = System.currentTimeMillis();
+        Long last = lastRedeclareAttemptMs.put(queueName, now);
+        if (last != null && now - last < REDECLARE_DEBOUNCE_MS) return false;
+        declared.remove(queueName);
+        declare(jobType);
+        countRedeclare("returned");
+        return true;
+    }
+
+    /**
+     * WO-REL-66: bumps {@code zbpm.rabbit.topology.redeclare{trigger}}.
+     * No-op when no Micrometer registry is wired (plain unit tests, minimal
+     * starters) — same discipline as the legacy-queue gauge above.
+     */
+    void countRedeclare(String trigger) {
+        MeterRegistry registry = meterRegistry;
+        if (registry == null) return;
+        try {
+            registry.counter("zbpm.rabbit.topology.redeclare", "trigger", trigger).increment();
+        } catch (Exception e) {
+            log.debug("Could not record topology redeclare counter", e);
+        }
     }
 
     @EventListener
