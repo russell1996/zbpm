@@ -193,9 +193,13 @@ class WorkerSubscriptionRecoveryRabbitIT {
         // When: старт при ЛЕЖАЩЕМ брокере — init НЕ бросает (app живёт).
         new HandlerAutoConfiguration(mockCtx, spyFactory, workerTemplate, workerAdmin).init();
 
-        // Then: подписка НЕ пропущена — контейнер создан и стартован, крутится
-        // в recovery-цикле (критерий 1: не "healthy и глухой").
-        assertThat(startedContainers).as("контейнер создан при недоступном брокере").hasSize(1);
+        // Then: подписки НЕ пропущены — контейнеры созданы и стартованы, крутятся
+        // в recovery-цикле (критерий 1: не "healthy и глухой"). WO-REL-64: их два —
+        // рабочий и poison-повтора (ядро очереди течёт, повтор отделён).
+        assertThat(startedContainers).as("контейнеры созданы при недоступном брокере").hasSize(2);
+        assertThat(startedContainers.stream().map(c -> String.join(",", c.getQueueNames())).toList())
+            .as("один слушает рабочую очередь, второй — poison-очередь повтора")
+            .containsExactlyInAnyOrder(QUEUE, CompletionPoisonRetryListener.POISON_QUEUE);
         assertThat(startedContainers.get(0).isRunning())
             .as("контейнер стартован (ждёт брокер/очередь, не глух)")
             .isTrue();

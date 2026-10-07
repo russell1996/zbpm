@@ -72,8 +72,13 @@ class CompletionTransportFailureTest {
         when(connectionFactory.createListenerContainer()).thenReturn(container);
         when(amqpAdmin.getQueueInfo(anyString())).thenReturn(mock(org.springframework.amqp.core.QueueInformation.class));
         configuration.init();
-        verify(container).setMessageListener(listenerCaptor.capture());
-        listener = listenerCaptor.getValue();
+        // WO-REL-64: контейнеров два (рабочий + poison-повтор) на одном моке —
+        // забираем именно рабочий слушатель, а не первый попавшийся.
+        verify(container, times(2)).setMessageListener(listenerCaptor.capture());
+        listener = listenerCaptor.getAllValues().stream()
+            .filter(l -> l instanceof JobCompletionListener)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no JobCompletionListener subscribed"));
     }
 
     private static String jobJson(UUID serviceTaskId) {

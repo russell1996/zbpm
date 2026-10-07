@@ -66,16 +66,24 @@ class C836WorkerConfirmEnvBindingTest {
     /** Ключ свойства → дефолт {@code @Value} (значение-сентинель обязано отличаться). */
     private static final String CONFIRMS_KEY = "zorrobpm.worker.ensure-publisher-confirms";
     private static final String TIMEOUT_KEY = "zorrobpm.worker.completion-confirm-timeout";
+    /** WO-REL-64: потолок попыток публикации результата до парковки в poison. */
+    private static final String MAX_ATTEMPTS_KEY = "zorrobpm.worker.completion-max-attempts";
+    /** WO-REL-64: выключатель парковки отравленных результатов. */
+    private static final String POISON_ENABLED_KEY = "zorrobpm.worker.completion-poison-enabled";
 
     /**
      * Имя переменной окружения, отличное от дефолта {@code @Value}
      * ({@code true} и {@code 5000} соответственно) и лежащее внутри зажимов
      * confirm-таймаута ([100; 60000]), — иначе ассерт увидел бы зажим, а не связку.
+     * WO-REL-64: сентинели новых ручек тоже вне дефолтов и внутри их зажимов
+     * ([1; 100] для потолка — см. MIN/MAX_MAX_COMPLETION_ATTEMPTS).
      */
     @ParameterizedTest(name = "{0}")
     @CsvSource({
         CONFIRMS_KEY + ", false",
         TIMEOUT_KEY + ", 12345",
+        MAX_ATTEMPTS_KEY + ", 3",
+        POISON_ENABLED_KEY + ", false",
     })
     void documentedEnvName_reachesWorkerBean(String propertyKey, String value) {
         String envName = documentedEnvNameFor(propertyKey);
@@ -91,18 +99,28 @@ class C836WorkerConfirmEnvBindingTest {
                     .as("%s=%s обязан дойти до воркерского слушателя: дефолт @Value — true, "
                         + "и при неработающей связке тест увидел бы именно его", envName, value)
                     .isEqualTo(Boolean.valueOf(value));
-            } else {
+            } else if (TIMEOUT_KEY.equals(propertyKey)) {
                 assertThat(listener.confirmTimeoutMsForTest())
                     .as("%s=%s обязан дойти до воркерского слушателя: дефолт @Value — 5000, "
                         + "и при неработающей связке тест увидел бы именно его", envName, value)
                     .isEqualTo(Long.parseLong(value));
+            } else if (MAX_ATTEMPTS_KEY.equals(propertyKey)) {
+                assertThat(listener.maxCompletionAttemptsForTest())
+                    .as("%s=%s обязан дойти до воркерского слушателя: дефолт @Value — 10, "
+                        + "и при неработающей связке тест увидел бы именно его", envName, value)
+                    .isEqualTo(Integer.parseInt(value));
+            } else {
+                assertThat(ReflectionTestUtils.getField(listener, "poisonParkingEnabled"))
+                    .as("%s=%s обязан дойти до воркерского слушателя: дефолт @Value — true, "
+                        + "и при неработающей связке тест увидел бы именно его", envName, value)
+                    .isEqualTo(Boolean.valueOf(value));
             }
         });
     }
 
     /** Задокументированное имя обязано быть relaxed-формой своего ключа. */
     @ParameterizedTest(name = "{0}")
-    @CsvSource({CONFIRMS_KEY, TIMEOUT_KEY})
+    @CsvSource({CONFIRMS_KEY, TIMEOUT_KEY, MAX_ATTEMPTS_KEY, POISON_ENABLED_KEY})
     void documentedEnvName_isRelaxedBindingFormOfItsPropertyKey(String propertyKey) {
         assertThat(documentedEnvNameFor(propertyKey))
             .as("имя переменной — это ровно ключ в верхнем регистре с точками и дефисами "
@@ -116,19 +134,23 @@ class C836WorkerConfirmEnvBindingTest {
     /**
      * Слушатель, который построил НАСТОЯЩИЙ {@code @PostConstruct} стартера:
      * берём контейнер, который зарегистрирован в контексте, и вытаскиваем из
-     * него то, что стартер туда положил.
+     * него то, что стартер туда положил. WO-REL-64: контейнеров два (рабочий +
+     * poison-повтор) на одном моке — забираем именно рабочий слушатель.
      */
     private static JobCompletionListener listenerBuiltByRealInit(
             org.springframework.context.ApplicationContext ctx) {
         SimpleMessageListenerContainer container = ctx.getBean(SimpleMessageListenerContainer.class);
         ArgumentCaptor<org.springframework.amqp.core.MessageListener> captor =
             ArgumentCaptor.forClass(org.springframework.amqp.core.MessageListener.class);
-        verify(container).setMessageListener(captor.capture());
-        assertThat(captor.getValue())
-            .as("стартер обязан отдать контейнеру НАСТОЯЩИЙ JobCompletionListener — "
-                + "иначе ручки не доедут до публикации результата")
-            .isInstanceOf(JobCompletionListener.class);
-        return (JobCompletionListener) captor.getValue();
+        verify(container, org.mockito.Mockito.atLeastOnce())
+            .setMessageListener(captor.capture());
+        return captor.getAllValues().stream()
+            .filter(JobCompletionListener.class::isInstance)
+            .map(JobCompletionListener.class::cast)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError(
+                "стартер обязан отдать контейнеру НАСТОЯЩИЙ JobCompletionListener — "
+                    + "иначе ручки не доедут до публикации результата"));
     }
 
     /**
