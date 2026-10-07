@@ -277,18 +277,28 @@ public class FlowNavigator {
         if (expected == null || arrived < expected) {
             return false;
         }
-        // Quiescence: nothing unfinished left on the shared token besides ad-hoc containers
-        // (the completing element itself is already COMPLETED — its tail ran before this
-        // hook). Evaluated ONLY here, never on a middle: a middle's own downstream is not
-        // created yet at hook time, so "quiet" would lie for it.
-        // WO-C8-37 (C37-1): "the shared token" is the scope token (scope.getToken()),
-        // not the arrival token — inner elements live there now. The completion tail
-        // still calls this hook with the arrival token, which equals the scope token
-        // for direct inner completions.
-        return active.stream()
+        // Quiescence: nothing unfinished left INSIDE the scope subtree besides
+        // ad-hoc containers themselves (the completing element itself is already
+        // COMPLETED — its tail ran before this hook). Evaluated ONLY here, never
+        // on a middle: a middle's own downstream is not created yet at hook time,
+        // so "quiet" would lie for it.
+        // WO-C8-37 (раунд 2, БЛОКИРУЮЩАЯ №1): scope membership is read off the
+        // token parent chain (ElementSupport.enclosingScopeChain — the same walk
+        // the finish tail uses for mates), NOT off token equality with
+        // scope.getToken(). scope.getToken() is the INCOMING token; since C37-1
+        // inner elements live on the scope token (its child), token equality
+        // went blind: the scope finished early and cancelled live inner tasks.
+        // The chain walk additionally covers non-interrupting-boundary child
+        // tokens and nested ad-hoc subtrees (their rows stay AD_HOC-excluded,
+        // their live inner activities still block) — a plain scope-token
+        // equality would still miss both. Same construction as the mates filter
+        // below, so quiescence and cancel-confinement can never disagree on
+        // what "inside the scope" means.
+        List<Activity> live = active.stream()
             .filter(a -> !cancelled.contains(a.getId()))
-            .noneMatch(a -> scope.getToken() != null && scope.getToken().equals(a.getToken())
-                && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS);
+            .toList();
+        return elementSupport.filterActivitiesInScope(processInstanceId, live, scope.getId()).stream()
+            .noneMatch(a -> a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS);
     }
 
     /**
