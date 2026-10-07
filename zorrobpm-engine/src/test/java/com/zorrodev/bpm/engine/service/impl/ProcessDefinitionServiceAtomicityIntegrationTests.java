@@ -3,6 +3,7 @@ package com.zorrodev.bpm.engine.service.impl;
 import com.zorrodev.bpm.engine.TestMain;
 import com.zorrodev.bpm.engine.repository.BpmnRepository;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
+import com.zorrodev.bpm.engine.scheduler.TimerScheduler;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
@@ -21,7 +22,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -53,6 +56,16 @@ class ProcessDefinitionServiceAtomicityIntegrationTests {
     @Autowired private ProcessDefinitionService service;
     @Autowired private ProcessDefinitionRepository processDefinitionRepository;
     @Autowired private BpmnRepository bpmnRepository;
+    // WO-QW-15: нейтрализуем TimerScheduler целиком (расписание зовёт no-op мока).
+    // Парковка интервала (=3600000 выше и в application.properties) НЕ подавляет
+    // первый тик @Scheduled (initialDelay по умолчанию 0 — стреляет на старте),
+    // а тик идёт в DBService из чужого потока и срывает doThrow-стаббинг
+    // тест-потока (CI 558188: "Expecting code to raise a throwable" на :78 +
+    // "Timer batch failed … dueJobs is null" — мок вернул null). Outbox/Feed
+    // парковать не надо: они под @Profile("!test") и в этом контексте их нет;
+    // StuckServiceTaskWatchdog мока не трогает (ходит в ActivityRepository
+    // напрямую) — его не трогаем (минимальный дифф).
+    @MockitoBean private TimerScheduler timerScheduler;
     @MockitoBean private DBService dbService;
     @MockitoBean private BpmnService bpmnService;
 
@@ -64,6 +77,29 @@ class ProcessDefinitionServiceAtomicityIntegrationTests {
         return Files.readString(Path.of("src/test/files/test-rel15-msg-deploy.bpmn"))
             .replace("rel15-msg-deploy", key)
             .replace("rel15-msg-received", messageName);
+    }
+
+    @Test
+    void schedulerTick_mustNotTouchSharedDbMock() throws Exception {
+        // WO-QW-15: TimerScheduler живёт в том же контексте и ходит в DBService
+        // (TimerBatchProcessor.processBatch → findDueTimerJobsLocked) из потоков
+        // шедулера/диспетчера. Парковка интервала на час НЕ подавляет первый тик
+        // (@Scheduled без initialDelay стреляет сразу на старте), а Outbox/Feed
+        // здесь вообще выключены профилем — тикал именно таймер (в CI-логe
+        // "Timer batch failed … dueJobs is null": мок вернул null, NPE).
+        // Чужой вызов мока во время doThrow-стаббинга срывает стабинг тест-потока
+        // → "Expecting code to raise a throwable" на :78. Тик обязан быть
+        // нейтрализован (см. @MockitoBean ниже), этот тест это пинает.
+        clearInvocations(dbService);
+        timerScheduler.fireDueTimers();
+        boolean touched = false;
+        for (int i = 0; i < 40 && !touched; i++) {
+            Thread.sleep(50);
+            touched = !mockingDetails(dbService).getInvocations().isEmpty();
+        }
+        assertThat(touched)
+            .as("scheduler tick must not touch the shared DBService mock (flakes stubbing)")
+            .isFalse();
     }
 
     @Test
