@@ -121,7 +121,7 @@ public class CompletionService {
      * listener job dispatched, activity stays put, token parked. A repeat call while the
      * phase is open throws {@code TaskCompletionInProgressException} (REST → 409).
      */
-    public void completeUserTask(UUID userTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
+    public boolean completeUserTask(UUID userTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
         // WO-REL-59: единый порядок захвата instance→activity — тот же, что у
         // cancel-пути (lockProcessInstance → cancelActiveActivities). Старый
         // комментарий WO-ENG-28 («инверсии порядка нет») был неверен: на PG
@@ -134,7 +134,11 @@ public class CompletionService {
         // (ровно один SELECT FOR UPDATE) сохранён.
         Activity activity = elementSupport.lockInstanceFirst(userTaskId);
         if (!isUserTaskCompletionAllowed(userTaskId, activity)) {
-            return;
+            // WO-AUDIT-8 (A-NEW4-15): повтор поглощён guard'ом — наблюдаемый
+            // replay (2xx + alreadyCompleted=true + метрика), не тихий успех.
+            // Статус-код НЕ меняется (совместимость с at-least-once и C8-36).
+            countUserTaskReplay(userTaskId, activity);
+            return true;
         }
         UUID processInstanceId = activity.getProcessInstanceId();
         UUID token = activity.getToken();
@@ -145,13 +149,25 @@ public class CompletionService {
 
         rejectOpenAssigningPhase(userTaskId, activity, bpmnElement);
         if (openUpdatingPhaseOnVariables(userTaskId, variables, processInstanceId, token, bpmnElement, activity)) {
-            return;
+            return false;
         }
         if (openCompletingPhase(userTaskId, variables, processInstanceId, token, bpmnElement, activity)) {
-            return;
+            return false;
         }
 
         finishUserTaskCompletion(processInstanceId, token, userTaskId, variables, bpmn, bpmnElement, executor);
+        return false;
+    }
+
+    /**
+     * WO-AUDIT-8 (A-NEW4-15): учёт поглощённого повтора user-task. Лог guard'а
+     * выше уже несёт activityId/статус; здесь — instanceId для корреляции и
+     * счётчик {@code zbpm.completion.replay{kind=user_task}}.
+     */
+    private void countUserTaskReplay(UUID userTaskId, Activity activity) {
+        log.info("Duplicate completion of user task {} absorbed (instance {}, status {}) — replay",
+            userTaskId, activity.getProcessInstanceId(), activity.getStatus());
+        bpmMetrics.completionReplayTotal("user_task");
     }
 
     /**
@@ -418,13 +434,13 @@ public class CompletionService {
      * listener (or to the real job) and {@code return} WITHOUT completing the activity and
      * WITHOUT moving the token. Only the real job's completion follows the path below.
      */
-    public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
-        completeServiceTask(serviceTaskId, variables, null, null, null, executor);
+    public boolean completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables, TokenExecutor executor) {
+        return completeServiceTask(serviceTaskId, variables, null, null, null, executor);
     }
 
-    public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables,
+    public boolean completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables,
             String dispatchPhase, Integer dispatchIndex, TokenExecutor executor) {
-        completeServiceTask(serviceTaskId, variables, dispatchPhase, dispatchIndex, null, executor);
+        return completeServiceTask(serviceTaskId, variables, dispatchPhase, dispatchIndex, null, executor);
     }
 
     /**
@@ -440,11 +456,16 @@ public class CompletionService {
      * оставлен в сигнатуре, чтобы phased-вызовы имели единый набор
      * идентификаторов вызова; мёртвый параметр удалён бы в отдельном WO по P-14.
      * Дедуп FAILED-дубликатов — в {@link #failServiceTask}.
+     *
+     * <p>WO-AUDIT-8 (A-NEW4-15): возвращает TRUE, если вызов ничего не изменил
+     * (поглощён идемпотентным guard'ом — повторный complete), иначе FALSE.
+     * Статус-коды НЕ меняются; TRUE превращается в {@code alreadyCompleted=true}
+     * выше по стеку (RuntimeService → REST).
      */
-    public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables,
+    public boolean completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables,
             String dispatchPhase, Integer dispatchIndex, String completionId, TokenExecutor executor) {
         if (resumeElementListenerPhase(serviceTaskId, variables, executor)) {
-            return;
+            return false;
         }
         if (ServiceTaskDispatchPhase.ELEMENT_START.equals(dispatchPhase)) {
             // Фазовая отправка, а PK-фазы уже нет (удалена после incident-exhaustion —
@@ -453,7 +474,8 @@ public class CompletionService {
             // orElseThrow лока ниже.
             log.info("Ignoring completion of element-listener phase {} with no phase row", serviceTaskId);
             bpmMetrics.activityTransitionIgnored("stale_phase");
-            return;
+            countServiceTaskReplay(serviceTaskId, null, "element_start_without_phase_row");
+            return true;
         }
         Activity activity = elementSupport.lockInstanceFirst(serviceTaskId);
         // WO-REL-59: тот же единый порядок instance→activity, что в
@@ -461,7 +483,8 @@ public class CompletionService {
         // Phase-resume выше лока осознанно: у phase-job нет activity-строки
         // (lock ниже orElseThrow — см. C8-25).
         if (!isCompletionAllowed(serviceTaskId, activity, dispatchPhase)) {
-            return;
+            countServiceTaskReplay(serviceTaskId, activity, "terminal_status_guard");
+            return true;
         }
         UUID processInstanceId = activity.getProcessInstanceId();
         UUID tokenId = activity.getToken();
@@ -471,9 +494,8 @@ public class CompletionService {
         BpmnElementModel bpmnElement = bpmn.getElement(activity.getBpmnElementId());
 
         if (dispatchPhase != null) {
-            completePhased(serviceTaskId, variables, dispatchPhase, dispatchIndex, completionId,
+            return completePhased(serviceTaskId, variables, dispatchPhase, dispatchIndex, completionId,
                 processInstanceId, tokenId, bpmn, bpmnElement, activity, executor);
-            return;
         }
 
         // WO-C8-36 (red-team HOLD-2 — ОТКАЧЕНО, см. отчёт §HOLD-2): null-phase
@@ -493,7 +515,22 @@ public class CompletionService {
                 + "(dispatchPhase=null) — legacy fail-open path, CR-01 exact-match guard "
                 + "does NOT apply (old worker or REST caller)",
             serviceTaskId);
-        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn, bpmnElement, activity, executor);
+        return completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn, bpmnElement, activity, executor);
+    }
+
+    /**
+     * WO-AUDIT-8 (A-NEW4-15): учёт поглощённого повтора service-task. Лог несёт
+     * activityId/instanceId/причину; счётчик —
+     * {@code zbpm.completion.replay{kind=service_task}}.
+     */
+    private void countServiceTaskReplay(UUID serviceTaskId, Activity activity, String reason) {
+        if (activity != null) {
+            log.info("Duplicate completion of service task {} absorbed (instance {}, status {}, {}) — replay",
+                serviceTaskId, activity.getProcessInstanceId(), activity.getStatus(), reason);
+        } else {
+            log.info("Duplicate completion of service task {} absorbed ({}) — replay", serviceTaskId, reason);
+        }
+        bpmMetrics.completionReplayTotal("service_task");
     }
 
     /**
@@ -501,41 +538,45 @@ public class CompletionService {
      * метода выше (нулевой diff поведения). Сюда же делегирует phased-путь для
      * {@code real} при закрытых фазах (все фазовые ветки при этом no-op).
      */
-    private void completeLegacyChain(UUID serviceTaskId, List<ProcessVariable> variables,
+    private boolean completeLegacyChain(UUID serviceTaskId, List<ProcessVariable> variables,
             UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
             BpmnElementModel bpmnElement, Activity activity, TokenExecutor executor) {
         if (handleCreatingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity)) {
-            return;
+            return false;
         }
 
         if (handleCompletingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmn, bpmnElement, activity, executor)) {
-            return;
+            return false;
         }
 
         if (handleAssigningListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity)) {
-            return;
+            return false;
         }
 
         if (handleUpdatingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity, executor)) {
-            return;
+            return false;
         }
 
         if (handleCancelingListeners(serviceTaskId, processInstanceId, tokenId, bpmn, bpmnElement, activity, executor)) {
-            return;
+            return false;
         }
 
         if (rejectPhaseOnlyCompletion(serviceTaskId, bpmnElement)) {
-            return;
+            // WO-AUDIT-8 (A-NEW4-15): ложный completion элемента без фаз —
+            // наблюдаемый replay, а не тихий игнор (лог уже в guard'е выше).
+            countServiceTaskReplay(serviceTaskId, activity, "phase_only_without_phase");
+            return true;
         }
 
         if (handleStartListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity)) {
-            return;
+            return false;
         }
 
         if (handleEndListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement, activity)) {
-            return;
+            return false;
         }
         finishServiceTaskCompletion(serviceTaskId, variables, processInstanceId, tokenId, bpmn, bpmnElement, activity, executor);
+        return false;
     }
 
     /**
@@ -576,7 +617,7 @@ public class CompletionService {
      * только на ветке, которая НИЧЕГО не мутирует (все мутации — в in-range ветках,
      * вернувших {@code true}).
      */
-    private void completePhased(UUID serviceTaskId, List<ProcessVariable> variables,
+    private boolean completePhased(UUID serviceTaskId, List<ProcessVariable> variables,
             String dispatchPhase, Integer dispatchIndex, String completionId,
             UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
             BpmnElementModel bpmnElement, Activity activity, TokenExecutor executor) {
@@ -586,11 +627,14 @@ public class CompletionService {
                 if (pending != null && pending.equals(dispatchIndex)) {
                     if (!handleStartListeners(serviceTaskId, variables, processInstanceId, tokenId,
                             bpmnElement, activity)) {
-                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                        return completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
                             bpmnElement, activity, executor);
                     }
+                    return false;
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                    countServiceTaskReplay(serviceTaskId, activity, "stale_phase_start");
+                    return true;
                 }
             }
             case ServiceTaskDispatchPhase.END -> {
@@ -607,8 +651,11 @@ public class CompletionService {
                         finishServiceTaskCompletion(serviceTaskId, variables, processInstanceId, tokenId,
                             bpmn, bpmnElement, activity, executor);
                     }
+                    return false;
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                    countServiceTaskReplay(serviceTaskId, activity, "stale_phase_end");
+                    return true;
                 }
             }
             case ServiceTaskDispatchPhase.CREATING -> {
@@ -616,11 +663,14 @@ public class CompletionService {
                 if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
                     if (!handleCreatingListeners(serviceTaskId, variables, processInstanceId, tokenId,
                             bpmnElement, activity)) {
-                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                        return completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
                             bpmnElement, activity, executor);
                     }
+                    return false;
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                    countServiceTaskReplay(serviceTaskId, activity, "stale_phase_creating");
+                    return true;
                 }
             }
             case ServiceTaskDispatchPhase.COMPLETING -> {
@@ -628,11 +678,14 @@ public class CompletionService {
                 if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
                     if (!handleCompletingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
                             bpmnElement, activity, executor)) {
-                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                        return completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
                             bpmnElement, activity, executor);
                     }
+                    return false;
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                    countServiceTaskReplay(serviceTaskId, activity, "stale_phase_completing");
+                    return true;
                 }
             }
             case ServiceTaskDispatchPhase.ASSIGNING -> {
@@ -640,11 +693,14 @@ public class CompletionService {
                 if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
                     if (!handleAssigningListeners(serviceTaskId, variables, processInstanceId, tokenId,
                             bpmnElement, activity)) {
-                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                        return completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
                             bpmnElement, activity, executor);
                     }
+                    return false;
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                    countServiceTaskReplay(serviceTaskId, activity, "stale_phase_assigning");
+                    return true;
                 }
             }
             case ServiceTaskDispatchPhase.UPDATING -> {
@@ -652,11 +708,14 @@ public class CompletionService {
                 if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
                     if (!handleUpdatingListeners(serviceTaskId, variables, processInstanceId, tokenId, bpmnElement,
                             activity, executor)) {
-                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                        return completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
                             bpmnElement, activity, executor);
                     }
+                    return false;
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                    countServiceTaskReplay(serviceTaskId, activity, "stale_phase_updating");
+                    return true;
                 }
             }
             case ServiceTaskDispatchPhase.CANCELING -> {
@@ -664,26 +723,34 @@ public class CompletionService {
                 if (activity.getType() == BpmnElementType.USER_TASK && pending != null && pending.equals(dispatchIndex)) {
                     if (!handleCancelingListeners(serviceTaskId, processInstanceId, tokenId, bpmn, bpmnElement,
                             activity, executor)) {
-                        completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                        return completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
                             bpmnElement, activity, executor);
                     }
+                    return false;
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, pending);
+                    countServiceTaskReplay(serviceTaskId, activity, "stale_phase_canceling");
+                    return true;
                 }
             }
             case ServiceTaskDispatchPhase.REAL -> {
                 if (allListenerPhasesClosed(serviceTaskId, bpmnElement)) {
                     // Ни одна фаза не открыта — все фазовые ветки legacy-цепочки
                     // no-op, end-фаза при её наличии откроется штатно, затем хвост.
-                    completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
+                    return completeLegacyChain(serviceTaskId, variables, processInstanceId, tokenId, bpmn,
                         bpmnElement, activity, executor);
                 } else {
                     ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, null);
+                    countServiceTaskReplay(serviceTaskId, activity, "stale_phase_real");
+                    return true;
                 }
             }
-            default ->
+            default -> {
                 // Неизвестная фаза (будущий продюсер) — fail-closed игнор, не падение.
                 ignoreStaleCompletion(serviceTaskId, dispatchPhase, dispatchIndex, null);
+                countServiceTaskReplay(serviceTaskId, activity, "unknown_phase");
+                return true;
+            }
         }
     }
 
