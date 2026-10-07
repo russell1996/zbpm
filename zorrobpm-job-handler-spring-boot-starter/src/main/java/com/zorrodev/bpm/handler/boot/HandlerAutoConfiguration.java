@@ -247,11 +247,11 @@ public class HandlerAutoConfiguration {
      * бы «потеря по истечении», что противоречит «не дропается никогда».
      *
      * <p>{@code zorrobpm.completion.retry-delay} — durable с
-     * {@code x-dead-letter-routing-key} на poison (без
-     * {@code x-dead-letter-exchange} — возврат идёт через default exchange, что
-     * валидно и не требует именовать exchange): копия с per-message TTL по
-     * истечении возвращается в poison — автоповтор с растущей задержкой без
-     * единого таймера в коде.
+     * {@code x-dead-letter-routing-key} на poison через ЯВНЫЙ default exchange
+     * ({@code x-dead-letter-exchange: ""} — без него брокер отвергает declare:
+     * {@code 406 routing_key_but_no_dlx_defined}, поймано живым IT WO-REL-64):
+     * копия с per-message TTL по истечении возвращается в poison — автоповтор
+     * с растущей задержкой без единого таймера в коде.
      */
     static void declarePoisonTopology(AmqpAdmin amqpAdmin) {
         amqpAdmin.declareQueue(
@@ -260,6 +260,7 @@ public class HandlerAutoConfiguration {
         amqpAdmin.declareQueue(
             org.springframework.amqp.core.QueueBuilder
                 .durable(CompletionPoisonRetryListener.RETRY_DELAY_QUEUE)
+                .withArgument("x-dead-letter-exchange", "")
                 .withArgument("x-dead-letter-routing-key",
                     CompletionPoisonRetryListener.POISON_QUEUE)
                 .build());
