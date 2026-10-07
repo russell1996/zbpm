@@ -40,31 +40,34 @@ public final class SseCursorSequencer {
         void closeLiveSessionsForGap(long fromCursor, long toCursor);
     }
 
+    /**
+     * Defer/gap планирование на bounded retry-lane фасада: сам планировщик и
+     * test-shrinkable задержка defer-бюджета. Одним холдером (а не двумя
+     * suppliers), чтобы класс держал целевой лимит полей WO-AUDIT-9.
+     */
+    public record DeferScheduling(Supplier<ScheduledExecutorService> scheduler,
+            Supplier<Long> delayMs) {
+    }
+
     private final EventQueryService eventQueryService;
     private final SseDeliveryDispatcher deliveryDispatcher;
     private final GapCloser gapCloser;
     private final tools.jackson.databind.ObjectMapper objectMapper;
     private final BpmMetrics bpmMetrics;
-    private final Supplier<ScheduledExecutorService> scheduler;
-    private final Supplier<Long> deferredCursorDelayMs;
-    private final Supplier<Long> pumpRetryDelayMs;
+    private final DeferScheduling deferScheduling;
 
     public SseCursorSequencer(EventQueryService eventQueryService,
             SseDeliveryDispatcher deliveryDispatcher,
             GapCloser gapCloser,
             tools.jackson.databind.ObjectMapper objectMapper,
             BpmMetrics bpmMetrics,
-            Supplier<ScheduledExecutorService> scheduler,
-            Supplier<Long> deferredCursorDelayMs,
-            Supplier<Long> pumpRetryDelayMs) {
+            DeferScheduling deferScheduling) {
         this.eventQueryService = eventQueryService;
         this.deliveryDispatcher = deliveryDispatcher;
         this.gapCloser = gapCloser;
         this.objectMapper = objectMapper;
         this.bpmMetrics = bpmMetrics;
-        this.scheduler = scheduler;
-        this.deferredCursorDelayMs = deferredCursorDelayMs;
-        this.pumpRetryDelayMs = pumpRetryDelayMs;
+        this.deferScheduling = deferScheduling;
     }
 
     /**
@@ -440,7 +443,7 @@ public final class SseCursorSequencer {
         }
         ScheduledExecutorService lane;
         try {
-            lane = scheduler.get();
+            lane = deferScheduling.scheduler().get();
         } catch (java.util.concurrent.RejectedExecutionException re) {
             // Lane насыщена — ждать негде: деградация к поведению REL-55
             // (немедленный gap-close), с явным warn, не тихая.
@@ -454,7 +457,7 @@ public final class SseCursorSequencer {
             }
             return;
         }
-        long budgetMs = (long) DEFERRED_CURSOR_ATTEMPTS * deferredCursorDelayMs.get();
+        long budgetMs = (long) DEFERRED_CURSOR_ATTEMPTS * deferScheduling.delayMs().get();
         gapTimerFuture = lane.schedule(() -> {
             synchronized (sequencerLock) {
                 gapTimerFuture = null;
@@ -522,7 +525,7 @@ public final class SseCursorSequencer {
             long sequence, long ticket, int attempt) {
         ScheduledExecutorService lane;
         try {
-            lane = scheduler.get();
+            lane = deferScheduling.scheduler().get();
         } catch (java.util.concurrent.RejectedExecutionException re) {
             log.warn("SSE deferred dispatch saturated, dropping unpositioned sequence {} (catchup will heal)", sequence);
             return;
@@ -531,7 +534,7 @@ public final class SseCursorSequencer {
         // может быть переиспользован; MDC ставится заново в dispatchDeferred.
         Map<String, Object> headersCopy = amqpHeaders == null ? null
             : new java.util.LinkedHashMap<>(amqpHeaders);
-        long delayMs = deferredCursorDelayMs.get();
+        long delayMs = deferScheduling.delayMs().get();
         lane.schedule(() -> {
             Long cursor = resolveLiveCursor(sequence);
             if (cursor != null) {
@@ -541,7 +544,7 @@ public final class SseCursorSequencer {
             }
             if (attempt >= DEFERRED_CURSOR_ATTEMPTS) {
                 log.warn("SSE live event with sequence {} still has no feed position after ~{}ms, skipped (catchup will heal on reconnect)",
-                    sequence, (long) DEFERRED_CURSOR_ATTEMPTS * deferredCursorDelayMs.get());
+                    sequence, (long) DEFERRED_CURSOR_ATTEMPTS * deferScheduling.delayMs().get());
                 markSequencedHole(ticket);
                 releaseSequencedReady();
                 return;
@@ -634,11 +637,6 @@ public final class SseCursorSequencer {
      * (бывшее volatile-поле сервиса — теперь через supplier фасада).
      */
     long deferredBudgetMsForTest() {
-        return (long) DEFERRED_CURSOR_ATTEMPTS * deferredCursorDelayMs.get();
-    }
-
-    /** Тест-совместимость: интервал pump-retry (бывшее volatile-поле сервиса). */
-    long pumpRetryDelayMsForTest() {
-        return pumpRetryDelayMs.get();
+        return (long) DEFERRED_CURSOR_ATTEMPTS * deferScheduling.delayMs().get();
     }
 }
