@@ -150,9 +150,10 @@ public class JobQueueDeclarer {
      *
      * <p>Semantics: REL-51 legacy-pinned queues stay pinned (terminal for this
      * JVM — a redeclare can never succeed); calls inside the debounce window
-     * are skipped (no declare storm); otherwise the name is dropped from the
-     * cache and {@link #declare} runs for real, and the redeclare counter is
-     * bumped. Never throws (same contract as {@link #declare}).
+     * are skipped (no declare storm); otherwise the queue is force-redeclared
+     * (cache dropped first — a plain {@link #declare} would early-return on
+     * the intact cache and heal nothing) and the redeclare counter is bumped.
+     * Never throws (same contract as {@link #declare}).
      *
      * <p>NOT a resend: redelivery comes from the outbox poller tick
      * (at-least-once), this only heals the topology. Safe to call from the
@@ -164,17 +165,33 @@ public class JobQueueDeclarer {
      */
     public boolean redeclareForSend(String jobType) {
         if (jobType == null || jobType.isBlank()) return false;
+        long now = System.currentTimeMillis();
+        Long last = lastRedeclareAttemptMs.put(queueNameFor(jobType), now);
+        if (last != null && now - last < REDECLARE_DEBOUNCE_MS) return false;
+        return forceRedeclare(jobType, "returned");
+    }
+
+    /**
+     * WO-REL-66: unconditional single redeclare of one job type — drops the
+     * name from the {@link #declared} cache FIRST (without that a plain
+     * {@link #declare} early-returns on the intact cache and heals nothing —
+     * that is exactly why the reconnect listener must call this, not
+     * {@code declare}), then declares for real. REL-51 legacy-pinned names
+     * stay pinned (terminal for this JVM). Never throws.
+     *
+     * @return true if a redeclare was attempted (false = legacy-pinned or
+     *         blank type)
+     */
+    public boolean forceRedeclare(String jobType, String trigger) {
+        if (jobType == null || jobType.isBlank()) return false;
         String queueName = queueNameFor(jobType);
         // WO-REL-51: terminal for this JVM — redeclaring a legacy queue 406s
         // forever; only the operator migration (delete + redeclare, see the
         // runbook) changes the broker-side definition.
         if (legacyDeclared.contains(queueName)) return false;
-        long now = System.currentTimeMillis();
-        Long last = lastRedeclareAttemptMs.put(queueName, now);
-        if (last != null && now - last < REDECLARE_DEBOUNCE_MS) return false;
         declared.remove(queueName);
         declare(jobType);
-        countRedeclare("returned");
+        countRedeclare(trigger);
         return true;
     }
 

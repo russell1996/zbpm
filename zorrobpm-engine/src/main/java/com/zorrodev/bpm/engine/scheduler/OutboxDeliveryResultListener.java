@@ -5,8 +5,8 @@ import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.exchange.OutboxDeliveryResult;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -28,13 +28,22 @@ import java.util.UUID;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class OutboxDeliveryResultListener {
 
     private final OutboxRepository outboxRepository;
     private final BpmMetrics bpmMetrics;
     private final DomainEventEmitter domainEventEmitter;
     private final tools.jackson.databind.ObjectMapper objectMapper;
+
+    @Autowired
+    public OutboxDeliveryResultListener(OutboxRepository outboxRepository,
+            BpmMetrics bpmMetrics, DomainEventEmitter domainEventEmitter,
+            tools.jackson.databind.ObjectMapper objectMapper) {
+        this.outboxRepository = outboxRepository;
+        this.bpmMetrics = bpmMetrics;
+        this.domainEventEmitter = domainEventEmitter;
+        this.objectMapper = objectMapper;
+    }
 
     /**
      * WO-REL-66 (B): backward-compatible constructor for existing call sites

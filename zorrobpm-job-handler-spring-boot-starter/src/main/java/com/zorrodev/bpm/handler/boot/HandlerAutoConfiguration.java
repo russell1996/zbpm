@@ -101,6 +101,14 @@ public class HandlerAutoConfiguration {
         new java.util.concurrent.atomic.AtomicBoolean(false);
     private final java.util.concurrent.atomic.AtomicLong lastWorkerRedeclareMs =
         new java.util.concurrent.atomic.AtomicLong(0);
+    /**
+     * WO-REL-66 (A): первое соединение в жизни воркера — догоняющее
+     * (catch-up), а не flap: его раунд НЕ двигает часы дебаунса, иначе flap
+     * через секунды после старта скипнется с незалеченной топологией
+     * (поймано живым IT). Дебаунс — только между flap-раундами.
+     */
+    private final java.util.concurrent.atomic.AtomicBoolean workerCatchUpDone =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
 
     /** WO-REL-66 (A): one subscribed (handler, queue) pair. */
     private record HandlerQueue(JobHandler handler, String queueName) {
@@ -451,11 +459,21 @@ public class HandlerAutoConfiguration {
             return;
         }
         try {
-            long now = System.currentTimeMillis();
-            if (now - lastWorkerRedeclareMs.get() < WORKER_REDECLARE_DEBOUNCE_MS) {
+            boolean hasWork = completionPoisonEnabled || !handlerQueues.isEmpty();
+            if (!hasWork) {
+                // Nothing known yet — NOT a round (same debounce-clock
+                // discipline as the engine-side listener: an empty round must
+                // not eat the window of the first real flap).
                 return;
             }
-            lastWorkerRedeclareMs.set(now);
+            boolean catchUp = !workerCatchUpDone.getAndSet(true);
+            if (!catchUp) {
+                long now = System.currentTimeMillis();
+                if (now - lastWorkerRedeclareMs.get() < WORKER_REDECLARE_DEBOUNCE_MS) {
+                    return;
+                }
+                lastWorkerRedeclareMs.set(now);
+            }
             int redeclared = 0;
             if (completionPoisonEnabled
                     && !workerLegacyPinned.contains(CompletionPoisonRetryListener.POISON_QUEUE)) {

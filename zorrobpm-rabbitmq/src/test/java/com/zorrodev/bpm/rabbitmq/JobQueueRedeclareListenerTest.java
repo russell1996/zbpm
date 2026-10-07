@@ -21,7 +21,7 @@ import static org.mockito.Mockito.when;
 class JobQueueRedeclareListenerTest {
 
     @Test
-    void redeclareAll_declaresEveryKnownType_oncePerRound() {
+    void redeclareAll_forceRedeclaresEveryKnownType_oncePerRound() {
         JobQueueDeclarer declarer = mock(JobQueueDeclarer.class);
         when(declarer.declaredJobTypes()).thenReturn(Set.of("a", "b"));
         ConnectionFactory cf = mock(CachingConnectionFactory.class);
@@ -29,9 +29,11 @@ class JobQueueRedeclareListenerTest {
 
         listener.redeclareAll();
 
-        verify(declarer).declare("a");
-        verify(declarer).declare("b");
-        verify(declarer).countRedeclare("connection");
+        // Force, not declare: the cache is intact after a broker-side loss,
+        // a plain declare() would early-return as a no-op (caught live).
+        verify(declarer).forceRedeclare("a", "connection");
+        verify(declarer).forceRedeclare("b", "connection");
+        verify(declarer, never()).declare(org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
@@ -41,11 +43,30 @@ class JobQueueRedeclareListenerTest {
         ConnectionFactory cf = mock(CachingConnectionFactory.class);
         JobQueueRedeclareListener listener = new JobQueueRedeclareListener(declarer, cf);
 
+        // catch-up + первый flap (метка) + второй flap подряд (дебаунс).
+        listener.redeclareAll();
         listener.redeclareAll();
         listener.redeclareAll();
 
-        verify(declarer, times(1)).declare("a");
-        verify(declarer, times(1)).countRedeclare("connection");
+        verify(declarer, times(2)).forceRedeclare("a", "connection");
+    }
+
+    @Test
+    void catchUpDoesNotMoveDebounceClock_flapRightAfterStartupStillHeals() {
+        JobQueueDeclarer declarer = mock(JobQueueDeclarer.class);
+        when(declarer.declaredJobTypes()).thenReturn(Set.of("a"));
+        ConnectionFactory cf = mock(CachingConnectionFactory.class);
+        JobQueueRedeclareListener listener = new JobQueueRedeclareListener(declarer, cf);
+
+        // Первое соединение в жизни JVM — catch-up (метка не ставится) —
+        // flap через секунды после старта всё равно лечит...
+        listener.redeclareAll();
+        listener.redeclareAll();
+        verify(declarer, times(2)).forceRedeclare("a", "connection");
+
+        // ...а вот следующий flap подряд — уже в окне дебаунса.
+        listener.redeclareAll();
+        verify(declarer, times(2)).forceRedeclare("a", "connection");
     }
 
     @Test
@@ -57,8 +78,10 @@ class JobQueueRedeclareListenerTest {
 
         listener.redeclareAll();
 
+        verify(declarer, never()).forceRedeclare(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
         verify(declarer, never()).declare(org.mockito.ArgumentMatchers.anyString());
-        verify(declarer, never()).countRedeclare(org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test
