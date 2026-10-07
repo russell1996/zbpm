@@ -90,9 +90,10 @@ class Perf7RestCriteriaTest {
                 mapFields.add(f.getName());
             }
         }
-        // Caffeine-кэш переоценки прав пока на сервисе (переедет в SseAuthzGate
-        // шагом 4 — тогда и этот скан переедет следом).
-        for (Field f : clazz.getDeclaredFields()) {
+        // Caffeine-кэш переоценки прав — в SseAuthzGate (шаг 4), проверяем там.
+        Class<?> gateClazz = Class.forName(
+            "com.zorrodev.bpm.rest.resource.SseAuthzGate");
+        for (Field f : gateClazz.getDeclaredFields()) {
             if (f.getType().getName().toLowerCase(java.util.Locale.ROOT).contains("caffeine")) {
                 caffeineFields.add(f.getName());
             }
