@@ -1393,10 +1393,14 @@ public class CompletionService {
         if (fulfilled) {
             // Worker-owned finish: its cancel flag decides (schema default false — NOT the
             // BPMN attribute default true; different sources, implemented exactly).
+            // WO-C8-37 (C37-1): the worker path resolves the scope fresh (its tokenId
+            // is the SCOPE token — activateInnerElements dispatches on ctx.tokenId(),
+            // which entry set to the scope token — while finishAdHocScope resumes
+            // on the incoming token via resumeTokenForScope).
             AdHocJoin.ScopeState state =
                 AdHocJoin.resolve(dbService, objectMapper, processInstanceId, scopeActivityId);
             dbService.completeServiceTask(scopeActivityId);
-            flowNavigator.finishAdHocScope(processInstanceId, tokenId, bpmn, scope,
+            flowNavigator.finishAdHocScope(processInstanceId, scope.getToken(), bpmn, scope,
                 state == null ? null : AdHocJoin.joinKey(scopeActivityId, state.batchUuid()), executor,
                 Boolean.TRUE.equals(result.getIsCancelRemainingInstances()));
             triggerConditionalEvents(processInstanceId, executor);
@@ -1416,7 +1420,7 @@ public class CompletionService {
                 item.getVariables() == null ? List.of() : item.getVariables()));
         }
         ExecutionCtx activationCtx =
-            new ExecutionCtx(processInstanceId, tokenId, executor, executionContext);
+            new ExecutionCtx(processInstanceId, scope.getToken(), executor, executionContext);
         if (!adHocSubProcessHandler.activateInnerElements(activationCtx, bpmn, scopeElement,
                 scopeActivityId, requests, false)) {
             // Invalid element id: incident raised inside (mirrors internal mode), the
