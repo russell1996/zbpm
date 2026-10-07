@@ -2,24 +2,26 @@
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c838_errwalk" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:error id="bizErr" name="Business Error" errorCode="E-1" />
   <bpmn:process id="test-c838-errwalk-holds-neighbour-join" name="test-c838-errwalk-holds-neighbour-join" isExecutable="true">
-    <!--   WO-C8-38 (C38-2, раунд 2, БЛОКИРУЮЩАЯ №1): error-walk отмена scope чистит arrived-строки.
-         Форма - та же, что мост P0-зонда красной команды: parked joinIn внутри subProc +
-         boundary-ребро taskY через bndY в fBnd в joinMain (canReach(joinIn,joinMain)=TRUE
-         по МОДЕЛИ, хотя доставить некому).
+    <!--   WO-C8-38 (C38-2, раунд 2, решение CTO по эскалации V10): живое подтверждение
+         теоремы недостижимости для error scope-walk.
+         Форма — мост P0-зонда красной команды: parked joinIn внутри subProc +
+         boundary-ребро taskY через bndY в fBnd в joinMain.
          pfork в { h1 в joinIn ; subProc в joinMain ; taskA в joinMain ; taskB в joinMain }.
          Тело subProc: sStart в subFork (parallel 1 в 2): ветвь h2in в joinIn ПАРКУЕТ
-         joinIn (второй вход; h2in жив и достижим через ребро НЕПРЕРЫВАЮЩЕЙ границы
-         bTrig: bTrig в fTrig в joinIn); ветвь eTask в errEnd бросает E-1. Токены ветвей -
-         ДЕТИ scope-токена subProc, scope-walk из errEnd видит subProc через цепочку
-         child в parent (хук tok.getParentId).
-         h1 (снаружи) приходит в joinIn первым: h2in жив и достижим через ребро НЕПРЕРЫВАЮЩЕЙ
-         границы bTrig (bTrig в fTrig в joinIn) - joinIn припаркован.
-         eTask в errEnd бросает E-1 на scope-токене: scope-walk находит errBnd на subProc,
-         гасит scope, ЧИСТИТ joinIn (фикс), продолжает errBnd в errBndEnd (в joinMain НЕ
-         доставляет - сосед получает только fAMain+fBMain).
-         БЕЗ чистки: joinIn висит в openArrivals + мост => joinMain НЕ срабатывает
-         (joinMain COMPLETED=0, вечное висение без инцидента). С чисткой: joinMain ровно 1 раз.
-         joinIn сам стрелять НЕ должен (хвост отменённого scope, POF-2 раунда 4 C8-35). -->
+         joinIn (второй вход; h2in жив, ребро НЕПРЕРЫВАЮЩЕЙ границы bTrig
+         bTrig в fTrig в joinIn — пока хост жив, joinIn видит живого доставщика);
+         ветвь eTask в errEnd бросает E-1. Токены ветвей — ДЕТИ scope-токена subProc
+         (subFork внутри scope создаёт детей БЕЗ scope id — token-scope-keyed пути
+         scope-walk их не видят, теорема §8 отчёта).
+         h1 (снаружи) приходит в joinIn первым — joinIn припаркован. Завершение h2in
+         срабатывает joinIn ШТАТНО через резюм (ровно 1 раз, taskY создан) ДО отмены —
+         чистить нечего. Бросок eTask идёт на форк-токене: scope-walk пропускает
+         (токен без scopeActivityId), ошибка необработана — видимый инцидент
+         (incidents=1), scope жив (subProc не CANCELLED), joinIn по-прежнему ровно 1,
+         мёртвых arrived-строк нет. Чистка error scope-walk — defense-in-depth:
+         её ВЫЗОВ доказывает ScopeJoinCleanupWiringTest (mock-verify + POF-мутация).
+         joinIn сам стрелять вторым разом НЕ должен (хвост отменённого scope,
+         POF-2 раунда 4 C8-35) — здесь scope и не отменяется. -->
     <bpmn:startEvent id="startEvent" name="startEvent">
       <bpmn:outgoing>flow1</bpmn:outgoing>
     </bpmn:startEvent>

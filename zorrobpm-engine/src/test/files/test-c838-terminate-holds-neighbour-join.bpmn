@@ -1,20 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c838_terminate" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="test-c838-terminate-holds-neighbour-join" name="test-c838-terminate-holds-neighbour-join" isExecutable="true">
-    <!--   WO-C8-38 (C38-2, раунд 2, БЛОКИРУЮЩАЯ №1): terminate in-scope отмена чистит arrived-строки.
-         Форма - та же, что мост P0-зонда красной команды: parked joinIn внутри subProc +
-         boundary-ребро taskY через bndY в fBnd в joinMain (canReach(joinIn,joinMain)=TRUE
-         по МОДЕЛИ, хотя доставить некому).
-         pfork в { h1 в joinIn ; subProc в joinMain ; taskA в joinMain ; taskB в joinMain }.
-         Тело subProc ЛИНЕЙНО на scope-токене: sStart в subFork (parallel 1 в 2): ветвь h2in в joinIn ПАРКУЕТ joinIn;
-         ветвь tTask в termEnd. Токен termEnd - ДИТЯ scope-токена.
-         h1 (снаружи) приходит в joinIn первым: h2in жив и достижим через ребро НЕПРЕРЫВАЮЩЕЙ
-         границы bTrig (bTrig в fTrig в joinIn) - joinIn припаркован.
-         tTask в termEnd на scope-токене: in-scope terminate гасит scope, ЧИСТИТ joinIn
-         (фикс) и продолжает выходом scope fSubAfter в joinMain (РЕАЛЬНАЯ ветвь scope-exita).
-         БЕЗ чистки: joinIn висит в openArrivals + мост => joinMain НЕ срабатывает
-         (joinMain COMPLETED=0, вечное висение без инцидента). С чисткой: joinMain ровно 1 раз.
-         joinIn сам стрелять НЕ должен (хвост отменённого scope, POF-2 раунда 4 C8-35). -->
+    <!--   WO-C8-38 (C38-2, раунд 2, решение CTO по эскалации V10): живое подтверждение
+         теоремы недостижимости для terminate in-scope.
+         Форма — мост P0-зонда красной команды: parked joinIn внутри subProc +
+         boundary-ребро taskY через bndY в fBnd в joinMain.
+         Тело subProc: subFork (parallel 1 в 2): ветвь h2in в joinIn ПАРКУЕТ joinIn
+         (второй вход; ребро НЕПРЕРЫВАЮЩЕЙ границы bTrig bTrig в fTrig в joinIn);
+         ветвь tTask в termEnd. Токен termEnd — ДИТЯ scope-токена: in-scope ветка
+         terminate недостижима (теорема §8), срабатывает whole-instance ветка
+         (V7-мостик красной команды R4 — pre-existing, не чинится здесь).
+         h1 приходит в joinIn первым — joinIn припаркован. Завершение h2in срабатывает
+         joinIn ШТАТНО через резюм (ровно 1 раз, taskY создан) ДО отмены — чистить
+         нечего. Бросок tTask гасит весь инстанс штатно (completedAt выставлен),
+         joinIn по-прежнему ровно 1 (без второго срабатывания), инцидента нет.
+         Чистка terminate in-scope — defense-in-depth: её ВЫЗОВ доказывает
+         ScopeJoinCleanupWiringTest (mock-verify + POF-мутация). -->
     <bpmn:startEvent id="startEvent" name="startEvent">
       <bpmn:outgoing>flow1</bpmn:outgoing>
     </bpmn:startEvent>

@@ -2,22 +2,21 @@
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c838_escalate" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:escalation id="esc1" name="overdue" escalationCode="ESC-1" />
   <bpmn:process id="test-c838-escalate-holds-neighbour-join" name="test-c838-escalate-holds-neighbour-join" isExecutable="true">
-    <!--   WO-C8-38 (C38-2, раунд 2, БЛОКИРУЮЩАЯ №1): escalate-interrupting отмена scope чистит arrived-строки.
-         Форма - та же, что мост P0-зонда красной команды: parked joinIn внутри subProc +
-         boundary-ребро taskY через bndY в fBnd в joinMain (canReach(joinIn,joinMain)=TRUE
-         по МОДЕЛИ, хотя доставить некому).
-         pfork в { h1 в joinIn ; subProc в joinMain ; taskA в joinMain ; taskB в joinMain }.
-         Тело subProc ЛИНЕЙНО на scope-токене (без форка внутри: форк отцепил бы токен,
-         scope-walk стал бы недостижим - см. отчёт §8.4): sStart в subFork (parallel 1 в 2): ветвь h2in в joinIn ПАРКУЕТ joinIn;
-         ветвь sTask в escEnd бросает ESC-1. Токены ветвей - ДЕТИ scope-токена.
-         h1 (снаружи) приходит в joinIn первым: h2in жив и достижим через ребро НЕПРЕРЫВАЮЩЕЙ
-         границы bTrig (bTrig в fTrig в joinIn) - joinIn припаркован.
-         sTask в escEnd бросает ESC-1 на scope-токене: throwEscalation находит ПРЕРЫВАЮЩУЮ
-         escBnd на subProc, гасит scope, ЧИСТИТ joinIn (фикс), продолжает escBnd в escBndEnd
-         (в joinMain НЕ доставляет - сосед получает только fAMain+fBMain).
-         БЕЗ чистки: joinIn висит в openArrivals + мост => joinMain НЕ срабатывает
-         (joinMain COMPLETED=0, вечное висение без инцидента). С чисткой: joinMain ровно 1 раз.
-         joinIn сам стрелять НЕ должен (хвост отменённого scope, POF-2 раунда 4 C8-35). -->
+    <!--   WO-C8-38 (C38-2, раунд 2, решение CTO по эскалации V10): живое подтверждение
+         теоремы недостижимости для interrupting-escalation.
+         Форма — мост P0-зонда красной команды: parked joinIn внутри subProc +
+         boundary-ребро taskY через bndY в fBnd в joinMain.
+         Тело subProc: subFork (parallel 1 в 2): ветвь h2in в joinIn ПАРКУЕТ joinIn
+         (второй вход; ребро НЕПРЕРЫВАЮЩЕЙ границы bTrig bTrig в fTrig в joinIn);
+         ветвь sTask в escEnd бросает ESC-1. Токены ветвей — ДЕТИ scope-токена
+         (token-scope-keyed пути scope-walk/escalation-walk их не видят, теорема §8).
+         h1 приходит в joinIn первым — joinIn припаркован. Завершение h2in срабатывает
+         joinIn ШТАТНО через резюм (ровно 1 раз, taskY создан) ДО отмены — чистить
+         нечего. Бросок sTask идёт на форк-токене: прерывание не срабатывает, ветвь
+         триггера просто завершается (finishBranch), scope жив (subProc не CANCELLED),
+         joinIn по-прежнему ровно 1, инцидента нет, мёртвых arrived-строк нет.
+         Чистка interrupting-escalation — defense-in-depth: её ВЫЗОВ доказывает
+         ScopeJoinCleanupWiringTest (mock-verify + POF-мутация). -->
     <bpmn:startEvent id="startEvent" name="startEvent">
       <bpmn:outgoing>flow1</bpmn:outgoing>
     </bpmn:startEvent>
