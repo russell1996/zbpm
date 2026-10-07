@@ -534,7 +534,7 @@ public class FlowNavigator {
                 // token never holds a fork counter (C37-1 proof: decrementing it
                 // returns -1 and completes the instance early — live repro
                 // two-tasks/output tests), and the token row cannot be deleted
-                // (FK_ACTIVITIES__TOKEN: history rows still reference it). The
+                // (fk_activities__token: history rows still reference it). The
                 // join's incoming-token continuation already carries the branch;
                 // a bare return is the consumption. See the TERMINAL-ROW
                 // INVARIANT in DBService (activities keep their token forever) —

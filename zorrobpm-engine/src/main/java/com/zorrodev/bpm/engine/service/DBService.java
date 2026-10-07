@@ -309,7 +309,7 @@ public interface DBService {
      *
      * <p>TERMINAL-ROW INVARIANT (WO-C8-37, C37-1 proof): activity rows keep their
      * {@code token} reference FOREVER — history is never rewritten
-     * ({@code FK_ACTIVITIES__TOKEN} enforces it: deleting a token with activity
+     * ({@code fk_activities__token} enforces it: deleting a token with activity
      * history fails with a constraint violation). A token is deletable only when
      * NO activity row references it (pure fork/control tokens). Never call this
      * to "consume" a scope token or any token that carried executed elements —
