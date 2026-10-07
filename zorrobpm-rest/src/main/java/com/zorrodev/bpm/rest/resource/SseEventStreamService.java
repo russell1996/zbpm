@@ -101,6 +101,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         this.cursorSequencer = new SseCursorSequencer(eventQueryService, deliveryDispatcher,
             this::closeLiveClientsForGap, objectMapper, bpmMetrics,
             this::retryLane, () -> deferredCursorDelayMs, () -> pumpRetryDelayMs);
+        this.catchupReader = new SseCatchupReader(eventQueryService, eventAuthzResolver);
     }
 
     /**
@@ -125,6 +126,8 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
     private final SseDeliveryDispatcher deliveryDispatcher;
     /** Курсор-сиквенсор (WO-AUDIT-9 шаг 5b). */
     private final SseCursorSequencer cursorSequencer;
+    /** Catchup-reader replay по Last-Event-ID (WO-AUDIT-9 шаг 5c). */
+    private final SseCatchupReader catchupReader;
 
     /**
      * WO-REL-47 (N07): BOUNDED pools — never a cached pool on this path.
@@ -648,24 +651,6 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
     }
 
     /**
-     * WO-REL-38: позиция курсора из envelope. Новые envelope несут
-     * {@code feedPosition}; старые/синтетические (тесты, прямые вызовы) —
-     * только {@code sequence}, тогда курсором служит он (совместимость чтения,
-     * не записи: прод всегда пишет обе).
-     */
-    private static long cursorOf(Map<String, Object> envelope, long fallback) {
-        Object fp = envelope.get("feedPosition");
-        if (fp instanceof Number n) {
-            return n.longValue();
-        }
-        Object seq = envelope.get("sequence");
-        if (seq instanceof Number n) {
-            return n.longValue();
-        }
-        return fallback;
-    }
-
-    /**
      * Sends catchup events from the database for reconnect (Last-Event-ID).
      *
      * <p>WO-REL-37 (F12/F14): единый путь с live и REST — тот же
@@ -684,75 +669,20 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      */
     public long sendCatchupEvents(SseEmitter emitter, long sinceSequence, Principal principal,
                                     String processDefinitionKeyFilter) {
-        return sendCatchupEvents(emitter, sinceSequence, principal, processDefinitionKeyFilter,
-            null, null);
+        // WO-AUDIT-9 шаг 5c: replay живёт в ридере (та же семантика F12/F14/REL-38).
+        return catchupReader.sendCatchupEvents(emitter, sinceSequence, principal,
+            processDefinitionKeyFilter);
     }
 
     /**
-     * Полная форма с теми же фильтрами, что live-подписка (F14: один и тот же
-     * фильтр для catchup и live — type + processInstanceId).
+     * Полная форма с теми же фильтрами, что live-подписка (F14) — delegates
+     * to the reader (шаг 5c); kept so controller/test call-sites are untouched.
      */
     public long sendCatchupEvents(SseEmitter emitter, long sinceSequence, Principal principal,
                                     String processDefinitionKeyFilter,
                                     String typeFilter, String processInstanceIdFilter) {
-        Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, null);
-        List<UUID> keyPdIds = eventQueryService.resolveKeyPdIds(processDefinitionKeyFilter);
-        Collection<UUID> pdFilter = intersect(allowedPdIds, keyPdIds);
-        if (pdFilter != null && pdFilter.isEmpty()) {
-            return sinceSequence;
-        }
-
-        UUID piId = null;
-        if (processInstanceIdFilter != null && !processInstanceIdFilter.isBlank()) {
-            try {
-                piId = UUID.fromString(processInstanceIdFilter);
-            } catch (IllegalArgumentException e) {
-                return sinceSequence;
-            }
-        }
-
-        // Пагинация за пределами 100: страницами по 100, пока есть hasMore (F14:
-        // "100 на страницу", не "100 на весь backlog").
-        long boundary = sinceSequence;
-        while (true) {
-            List<Map<String, Object>> envelopes =
-                eventQueryService.findEventEnvelopes(boundary, pdFilter, piId, typeFilter, 100);
-            boolean hasMore = envelopes.size() > 100;
-            List<Map<String, Object>> page = hasMore ? envelopes.subList(0, 100) : envelopes;
-            for (Map<String, Object> envelope : page) {
-                try {
-                    // WO-REL-38: SSE id и граница — позиция курсора (feedPosition;
-                    // fallback — sequence, см. cursorOf). Браузер шлёт её назад
-                    // как Last-Event-ID — тот же домен, что since у REST.
-                    long cursor = cursorOf(envelope, boundary);
-                    SseEmitter.SseEventBuilder sseEvent = SseEmitter.event()
-                        .id(String.valueOf(cursor))
-                        .name((String) envelope.get("type"))
-                        .data(envelope)
-                        .reconnectTime(3000);
-                    emitter.send(sseEvent);
-                    if (cursor > boundary) {
-                        boundary = cursor;
-                    }
-                } catch (Exception e) {
-                    // F12: одна битая запись не обрывает остаток backlog (было break).
-                    log.error("Error sending catchup event, continuing with the rest", e);
-                }
-            }
-            if (!hasMore) {
-                break;
-            }
-        }
-        return boundary;
-    }
-
-    /** null = unrestricted; пересечение "see all" с key-фильтром даёт key-фильтр. */
-    private static Collection<UUID> intersect(Collection<UUID> allowed, Collection<UUID> extra) {
-        if (allowed == null) return extra;
-        if (extra == null) return allowed;
-        Set<UUID> result = new java.util.LinkedHashSet<>(allowed);
-        result.retainAll(new java.util.LinkedHashSet<>(extra));
-        return new java.util.ArrayList<>(result);
+        return catchupReader.sendCatchupEvents(emitter, sinceSequence, principal,
+            processDefinitionKeyFilter, typeFilter, processInstanceIdFilter);
     }
 
     /**
