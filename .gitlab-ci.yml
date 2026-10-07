@@ -537,7 +537,10 @@ deploy:
     # WO-OPS-1: `backups` исключён из wipe — там лежит ретенция pg_dump'ов
     # (BACKUP_DIR по умолчанию $DEPLOY_DIR/backups); без исключения первая же
     # выкатка после включения бэкапов сносила бы всю историю.
-    - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' ! -name backups -exec rm -rf {} +
+    # sudo: Docker auto-creates a missing bind-mount source as a ROOT-owned directory (2026-10-07: ci/rabbitmq/conf.d/30-*.conf,
+    # first deploy after WO-QW-12 did not ship it) - the runner user cannot remove that, and a plain `rm -rf` aborted the wipe
+    # half-way (compose + observability deleted, deploy failed). WO-REL-65.
+    - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' ! -name backups -exec sudo rm -rf {} +
     # WO-OPS-4b O-03: copy ONLY the runtime bundle — never the full checkout
     # (.git/governance/docs stay on the runner). The set below is exactly what
     # `docker compose -f docker-compose.yml -f docker-compose.observability.yml up`
@@ -549,7 +552,8 @@ deploy:
     # on the RUNNER from the checkout (e.g. disk-space-check.sh above), not from
     # DEPLOY_DIR — also not copied. Directories are (re)created because the wipe
     # above removed them; scrape-token/.env mechanics below are untouched.
-    - mkdir -p "$DEPLOY_DIR/ci/observability/rabbitmq/conf.d" "$DEPLOY_DIR/ci/observability/grafana"
+    - mkdir -p "$DEPLOY_DIR/ci/observability/rabbitmq/conf.d" "$DEPLOY_DIR/ci/observability/grafana" "$DEPLOY_DIR/ci/rabbitmq/conf.d"
+    - cp -a ci/rabbitmq/conf.d/30-management-path-prefix.conf "$DEPLOY_DIR/ci/rabbitmq/conf.d"/
     - cp -a docker-compose.yml docker-compose.observability.yml "$DEPLOY_DIR"/
     - cp -a ci/observability/prometheus.yml "$DEPLOY_DIR/ci/observability"/
     - cp -a ci/observability/rabbitmq/conf.d/20-per-object-metrics.conf "$DEPLOY_DIR/ci/observability/rabbitmq/conf.d"/
