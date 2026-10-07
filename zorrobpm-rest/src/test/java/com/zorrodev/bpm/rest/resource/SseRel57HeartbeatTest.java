@@ -273,11 +273,30 @@ class SseRel57HeartbeatTest {
     }
 
     private static Object clientObject(SseEventStreamService svc, String clientId) throws Exception {
-        var f = SseEventStreamService.class.getDeclaredField("clients");
-        f.setAccessible(true);
+        return sessionById(svc, clientId);
+    }
+
+    private static java.util.Collection<Object> sessionSnapshot(SseEventStreamService svc) throws Exception {
+        // WO-AUDIT-9 шаг 3: реестр сессий переехал в SseSessionRegistry —
+        // тот же snapshot-обход, что раньше по полю "clients" сервиса.
+        var rf = SseEventStreamService.class.getDeclaredField("sessionRegistry");
+        rf.setAccessible(true);
+        Object registry = rf.get(svc);
+        var m = registry.getClass().getMethod("snapshot");
         @SuppressWarnings("unchecked")
-        Map<String, Object> clients = (Map<String, Object>) f.get(svc);
-        return clients.get(clientId);
+        java.util.Collection<Object> sessions = (java.util.Collection<Object>) m.invoke(registry);
+        return sessions;
+    }
+
+    private static Object sessionById(SseEventStreamService svc, String clientId) throws Exception {
+        for (Object writer : sessionSnapshot(svc)) {
+            var idm = writer.getClass().getMethod("clientId");
+            idm.setAccessible(true);
+            if (clientId.equals(idm.invoke(writer))) {
+                return writer;
+            }
+        }
+        return null;
     }
 
     private static void enqueueOnWriter(SseEventStreamService svc, Object writer,
@@ -308,11 +327,7 @@ class SseRel57HeartbeatTest {
     /** Pump простаивает (очередь пуста и активного pump нет) — доставка осела. */
     private static boolean pumpDrained(SseEventStreamService svc) {
         try {
-            var f = SseEventStreamService.class.getDeclaredField("clients");
-            f.setAccessible(true);
-            @SuppressWarnings("unchecked")
-            Map<String, Object> clients = (Map<String, Object>) f.get(svc);
-            for (Object writer : clients.values()) {
+            for (Object writer : sessionSnapshot(svc)) {
                 var qf = writer.getClass().getDeclaredField("queue");
                 qf.setAccessible(true);
                 if (!((java.util.ArrayDeque<?>) qf.get(writer)).isEmpty()) {
