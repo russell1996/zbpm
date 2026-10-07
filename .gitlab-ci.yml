@@ -532,14 +532,30 @@ deploy:
     # /tmp/scrape-token.bak делился между параллельными deploy), плюс cleanup-trap:
     # при любом exit временный файл не остаётся лежать в /tmp с секретом внутри.
     - export SCRAPE_TOKEN_BAK="$(mktemp /tmp/scrape-token-bak-$CI_PIPELINE_ID-XXXXXX)"
-    - trap 'rm -f "$SCRAPE_TOKEN_BAK"' EXIT
-    - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then sudo cp "$DEPLOY_DIR/ci/observability/scrape-token" "$SCRAPE_TOKEN_BAK"; fi
+    # WO-REL-65 BEGIN scrape-token-cleanup (критерий 3): бэкап живёт до успешного restore.
+    # Старый `trap 'rm -f …' EXIT` сносил бэкап при ЛЮБОМ exit — после упавшей очистки хост
+    # оставался и без compose, и без токена (инцидент 2026-10-07, джоба 558464).
+    # Тот же текст гоняет ci/test-deploy-resilience.sh (режимы trap-fail/trap-ok), G-N.
+    - SCRAPE_TOKEN_SAVED=0
+    - scrape_token_cleanup() { rc=$?; if [ "$SCRAPE_TOKEN_SAVED" = "1" ] && [ -f "$SCRAPE_TOKEN_BAK" ]; then echo "deploy failed before scrape-token restore — host backup preserved at $SCRAPE_TOKEN_BAK; copy it back to $DEPLOY_DIR/ci/observability/scrape-token (sudo chown 65534:65534, sudo chmod 400) and re-run the deploy job"; else rm -f "$SCRAPE_TOKEN_BAK"; fi; exit "$rc"; }
+    - trap scrape_token_cleanup EXIT
+    - if [ -f "$DEPLOY_DIR/ci/observability/scrape-token" ]; then sudo cp "$DEPLOY_DIR/ci/observability/scrape-token" "$SCRAPE_TOKEN_BAK" && SCRAPE_TOKEN_SAVED=1; fi
+    # WO-REL-65 END scrape-token-cleanup
     # WO-OPS-1: `backups` исключён из wipe — там лежит ретенция pg_dump'ов
     # (BACKUP_DIR по умолчанию $DEPLOY_DIR/backups); без исключения первая же
     # выкатка после включения бэкапов сносила бы всю историю.
     # sudo: Docker auto-creates a missing bind-mount source as a ROOT-owned directory (2026-10-07: ci/rabbitmq/conf.d/30-*.conf,
     # first deploy after WO-QW-12 did not ship it) - the runner user cannot remove that, and a plain `rm -rf` aborted the wipe
     # half-way (compose + observability deleted, deploy failed). WO-REL-65.
+    # WO-REL-65 BEGIN pre-wipe-sources (критерий 3): никогда не сносим рантайм-бандл,
+    # пока каждый источник копирования ниже не найден в чекауте. Падение `cp` ПОСЛЕ wipe
+    # оставляло хост без compose-файлов (инцидент 2026-10-07). Тот же список проверяют
+    # DeployCopyListGuardTest.copySourcesAreGuardedByPreWipeCheck и ci/test-deploy-resilience.sh.
+    - |
+      for src in docker-compose.yml docker-compose.observability.yml ci/observability/prometheus.yml ci/observability/rabbitmq/conf.d/20-per-object-metrics.conf ci/rabbitmq/conf.d/30-management-path-prefix.conf ci/observability/grafana/provisioning ci/observability/grafana/dashboards ci/observability/grafana/entrypoint-whitelist.sh; do
+        test -e "$src" || { echo "deploy copy source missing in checkout: $src — refusing to wipe $DEPLOY_DIR"; exit 1; }
+      done
+    # WO-REL-65 END pre-wipe-sources
     - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' ! -name backups -exec sudo rm -rf {} +
     # WO-OPS-4b O-03: copy ONLY the runtime bundle — never the full checkout
     # (.git/governance/docs stay on the runner). The set below is exactly what
