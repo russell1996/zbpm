@@ -34,6 +34,16 @@ public class ErrorEscalationThrower {
     private final FlowNavigator flowNavigator;
     private final EventTrigger eventTrigger;
     /**
+     * WO-C8-38 (C38-2): arrived-строки join'ов ВНУТРИ отменяемого scope умирают вместе
+     * со scope в ТОЙ ЖЕ транзакции отмены (без запуска хвоста). Иначе
+     * {@code getGatewaysWithOpenArrivals} возвращает мёртвый id, и
+     * {@code hasParkedJoinReaching} через {@code canReach(мёртвый join, соседний join)}
+     * удерживает СОСЕДНИЙ join вечно. Резюма здесь НЕТ — тем же контрпримером
+     * раунда 4 (воскрешать join отменённого scope = выполнить хвост отменённого
+     * потока).
+     */
+    private final ScopeContainment scopeContainment;
+    /**
      * WO-C8-35 раунд 5 (BLOCKER-4): перепроверка припаркованных inclusive-join'ов после смерти
      * последнего возможного доставщика. Раньше она стояла вручную на шести точках деактивации
      * (CompletionService, EventTrigger, InclusiveGatewayHandler) и НИ ОДНОЙ из них не было здесь,
@@ -107,6 +117,10 @@ public class ErrorEscalationThrower {
             if (boundary != null) {
                 dbService.cancelActiveActivitiesForToken(tok.getId());
                 dbService.cancelActivity(scope.getId());
+                // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемого scope —
+                // та же транзакция, без резюма (см. поле scopeContainment).
+                dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
+                    scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, scope.getBpmnElementId()));
                 log.info("{}: error '{}' caught by boundary {} on subprocess {}", processInstanceId, errorCode, boundary.getId(), scope.getBpmnElementId());
                 flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor);
                 // БЕЗ перепроверки припаркованных join'ов, и это НЕ пропуск, а решение (белый
@@ -246,6 +260,10 @@ public class ErrorEscalationThrower {
                 if (isInterrupting(boundary)) {
                     dbService.cancelActiveActivitiesForToken(tok.getId());
                     dbService.cancelActivity(scope.getId());
+                    // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемого scope —
+                    // та же транзакция, без резюма (см. поле scopeContainment).
+                    dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
+                        scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, scope.getBpmnElementId()));
                     log.info("{}: escalation '{}' caught (interrupting) by boundary {} on subprocess {}", processInstanceId, escalationCode, boundary.getId(), scope.getBpmnElementId());
                     flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor);
                     // Белый список охранного теста: погашен весь scope вместе с его внутренними

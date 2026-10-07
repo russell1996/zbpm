@@ -17,6 +17,7 @@ import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import com.zorrodev.bpm.engine.handler.ExecutionContext;
 import com.zorrodev.bpm.engine.handler.ElementHandler;
 import com.zorrodev.bpm.engine.handler.HandlerRegistry;
+import com.zorrodev.bpm.engine.handler.ScopeContainment;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -240,14 +241,14 @@ public class ActivityServiceImplTests {
         registerHandler(BpmnElementType.SCRIPT_TASK, new com.zorrodev.bpm.engine.handler.SyncTaskHandler.ScriptTask(dbService, scriptService, elementSupport, flowNav, activityService));
         registerHandler(BpmnElementType.BUSINESS_RULE_TASK, new com.zorrodev.bpm.engine.handler.SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, flowNav, boundaryScheduler));
         registerHandler(BpmnElementType.END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.EndEvent(dbService, flowNav));
-        registerHandler(BpmnElementType.TERMINATE_END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.TerminateEndEvent(dbService, flowNav, elementSupport));
+        registerHandler(BpmnElementType.TERMINATE_END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.TerminateEndEvent(dbService, flowNav, elementSupport, new ScopeContainment()));
         registerHandler(BpmnElementType.ERROR_END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.ErrorEndEvent(dbService, activityService));
         registerHandler(BpmnElementType.ESCALATION_END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.EscalationEndEvent(dbService, activityService));
         registerHandler(BpmnElementType.ESCALATION_THROW_EVENT, new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.EscalationThrowEvent(dbService, flowNav, activityService));
         registerHandler(BpmnElementType.SERVICE_TASK, new com.zorrodev.bpm.engine.handler.ServiceTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler, serviceTaskEnqueueService));
         registerHandler(BpmnElementType.COMPENSATION_THROW_EVENT, new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNav, elementSupport));
         registerHandler(BpmnElementType.CANCEL_END_EVENT, new com.zorrodev.bpm.engine.handler.CancelEndHandler(dbService, flowNav, activityService,
-            new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNav, elementSupport)));
+            new com.zorrodev.bpm.engine.handler.CompensationThrowHandler(dbService, flowNav, elementSupport), new ScopeContainment()));
         // Aliases
         registerHandler(BpmnElementType.MESSAGE_START_EVENT, handlerRegistry.get(BpmnElementType.START_EVENT));
         registerHandler(BpmnElementType.TIMER_START_EVENT, handlerRegistry.get(BpmnElementType.START_EVENT));

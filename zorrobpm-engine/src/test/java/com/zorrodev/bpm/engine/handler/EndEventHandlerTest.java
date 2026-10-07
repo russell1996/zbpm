@@ -35,7 +35,8 @@ class EndEventHandlerTest {
     @BeforeEach
     void setUp() {
         endEvent = new EndEventHandler.EndEvent(dbService, flowNavigator);
-        terminateEndEvent = new EndEventHandler.TerminateEndEvent(dbService, flowNavigator, elementSupport);
+        terminateEndEvent = new EndEventHandler.TerminateEndEvent(dbService, flowNavigator, elementSupport,
+            new ScopeContainment());
         errorEndEvent = new EndEventHandler.ErrorEndEvent(dbService, activityService);
         escalationEndEvent = new EndEventHandler.EscalationEndEvent(dbService, activityService);
     }
