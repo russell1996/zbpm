@@ -99,6 +99,13 @@ public class BpmMetrics {
     // --- SSE bridge (WO-REL-56, part B) ---
     private final Counter sseForeignSequenceDropped;
 
+    // --- WO-AUDIT-7: retention чистка events/outbox (тот же домен, что
+    // retentionSubmissionsStuck выше — отдельный бин ради трёх счётчиков
+    // плодить нечем; G19: поля — same-shaped meter holders без логики).
+    private final Counter retentionEventsDeletedTotal;
+    private final Counter retentionOutboxDeletedTotal;
+    private final Timer retentionPassDuration;
+
     /**
      * WO-REL-48: feed-position backlog visibility. NOT new injected
      * dependencies — these three meters live in BpmMetrics because that is
@@ -237,6 +244,19 @@ public class BpmMetrics {
         this.sseForeignSequenceDropped = Counter.builder("zbpm.sse.foreign.dropped")
             .description("SSE live events dropped: sequence has no row in this DB (foreign installation/test publish)")
             .register(registry);
+
+        // WO-AUDIT-7: сколько строк events/outbox снёс retention (суммарно по
+        // проходам) + длительность одного прохода каждой таблицы.
+        this.retentionEventsDeletedTotal = Counter.builder("zbpm.retention.events.deleted.total")
+            .description("Events rows deleted by the events retention pass")
+            .register(registry);
+        this.retentionOutboxDeletedTotal = Counter.builder("zbpm.retention.outbox.deleted.total")
+            .description("Outbox rows deleted by the outbox retention pass")
+            .register(registry);
+        this.retentionPassDuration = Timer.builder("zbpm.retention.pass.duration")
+            .description("Duration of one events/outbox retention table pass")
+            .tag("table", "events-outbox")
+            .register(registry);
     }
 
     // --- Process lifecycle ---
@@ -313,4 +333,9 @@ public class BpmMetrics {
 
     // --- SSE bridge (WO-REL-56, part B) ---
     public void sseForeignSequenceDropped() { sseForeignSequenceDropped.increment(); }
+
+    // --- WO-AUDIT-7: retention чистка events/outbox ---
+    public void retentionEventsDeleted(long rows) { retentionEventsDeletedTotal.increment(rows); }
+    public void retentionOutboxDeleted(long rows) { retentionOutboxDeletedTotal.increment(rows); }
+    public void recordRetentionPassDuration(Duration duration) { retentionPassDuration.record(duration); }
 }

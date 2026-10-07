@@ -99,7 +99,7 @@ public class SubmissionCleanupProgressPgIT extends PostgresIT {
         RetentionConfig config = new RetentionConfig();
         config.setTtlDays(90);
         config.setBatchSize(2);
-        RetentionJob job = new RetentionJob(config, batchProcessor, bpmMetrics);
+        RetentionJob job = new RetentionJob(config, batchProcessor, bpmMetrics, new com.zorrodev.bpm.engine.event.SseLiveCursorTracker());
 
         // The pass must terminate (no infinite loop on the all-bad head) and drain the tail.
         assertTimeoutPreemptively(Duration.ofSeconds(30), job::run);
