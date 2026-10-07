@@ -140,6 +140,18 @@ public final class VariablePresetValidator {
             String typeName = textOrNull(node.get("type"));
             String value = textOrNull(node.get("value"));
             boolean rowOk = true;
+            // WO-VT-1 п.4: флаг allowEmptyString — только boolean, только для STRING.
+            Boolean allowEmpty = null;
+            JsonNode allowNode = node.get("allowEmptyString");
+            if (allowNode != null && !allowNode.isNull()) {
+                if (!allowNode.isBoolean()) {
+                    errors.add(new FieldError(field + ".allowEmptyString",
+                        "allowEmptyString must be a boolean"));
+                    rowOk = false;
+                } else {
+                    allowEmpty = allowNode.asBoolean();
+                }
+            }
             if (name == null || name.isBlank()) {
                 errors.add(new FieldError(field + ".name", "name is required"));
                 rowOk = false;
@@ -167,27 +179,24 @@ public final class VariablePresetValidator {
                 rowOk = false;
             }
             if (rowOk) {
-                String placeholderError = checkPlaceholders(value);
-                if (placeholderError != null) {
-                    errors.add(new FieldError(field + ".value", placeholderError));
-                } else if (!containsPlaceholder(value)) {
-                    String typeError = checkTypedValue(type, value);
-                    if (typeError != null) {
-                        errors.add(new FieldError(field + ".value", typeError));
-                    } else {
-                        ProcessVariable v = new ProcessVariable();
-                        v.setName(name);
-                        v.setType(type);
-                        v.setValue(value);
-                        out.add(v);
-                    }
+                if (Boolean.TRUE.equals(allowEmpty) && type != ProcessVariableType.STRING) {
+                    errors.add(new FieldError(field + ".allowEmptyString",
+                        "allowEmptyString is only for STRING"));
                 } else {
-                    // Корректный плейсхолдер: тип проверит клиент после подстановки.
-                    ProcessVariable v = new ProcessVariable();
-                    v.setName(name);
-                    v.setType(type);
-                    v.setValue(value);
-                    out.add(v);
+                    String placeholderError = checkPlaceholders(value);
+                    if (placeholderError != null) {
+                        errors.add(new FieldError(field + ".value", placeholderError));
+                    } else if (!containsPlaceholder(value)) {
+                        String typeError = checkTypedValue(type, value);
+                        if (typeError != null) {
+                            errors.add(new FieldError(field + ".value", typeError));
+                        } else {
+                            out.add(presetVariable(name, type, value, allowEmpty));
+                        }
+                    } else {
+                        // Корректный плейсхолдер: тип проверит клиент после подстановки.
+                        out.add(presetVariable(name, type, value, allowEmpty));
+                    }
                 }
             }
             index++;
@@ -208,6 +217,9 @@ public final class VariablePresetValidator {
                     c.setName(v.getName());
                     c.setType(v.getType());
                     c.setValue(v.getValue());
+                    // WO-VT-1 п.4: флаг — часть значения, без него round-trip
+                    // «пустая строка как значение» неотличима от «спросить».
+                    c.setAllowEmptyString(v.getAllowEmptyString());
                     return c;
                 })
                 .toList());
@@ -262,7 +274,27 @@ public final class VariablePresetValidator {
         }
     }
 
+    /**
+     * WO-VT-1 п.4: сборка проверенной переменной с сохранением флага
+     * {@code allowEmptyString} ({@code true} хранится, {@code false}/null —
+     * нормализуется в null, чтобы round-trip не плодил шум).
+     */
+    private static ProcessVariable presetVariable(
+            String name, ProcessVariableType type, String value, Boolean allowEmpty) {
+        ProcessVariable v = new ProcessVariable();
+        v.setName(name);
+        v.setType(type);
+        v.setValue(value);
+        v.setAllowEmptyString(Boolean.TRUE.equals(allowEmpty) ? Boolean.TRUE : null);
+        return v;
+    }
+
     private static String checkTypedValue(ProcessVariableType type, String value) {
+        // WO-VT-1 п.4: пустое значение для ЛЮБОГО типа = «спросить при запуске»,
+        // формат не проверяется.
+        if (value.isEmpty()) {
+            return null;
+        }
         return switch (type) {
             case LONG -> {
                 try {
