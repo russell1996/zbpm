@@ -94,6 +94,9 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         this.uiUserLookupService = uiUserLookupService;
         this.apiKeyService = apiKeyService;
         this.bpmMetrics = bpmMetrics;
+        this.sessionRegistry = new SseSessionRegistry(
+            () -> maxClients, () -> maxClientsPerSubject, () -> heartbeatIntervalMs,
+            this::scheduleHeartbeat);
     }
 
     /**
@@ -110,8 +113,8 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
             uiUserLookupService, apiKeyService, null);
     }
 
-    /** Connected SSE clients: emitterId → client session (writer machine, WO-AUDIT-9 шаг 2). */
-    private final Map<String, SseClientSession> clients = new ConcurrentHashMap<>();
+    /** Connected SSE clients: registry of sessions (WO-AUDIT-9 шаг 3). */
+    private final SseSessionRegistry sessionRegistry;
 
     /**
      * WO-REL-47 (N07): BOUNDED pools — never a cached pool on this path.
@@ -317,9 +320,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
     @Value("${zorrobpm.sse.max-clients-per-subject:10}")
     private int maxClientsPerSubject = 10;
 
-    /** Live registrations per subject key (see above). */
-    private final Map<String, java.util.concurrent.atomic.AtomicInteger> clientsPerSubject =
-        new ConcurrentHashMap<>();
+    /** Live registrations per subject key — owned by SseSessionRegistry (шаг 3). */
 
     /**
      * WO-SEC-67 (F13): re-resolution cache for the per-event rights
@@ -374,8 +375,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      */
     private volatile long heartbeatIntervalMs = 15_000;
 
-    /** WO-REL-57: the armed periodic heartbeat (null = no clients yet / stopped). */
-    private volatile java.util.concurrent.ScheduledFuture<?> heartbeatFuture;
+    /** Armed heartbeat future — owned by SseSessionRegistry (шаг 3). */
 
     /** Functional interface for test event capture: receives clientId + envelope. */
     @FunctionalInterface
@@ -411,7 +411,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         // (instead of born LIVE) so an event arriving between the map-put
         // and this line stages in the queue and is picked up by the
         // drain — never sent ahead of the subscription contract.
-        SseClientSession live = clients.get(clientId);
+        SseClientSession live = sessionRegistry.get(clientId);
         if (live != null) {
             live.drainToLive(0L);
         }
@@ -420,58 +420,47 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
 
     private String registerClientInternal(SseEmitter emitter, Principal principal, String typeFilter,
                                    String processInstanceIdFilter, String processDefinitionKeyFilter) {
-        synchronized (clients) {
-            if (clients.size() >= maxClients) {
-                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Too many SSE clients");
-            }
-            // WO-SEC-67: per-subject cap — checked AND incremented under the
-            // same lock as the global cap so the count cannot race.
-            String subjectKey = subjectKey(principal);
-            java.util.concurrent.atomic.AtomicInteger subjectCount =
-                clientsPerSubject.computeIfAbsent(subjectKey, k -> new java.util.concurrent.atomic.AtomicInteger(0));
-            if (subjectCount.get() >= maxClientsPerSubject) {
-                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
-                    "Too many SSE clients for this subject");
-            }
-            String clientId = UUID.randomUUID().toString();
-            Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
+        // WO-SEC-67: per-subject cap — checked AND incremented under the
+        // same lock as the global cap so the count cannot race (inside
+        // SseSessionRegistry.add — the registry owns both structures now).
+        String subjectKey = subjectKey(principal);
+        String clientId = UUID.randomUUID().toString();
+        Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
 
-            SseClientSession info = new SseClientSession(new SseClientDescriptor(clientId, emitter, principal,
-                currentTokenVersion(principal), allowedPdIds,
-                typeFilter, processInstanceIdFilter, processDefinitionKeyFilter), this);
-            clients.put(clientId, info);
-            subjectCount.incrementAndGet();
+        SseClientSession info = new SseClientSession(new SseClientDescriptor(clientId, emitter, principal,
+            currentTokenVersion(principal), allowedPdIds,
+            typeFilter, processInstanceIdFilter, processDefinitionKeyFilter), this);
+        sessionRegistry.add(info, subjectKey);
 
-            emitter.onCompletion(() -> {
-                removeClientState(clientId);
-                log.info("SSE client {} disconnected (completion)", clientId);
-                stopRabbitMqListenerIfNoClients();
-            });
-            emitter.onTimeout(() -> {
-                removeClientState(clientId);
-                log.info("SSE client {} disconnected (timeout)", clientId);
-                stopRabbitMqListenerIfNoClients();
-            });
-            emitter.onError(e -> {
-                removeClientState(clientId);
-                log.info("SSE client {} disconnected (error: {})", clientId, e.getMessage());
-                stopRabbitMqListenerIfNoClients();
-            });
+        emitter.onCompletion(() -> {
+            removeClientState(clientId);
+            log.info("SSE client {} disconnected (completion)", clientId);
+            stopRabbitMqListenerIfNoClients();
+        });
+        emitter.onTimeout(() -> {
+            removeClientState(clientId);
+            log.info("SSE client {} disconnected (timeout)", clientId);
+            stopRabbitMqListenerIfNoClients();
+        });
+        emitter.onError(e -> {
+            removeClientState(clientId);
+            log.info("SSE client {} disconnected (error: {})", clientId, e.getMessage());
+            stopRabbitMqListenerIfNoClients();
+        });
 
-            // If this is the first client, start RabbitMQ subscription.
-            // Never on the HTTP thread: declares + container.start() are blocking
-            // broker RPCs (consumer start waits up to 60s on a sick broker), and a
-            // stalled broker once hung GET /events/stream with zero response
-            // (WO-REL-20). The stream opens immediately; events flow once ready.
-            ensureBridgeStarted();
-            // WO-REL-57: arm the heartbeat with the first client (lazy — no
-            // clients, no ticks; cancelled by stop(), re-armed on resume).
-            ensureHeartbeat();
+        // If this is the first client, start RabbitMQ subscription.
+        // Never on the HTTP thread: declares + container.start() are blocking
+        // broker RPCs (consumer start waits up to 60s on a sick broker), and a
+        // stalled broker once hung GET /events/stream with zero response
+        // (WO-REL-20). The stream opens immediately; events flow once ready.
+        ensureBridgeStarted();
+        // WO-REL-57: arm the heartbeat with the first client (lazy — no
+        // clients, no ticks; cancelled by stop(), re-armed on resume).
+        sessionRegistry.ensureHeartbeat();
 
-            log.info("SSE client {} registered: type={}, processInstanceId={}, processDefinitionKey={}",
-                clientId, typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
-            return clientId;
-        }
+        log.info("SSE client {} registered: type={}, processInstanceId={}, processDefinitionKey={}",
+            clientId, typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
+        return clientId;
     }
 
     /**
@@ -499,19 +488,11 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      * тихого no-op.
      */
     private void removeClientState(String clientId) {
-        SseClientSession removed = clients.remove(clientId);
-        if (removed != null) {
-            removed.closeWriter();
+        SseClientSession known = sessionRegistry.get(clientId);
+        if (known == null) {
+            return;
         }
-        // WO-SEC-67: release the per-subject slot (no-op when the client was
-        // never registered — e.g. double completion callbacks).
-        if (removed != null) {
-            java.util.concurrent.atomic.AtomicInteger subjectCount =
-                clientsPerSubject.get(subjectKey(removed.principal()));
-            if (subjectCount != null && subjectCount.decrementAndGet() <= 0) {
-                clientsPerSubject.remove(subjectKey(removed.principal()), subjectCount);
-            }
-        }
+        sessionRegistry.remove(clientId, subjectKey(known.principal()));
     }
 
     /**
@@ -572,7 +553,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         // window (WO-REL-37) would send ahead of the subscription contract.
         String clientId = registerClientInternal(emitter, principal, typeFilter,
             processInstanceIdFilter, processDefinitionKeyFilter);
-        SseClientSession client = clients.get(clientId);
+        SseClientSession client = sessionRegistry.get(clientId);
         if (client != null) {
             // Режим уже BUFFERING с конструктора — вызов для явности
             // протокола (idempotent: BUFFERING→BUFFERING — no-op).
@@ -594,7 +575,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      * снятия больше нет — флага нет вовсе).
      */
     public void drainBufferedClient(String clientId, long catchupBoundary) {
-        SseClientSession client = clients.get(clientId);
+        SseClientSession client = sessionRegistry.get(clientId);
         if (client == null) {
             return;
         }
@@ -602,57 +583,24 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
     }
 
     /**
-     * WO-REL-57: arm the periodic heartbeat (idempotent, lazy). The first
-     * registration starts it; ticks are {@code scheduleWithFixedDelay} on the
-     * shared bounded retry lane (no new pool — one daemon thread, same as the
-     * pump-retry traffic). A tick with zero clients is a no-op; each tick
-     * re-checks liveness per client under the client lock (a client that
-     * closed between ticks is skipped, never sent into).
+     * WO-REL-57: arm the periodic heartbeat (idempotent, lazy) — delegate to
+     * the session registry (шаг 3). Package-visible: heartbeat tests tick it directly.
      */
-    private synchronized void ensureHeartbeat() {
-        java.util.concurrent.ScheduledFuture<?> armed = heartbeatFuture;
-        if (armed != null && !armed.isDone()) {
-            return;
-        }
-        try {
-            heartbeatFuture = retryLane().scheduleWithFixedDelay(
-                this::sendHeartbeatToAll,
-                heartbeatIntervalMs, heartbeatIntervalMs, TimeUnit.MILLISECONDS);
-        } catch (java.util.concurrent.RejectedExecutionException re) {
-            log.warn("SSE heartbeat arming rejected (retry lane saturated) — "
-                + "next registration re-arms", re);
-            heartbeatFuture = null;
-        }
-    }
-
-    /** WO-REL-57: cancel the heartbeat (stop() path; re-armed lazily). */
-    private synchronized void cancelHeartbeat() {
-        java.util.concurrent.ScheduledFuture<?> armed = heartbeatFuture;
-        heartbeatFuture = null;
-        if (armed != null) {
-            armed.cancel(false);
-        }
+    void ensureHeartbeat() {
+        sessionRegistry.ensureHeartbeat();
     }
 
     /**
-     * WO-REL-57: one heartbeat tick — a comment to every LIVE client.
-     * Package-visible for tests (the interval itself is wall-clock).
-     * Never throws into the scheduler (a rogue client must not kill the
-     * periodic task — {@code scheduleWithFixedDelay} cancels itself on an
-     * escaping exception).
+     * WO-REL-57: one heartbeat tick — delegate to the registry. Package-visible
+     * for tests (the interval itself is wall-clock).
      */
     void sendHeartbeatToAll() {
-        try {
-            for (SseClientSession client : clients.values()) {
-                try {
-                    client.enqueueHeartbeat();
-                } catch (RuntimeException e) {
-                    log.warn("SSE heartbeat enqueue failed for client {}", client.clientId(), e);
-                }
-            }
-        } catch (RuntimeException e) {
-            log.warn("SSE heartbeat tick failed", e);
-        }
+        sessionRegistry.sendHeartbeatToAll();
+    }
+
+    /** Scheduler back-call for the registry heartbeat (bounded retry-lane, no new pool). */
+    private java.util.concurrent.ScheduledFuture<?> scheduleHeartbeat(Runnable task, long intervalMs) {
+        return retryLane().scheduleWithFixedDelay(task, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -1147,7 +1095,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         log.warn("SSE cursor gap detected (dispatched up to {}, next is {}) — "
             + "closing LIVE clients so reconnect heals via catchup (drop-head suspected)",
             fromCursor, toCursor);
-        for (SseClientSession client : java.util.List.copyOf(clients.values())) {
+        for (SseClientSession client : sessionRegistry.snapshot()) {
             if (client.isLive()) {
                 closeRevokedClient(client.clientId(),
                     "cursor-gap " + fromCursor + "→" + toCursor + " (drop-head suspected)");
@@ -1303,7 +1251,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
             bySubject = new java.util.LinkedHashMap<>();
         }
 
-        for (SseClientSession client : clients.values()) {
+        for (SseClientSession client : sessionRegistry.snapshot()) {
             // Check type filter
             if (client.typeFilter() != null && !client.typeFilter().isBlank()
                 && !client.typeFilter().equals(eventType)) {
@@ -1338,7 +1286,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
                     continue;
                 }
                 for (SseClientSession client : group) {
-                    if (clients.containsKey(client.clientId())) {
+                    if (sessionRegistry.contains(client.clientId())) {
                         deliverToClient(client, envelope, eventType, cursor, pdUuid);
                     }
                 }
@@ -1667,7 +1615,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      * becomes a no-op (never {@code emitter.send()} on a completed emitter).
      */
     private void closeRevokedClient(String clientId, String reason) {
-        SseClientSession client = clients.get(clientId);
+        SseClientSession client = sessionRegistry.get(clientId);
         removeClientState(clientId);
         if (client != null) {
             rightsCache.invalidate(
@@ -1689,7 +1637,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      * never fail because a stream misbehaves); failures are logged.
      */
     public void invalidateStreams() {
-        for (SseClientSession client : List.copyOf(clients.values())) {
+        for (SseClientSession client : sessionRegistry.snapshot()) {
             try {
                 if (!isCredentialLive(client)) {
                     closeRevokedClient(client.clientId(), "credential dead (event)");
@@ -1772,7 +1720,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      * string comparisons. Best-effort and non-throwing like the sweep.
      */
     public void invalidateStreamsForKey(UUID apiKeyId) {
-        for (SseClientSession client : List.copyOf(clients.values())) {
+        for (SseClientSession client : sessionRegistry.snapshot()) {
             try {
                 if (client.principal() instanceof Principal.ServicePrincipal sp
                     && apiKeyId.equals(sp.apiKeyId())) {
@@ -1806,7 +1754,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      * anyway if wiring ever changes).
      */
     private void spawnStarterIfNeededLocked() {
-        if (rabbitAdmin == null || clients.isEmpty()
+        if (rabbitAdmin == null || sessionRegistry.isEmpty()
                 || (listenerContainer != null && listenerContainer.isRunning())
                 || !bridgeStarting.compareAndSet(false, true)) {
             return;
@@ -1842,13 +1790,13 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         // lives in the spawner's finally (single-flight must be atomic).
         while (true) {
             synchronized (bridgeLock) {
-                if (clients.isEmpty()
+                if (sessionRegistry.isEmpty()
                         || (listenerContainer != null && listenerContainer.isRunning())) {
                     return;
                 }
             }
             if (!first) {
-                log.warn("SSE bridge: retrying start ({} waiting clients)", clients.size());
+                log.warn("SSE bridge: retrying start ({} waiting clients)", sessionRegistry.size());
             }
             first = false;
             try {
@@ -1927,7 +1875,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         boolean assigned = false;
         SimpleMessageListenerContainer previous = null;
         synchronized (bridgeLock) {
-            if (!clients.isEmpty() && (listenerContainer == null || !listenerContainer.isRunning())) {
+            if (!sessionRegistry.isEmpty() && (listenerContainer == null || !listenerContainer.isRunning())) {
                 // Null-out under the lock, stop outside it: even a stale
                 // stopped container's shutdown path must never run under
                 // bridgeLock (verifier round 2 — stop()/destroy() are
@@ -1953,7 +1901,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
     private void stopRabbitMqListenerIfNoClients() {
         SimpleMessageListenerContainer doomed;
         synchronized (bridgeLock) {
-            if (!clients.isEmpty()) {
+            if (!sessionRegistry.isEmpty()) {
                 return;
             }
             doomed = listenerContainer;
@@ -2026,14 +1974,14 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
             callback.run();
             return;
         }
-        log.info("SSE shutdown: completing {} active emitters", clients.size());
+        log.info("SSE shutdown: completing {} active emitters", sessionRegistry.size());
         // WO-REL-47 HOLD finding 4: the writer of every live client closes
         // here (not just the map entry) — an already-scheduled pump/send
         // observes Mode.CLOSED and stops instead of sending into a completed
         // emitter. Snapshot to avoid concurrent modification; complete outside
         // lock where possible.
-        var snapshot = new java.util.ArrayList<>(clients.values());
-        clients.clear();
+        var snapshot = new java.util.ArrayList<>(sessionRegistry.snapshot());
+        sessionRegistry.clear();
         for (var c : snapshot) {
             c.closeWriter();
             try {
@@ -2097,7 +2045,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
             }
             // WO-REL-57: взведённый heartbeat гасится здесь же (тиковый
             // future; сама retry-lane глушится ниже вместе с остальными).
-            cancelHeartbeat();
+            sessionRegistry.cancelHeartbeat();
             if (dispatchDoomed != null) {
                 dispatchDoomed.shutdown();
             }
