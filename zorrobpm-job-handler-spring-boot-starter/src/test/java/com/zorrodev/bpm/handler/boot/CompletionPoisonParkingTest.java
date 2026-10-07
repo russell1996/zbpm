@@ -246,6 +246,36 @@ class CompletionPoisonParkingTest {
     }
 
     @Test
+    void noCorrelationId_attemptsStillReachCeilingAndPark() {
+        // WO-REL-64 (red-team H-1): без correlationId кэша нет и каждый
+        // redelivery несёт новый completionId — шкала по нему давала бы вечно
+        // «попытку №1» и потолок не наступал бы никогда (вечный HOL — ровно то,
+        // что чинит WO). Fallback-ключ serviceTaskId#фаза стабилен между
+        // redelivery одного сообщения: потолок наступает и здесь.
+        mainQueueDeadPoisonAlive();
+        MessageProperties props = new MessageProperties();
+        Message msg = new Message(jobJson().getBytes(StandardCharsets.UTF_8), props);
+
+        assertThatThrownBy(() -> listener.onMessage(msg)).isInstanceOf(AmqpException.class);
+        assertThatThrownBy(() -> listener.onMessage(msg)).isInstanceOf(AmqpException.class);
+        // Третья неудача подряд = потолок: парковка, нормальный возврат.
+        listener.onMessage(msg);
+
+        assertThat(listener.poisonedCountForTest()).isEqualTo(1L);
+        ArgumentCaptor<Object> bodyCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(rabbitTemplate, times(1)).convertAndSend(eq(POISON_QUEUE), bodyCaptor.capture(),
+            any(org.springframework.amqp.core.MessagePostProcessor.class),
+            any(CorrelationData.class));
+        assertThat(((ServiceTaskCompleteData) bodyCaptor.getValue()).getCompletionId())
+            .as("паркуется стабильный id (движок дедуплицирует повтор)")
+            .isNotNull();
+        // Pre-existing C8-36: без correlationId идемпотентности нет — каждая
+        // попытка выполняет handler заново; потолок ограничивает число повторов
+        // тремя вместо бесконечности.
+        verify(handler, times(3)).handleJob(any());
+    }
+
+    @Test
     void maxAttempts_isClampedOnBothSides() {
         listener.setMaxCompletionAttempts(0);
         assertThat(listener.maxCompletionAttemptsForTest())

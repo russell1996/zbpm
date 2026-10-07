@@ -161,13 +161,34 @@ class CompletionPoisonRetryTest {
     }
 
     @Test
-    void delayQueueDown_retryThrowsSoPoisonInputIsNotAcked() {
+    void delayQueueDown_retrySleepsBeforeThrow_noHotLoop() {
         routeStillBroken();
+        java.util.List<Long> slept = new java.util.ArrayList<>();
+        retryListener.setSleeper(slept::add);
 
         assertThatThrownBy(() -> retryListener.onMessage(poisonMessage(parkedResult(), 10)))
             .as("некуда перепаковаться — вход НЕ подтверждается, копия вернётся позже")
             .isInstanceOf(AmqpException.class);
+
         assertThat(retryListener.retryReparkedCountForTest()).isZero();
+        // WO-REL-64 (red-team M-2): перед пробросом — сон по шкале, иначе
+        // requeue мгновенный и poison-поток крутится горячо.
+        assertThat(slept)
+            .as("один сон растущей шкалы перед NACK, а не мгновенный проброс")
+            .containsExactly(CompletionRedeliveryBackoff.delayFor(11));
+    }
+
+    @Test
+    void confirmTimeout_isClampedOnBothSides_likeMainListener() {
+        // WO-REL-64 (red-team M-1): тот же зажим, что у основного слушателя.
+        retryListener.setConfirmTimeoutMs(0);
+        assertThat(retryListener.confirmTimeoutMsForTest())
+            .isEqualTo(JobCompletionListener.MIN_CONFIRM_TIMEOUT_MS);
+        retryListener.setConfirmTimeoutMs(3_600_000);
+        assertThat(retryListener.confirmTimeoutMsForTest())
+            .isEqualTo(JobCompletionListener.MAX_CONFIRM_TIMEOUT_MS);
+        retryListener.setConfirmTimeoutMs(7_000);
+        assertThat(retryListener.confirmTimeoutMsForTest()).isEqualTo(7_000L);
     }
 
     @Test

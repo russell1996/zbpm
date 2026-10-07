@@ -69,6 +69,27 @@ public class CompletionPoisonRetryListener implements MessageListener {
 
     private boolean ensurePublisherConfirms = true;
     private long confirmTimeoutMs = 5_000L;
+    /**
+     * WO-REL-64 (red-team M-2): сон перед пробросом при недоступной
+     * delay-очереди — иначе контейнер в AUTO-режиме тут же делает requeue и
+     * крутит горячий цикл без задержки на единственном потоке poison-консьюмера
+     * (чужие повторы стоят + шторм в лог). Та же шкала 1с→30с, что на основном
+     * пути. Тест-хук — {@link #setSleeper}.
+     */
+    private java.util.function.LongConsumer sleeper = CompletionPoisonRetryListener::sleepQuietly;
+
+    private static void sleepQuietly(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /** Тест-хук: подмена сна записывающим (иначе секунды реального сна). */
+    void setSleeper(java.util.function.LongConsumer sleeper) {
+        this.sleeper = sleeper;
+    }
 
     private final AtomicLong retryDeliveredCount = new AtomicLong(0);
     private final AtomicLong retryReparkedCount = new AtomicLong(0);
@@ -87,7 +108,31 @@ public class CompletionPoisonRetryListener implements MessageListener {
     }
 
     public void setConfirmTimeoutMs(long confirmTimeoutMs) {
+        // WO-REL-64 (red-team M-1): тот же зажим, что у основного слушателя
+        // (см. JobCompletionListener MIN/MAX_CONFIRM_TIMEOUT_MS — тот же пакет,
+        // те же константы, та же дисциплина P-41). Без него
+        // completion-confirm-timeout=3600000 вешал poison-консьюмер на час на
+        // каждом повторе, а =0 гнал здоровый маршрут вечно через delay.
+        if (confirmTimeoutMs < JobCompletionListener.MIN_CONFIRM_TIMEOUT_MS) {
+            log.warn("completion-confirm-timeout={}ms is below the {}ms floor — clamped "
+                + "on the poison-retry listener too.", confirmTimeoutMs,
+                JobCompletionListener.MIN_CONFIRM_TIMEOUT_MS);
+            this.confirmTimeoutMs = JobCompletionListener.MIN_CONFIRM_TIMEOUT_MS;
+            return;
+        }
+        if (confirmTimeoutMs > JobCompletionListener.MAX_CONFIRM_TIMEOUT_MS) {
+            log.warn("completion-confirm-timeout={}ms is above the {}ms ceiling — clamped "
+                + "on the poison-retry listener too: it has a single consumer thread.",
+                confirmTimeoutMs, JobCompletionListener.MAX_CONFIRM_TIMEOUT_MS);
+            this.confirmTimeoutMs = JobCompletionListener.MAX_CONFIRM_TIMEOUT_MS;
+            return;
+        }
         this.confirmTimeoutMs = confirmTimeoutMs;
+    }
+
+    /** Тест-хук: фактически применённый таймаут ожидания confirm, мс. */
+    long confirmTimeoutMsForTest() {
+        return confirmTimeoutMs;
     }
 
     /** Сколько припаркованных результатов доставлено движку повтором. */
@@ -164,14 +209,20 @@ public class CompletionPoisonRetryListener implements MessageListener {
                 String.valueOf(delayMs), confirmTimeoutMs,
                 ensurePublisherConfirms
                     && ConfirmedCompletionSender.confirmsAvailable(rabbitTemplate),
-                null);
+                // WO-REL-64 (red-team L-2): unroutable delay-копии тоже в счётчик.
+                unroutableCount);
         } catch (RuntimeException delayFailure) {
             // Delay-очередь недоступна (брокер в беде): лучше requeue poison-копии,
             // чем тихая потеря — контейнер NACK'ает вход, попробуем позже.
+            // WO-REL-64 (red-team M-2): перед пробросом спим по той же шкале —
+            // иначе requeue мгновенный и poison-поток крутится горячо.
+            long delayBeforeRequeue = CompletionRedeliveryBackoff.delayFor(nextAttempts);
+            sleeper.accept(delayBeforeRequeue);
             log.error("Poisoned completion {} could not be reparked for retry "
-                    + "(attempts={}, delay={}ms) — input NOT acked, will be redelivered: {}",
-                data.getCompletionId(), nextAttempts, delayMs, delayFailure.getMessage(),
-                delayFailure);
+                    + "(attempts={}, delay={}ms) — input NOT acked, will be redelivered "
+                    + "after {}ms: {}",
+                data.getCompletionId(), nextAttempts, delayMs, delayBeforeRequeue,
+                delayFailure.getMessage(), delayFailure);
             throw delayFailure instanceof AmqpException amqp ? amqp
                 : new AmqpException("Delay-queue publish failed", delayFailure);
         }

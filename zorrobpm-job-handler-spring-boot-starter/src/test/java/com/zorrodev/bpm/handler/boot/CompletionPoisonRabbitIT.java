@@ -236,6 +236,45 @@ class CompletionPoisonRabbitIT {
         }
     }
 
+    /**
+     * WO-REL-64 (red-team M-3): центральный механизм автоповтора — копия в
+     * delay-очереди с per-message TTL истекает и возвращается в poison через
+     * DLX. Недоказанным оставалось ровно это: если бы {@code expiration}
+     * переживал dead-lettering, копия истекала бы уже в poison (у него DLX
+     * нет — брокер такие молча дропает, «не дропается никогда» нарушено).
+     */
+    @Test
+    void delayCopy_expiresBackToPoison_intactAndNotExpiringThere() throws Exception {
+        ServiceTaskCompleteData data = new ServiceTaskCompleteData();
+        data.setServiceTaskId(UUID.randomUUID());
+        data.setStatus("SUCCESS");
+        data.setCompletionId("rel64-delay-" + UUID.randomUUID());
+        int attempts = 11;
+
+        RabbitTemplate delayTemplate = workerTemplate();
+        delayTemplate.convertAndSend(CompletionPoisonRetryListener.RETRY_DELAY_QUEUE, data,
+            m -> {
+                m.getMessageProperties().setHeader(
+                    CompletionPoisonRetryListener.HDR_ATTEMPTS, attempts);
+                m.getMessageProperties().setExpiration("1000");
+                return m;
+            });
+
+        // Копия вернулась в poison через DLX — тело и счётчик целы.
+        ParkedCopy back = awaitParkedCopyWithId(data.getCompletionId(), Duration.ofSeconds(20));
+        assertThat(back.attempts()).isEqualTo(attempts);
+        assertThat(back.body().getServiceTaskId()).isEqualTo(data.getServiceTaskId());
+
+        // WO-QW-7: намеренно Thread.sleep — условие инвертировано (копия НЕ
+        // должна истечь повторно в poison; тишина 3с = доказательство, что
+        // expiration не пережил dead-lettering и брокер её не дропнул).
+        Thread.sleep(3000);
+        ParkedCopy stillThere = pollParkedCopyWithId(data.getCompletionId());
+        assertThat(stillThere)
+            .as("возвращённая копия живёт в poison (TTL не пережил DLX, дропа нет)")
+            .isNotNull();
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private CachingConnectionFactory cachingFactory() {
@@ -357,6 +396,59 @@ class CompletionPoisonRabbitIT {
             .until(() -> pollParkedCopy(), copy -> copy != null);
     }
 
+    /**
+     * Ждёт в poison копию с КОНКРЕТНЫМ completionId (content-check, не счётчик:
+     * чужой stale от соседнего прогона давал бы ложный GREEN). Чужое — NACK +
+     * requeue (остаётся в очереди), совпавшее — тоже requeue (заберёт
+     * retry-слушатель шага 4 / проверка M-3).
+     */
+    private ParkedCopy awaitParkedCopyWithId(String completionId, Duration timeout) {
+        return await("parked poison copy " + completionId)
+            .atMost(timeout)
+            .pollInterval(Duration.ofMillis(300))
+            .until(() -> pollParkedCopyWithId(completionId), copy -> copy != null);
+    }
+
+    private ParkedCopy pollParkedCopyWithId(String completionId) throws Exception {
+        ConnectionFactory f = new ConnectionFactory();
+        f.setHost(host);
+        f.setPort(port);
+        f.setUsername(user);
+        f.setPassword(password);
+        try (Connection c = f.newConnection(); Channel ch = c.createChannel()) {
+            for (int i = 0; i < 20; i++) {
+                com.rabbitmq.client.GetResponse resp = ch.basicGet(
+                    CompletionPoisonRetryListener.POISON_QUEUE, false);
+                if (resp == null) {
+                    return null;
+                }
+                ch.basicNack(resp.getEnvelope().getDeliveryTag(), false, true);
+                ServiceTaskCompleteData body;
+                try {
+                    body = objectMapper.readValue(resp.getBody(), ServiceTaskCompleteData.class);
+                } catch (Exception ignored) {
+                    continue;
+                }
+                if (completionId.equals(body.getCompletionId())) {
+                    return toParkedCopy(resp, body);
+                }
+            }
+            return null;
+        }
+    }
+
+    private ParkedCopy toParkedCopy(com.rabbitmq.client.GetResponse resp,
+            ServiceTaskCompleteData body) {
+        java.util.Map<String, Object> headers = resp.getProps().getHeaders();
+        Object hdr = headers == null ? null
+            : headers.get(CompletionPoisonRetryListener.HDR_ATTEMPTS);
+        int attempts = hdr instanceof Number n ? n.intValue() : -1;
+        if (body.getCompletionId() == null || attempts < 0) {
+            return null;
+        }
+        return new ParkedCopy(body, attempts);
+    }
+
     private ParkedCopy pollParkedCopy() throws Exception {
         ConnectionFactory f = new ConnectionFactory();
         f.setHost(host);
@@ -379,14 +471,7 @@ class CompletionPoisonRabbitIT {
             } catch (Exception e) {
                 return null;
             }
-            java.util.Map<String, Object> headers = resp.getProps().getHeaders();
-            Object hdr = headers == null ? null
-                : headers.get(CompletionPoisonRetryListener.HDR_ATTEMPTS);
-            int attempts = hdr instanceof Number n ? n.intValue() : -1;
-            if (body.getCompletionId() == null || attempts < 0) {
-                return null;
-            }
-            return new ParkedCopy(body, attempts);
+            return toParkedCopy(resp, body);
         }
     }
 

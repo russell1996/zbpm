@@ -418,7 +418,7 @@ public class JobCompletionListener implements MessageListener {
         if (cached != null) {
             // Redelivery: работа уже сделана, переотправляем только результат.
             // Сбой и здесь — тоже проброс (вход не подтверждаем).
-            sendCompletion(cached);
+            sendCompletion(cached, cached.getCompletionId());
             return;
         }
 
@@ -455,10 +455,30 @@ public class JobCompletionListener implements MessageListener {
         if (correlationId != null) {
             resultCache.put(correlationId, completeData);
         }
-        sendCompletion(completeData);
+        // WO-REL-64 (red-team H-1): ключ шкалы попыток обязан быть стабилен на
+        // redelivery того же входящего сообщения. При correlationId это
+        // completionId (объект переигрывается из кэша, id тот же); БЕЗ
+        // correlationId кэша нет и каждый redelivery создаёт новый объект с
+        // новым UUID — ключ по completionId давал бы вечно «попытку №1» и
+        // потолок не наступал бы никогда. Fallback — serviceTaskId + фаза:
+        // то же сообщение переигрывается с теми же значениями, шкала растёт.
+        // Два РАЗНЫХ задания одного serviceTask делят fallback-шкалу — это
+        // fail-safe направление (парковка раньше, результат не теряется).
+        String attemptKey = correlationId != null ? null : fallbackAttemptKey(completeData);
+        sendCompletion(completeData, attemptKey);
     }
 
-    private void sendCompletion(ServiceTaskCompleteData completeData) {
+    /**
+     * WO-REL-64 (red-team H-1): ключ шкалы для отправок без correlationId —
+     * стабилен между redelivery одного сообщения (те же serviceTaskId/фаза).
+     */
+    private static String fallbackAttemptKey(ServiceTaskCompleteData completeData) {
+        return "nocorr:" + completeData.getServiceTaskId()
+            + "#" + completeData.getDispatchPhase()
+            + "#" + completeData.getDispatchIndex();
+    }
+
+    private void sendCompletion(ServiceTaskCompleteData completeData, String attemptKeyOverride) {
         // WO-C8-36 (CR-13): per-send CorrelationData — confirm/return маппятся на
         // ЭТУ отправку (общий confirm-callback движка без correlation data их
         // игнорировал — та же дыра, что чиним).
@@ -473,6 +493,10 @@ public class JobCompletionListener implements MessageListener {
         }
         final String completionId = idFromBody;
         boolean waitForConfirm = ensurePublisherConfirms && confirmsAvailable();
+        // WO-REL-64 (red-team H-1): null — обычный путь с correlationId
+        // (шкала по completionId, он стабилен через кэш).
+        final String attemptKey =
+            attemptKeyOverride != null ? attemptKeyOverride : completionId;
         try {
             // WO-REL-64: сама отправка — через общего отправителя
             // (Confirm/return-контракт WO-C8-36 — см. ConfirmedCompletionSender —
@@ -491,7 +515,7 @@ public class JobCompletionListener implements MessageListener {
                 // «return опоздал ПОСЛЕ confirm» микроскопическое и в AMQP 0-9-1
                 // неустранимо (нужен was-accepted-сигнал, которого нет). Оставлено
                 // явным, не спрятано — было здесь дословно, переехало в отчёт.
-                redeliveryBackoffRef.get().reset(completionId);
+                redeliveryBackoffRef.get().reset(attemptKey);
             } else if (ensurePublisherConfirms) {
                 long n = confirmsUnavailableCount.incrementAndGet();
                 log.warn("Publisher confirms unavailable on worker connection factory "
@@ -504,7 +528,7 @@ public class JobCompletionListener implements MessageListener {
             // очередь течёт), иначе проброс наружу — контейнер NACK'ает/ретраит
             // вход, результат (уже в resultCache) не теряется. НЕ логируем как
             // deserialize.
-            handleSendFailure(completeData, completionId, e);
+            handleSendFailure(completeData, completionId, attemptKey, e);
         }
     }
 
@@ -512,18 +536,19 @@ public class JobCompletionListener implements MessageListener {
      * WO-REL-64: отказ публикации результата — либо парковка, либо backoff и
      * проброс.
      *
-     * <p>Счётчик попыток ведётся на отправку (completionId стабилен на
-     * redelivery): N-я неудача подряд при включённой парковке и
-     * {@code N >= maxCompletionAttempts} — последняя: результат уходит в
-     * poison-очередь verbatim (тот же completionId — движок дедуплицирует),
-     * шкала сбрасывается, вход подтверждается (нормальный возврат — очередь
-     * продолжает работать). Иначе — ограниченный backoff и проброс исходного
-     * исключения (вход НЕ подтверждается).
+     * <p>Счётчик попыток ведётся на отправку: ключ — completionId при наличии
+     * correlationId (стабилен на redelivery через resultCache) либо
+     * fallback-ключ serviceTaskId#фаза без него (см. H-1 выше). N-я неудача
+     * подряд при включённой парковке и {@code N >= maxCompletionAttempts} —
+     * последняя: результат уходит в poison-очередь verbatim (тот же completionId —
+     * движок дедуплицирует), шкала сбрасывается, вход подтверждается
+     * (нормальный возврат — очередь продолжает работать). Иначе — ограниченный
+     * backoff и проброс исходного исключения (вход НЕ подтверждается).
      */
     private void handleSendFailure(ServiceTaskCompleteData completeData, String completionId,
-            RuntimeException cause) {
+            String attemptKey, RuntimeException cause) {
         CompletionRedeliveryBackoff backoff = redeliveryBackoffRef.get();
-        int attempt = backoff.recordFailedAttempt(completionId);
+        int attempt = backoff.recordFailedAttempt(attemptKey);
         if (poisonParkingEnabled && attempt >= maxCompletionAttempts) {
             try {
                 parkPoisonedCompletion(completeData, completionId, attempt, cause);
@@ -531,14 +556,14 @@ public class JobCompletionListener implements MessageListener {
                 // Сама парковка не удалась (брокер в беде): терять результат
                 // нельзя — откатываемся к старому поведению (backoff + проброс).
                 // Попытка уже засчитана выше, второй раз не считаем.
-                long delay = backoff.awaitBeforeRedelivery(completionId, attempt);
+                long delay = backoff.awaitBeforeRedelivery(attemptKey, attempt);
                 log.error("Completion {} could not be parked in {} ({}) — "
                         + "falling back to redelivery #{} in {}ms: {}",
                     completionId, poisonQueueName, parkFailure.getMessage(),
-                    attempt, delay, cause.getMessage());
+                    attempt, delay, cause.getMessage(), cause);
                 throw parkFailure;
             }
-            backoff.reset(completionId);
+            backoff.reset(attemptKey);
             long n = poisonedCount.incrementAndGet();
             log.error("Completion {} parked in {} after {} failed attempts "
                     + "(parked total={}): {} — main queue keeps flowing, "
@@ -547,7 +572,7 @@ public class JobCompletionListener implements MessageListener {
             return;
         }
         redeliveryCount.incrementAndGet();
-        long delay = backoff.awaitBeforeRedelivery(completionId, attempt);
+        long delay = backoff.awaitBeforeRedelivery(attemptKey, attempt);
         log.error("Completion send failed (transport) — redelivery #{} of this send, "
                 + "retrying in {}ms (retry backoff is bounded 1s..30s and never drops the job): {}",
             attempt, delay, cause.getMessage());
