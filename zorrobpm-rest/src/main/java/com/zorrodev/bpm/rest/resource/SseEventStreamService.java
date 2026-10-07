@@ -60,7 +60,7 @@ import java.util.concurrent.TimeoutException;
  */
 @Slf4j
 @Service
-public class SseEventStreamService implements SmartLifecycle {
+public class SseEventStreamService implements SmartLifecycle, SseClientSession.Host {
 
     private final EventQueryService eventQueryService;
     private final EventAuthzResolver eventAuthzResolver;
@@ -78,10 +78,6 @@ public class SseEventStreamService implements SmartLifecycle {
     private final BpmMetrics bpmMetrics;
     // WO-PERF-1 N4: single thread-safe Jackson 3 ObjectMapper instance (replaces per-message new)
     private final tools.jackson.databind.ObjectMapper objectMapper;
-    // WO-AUDIT-7: транзитный пин живых курсоров для events-retention
-    // (nullable — тот же unit-scope shape, что SEC-67/мок-коллабораторы выше:
-    // хуки молчат без трекера, поведение без него — как раньше).
-    private final com.zorrodev.bpm.engine.event.SseLiveCursorTracker cursorTracker;
 
     @Autowired
     public SseEventStreamService(EventQueryService eventQueryService,
@@ -90,8 +86,7 @@ public class SseEventStreamService implements SmartLifecycle {
                                     tools.jackson.databind.ObjectMapper objectMapper,
                                     UiUserLookupService uiUserLookupService,
                                     ApiKeyService apiKeyService,
-                                    @Lazy @Autowired(required = false) BpmMetrics bpmMetrics,
-                                    com.zorrodev.bpm.engine.event.SseLiveCursorTracker cursorTracker) {
+                                    @Lazy @Autowired(required = false) BpmMetrics bpmMetrics) {
         this.eventQueryService = eventQueryService;
         this.eventAuthzResolver = eventAuthzResolver;
         this.rabbitAdmin = rabbitAdmin;
@@ -99,7 +94,6 @@ public class SseEventStreamService implements SmartLifecycle {
         this.uiUserLookupService = uiUserLookupService;
         this.apiKeyService = apiKeyService;
         this.bpmMetrics = bpmMetrics;
-        this.cursorTracker = cursorTracker;
     }
 
     /**
@@ -113,11 +107,11 @@ public class SseEventStreamService implements SmartLifecycle {
                                     UiUserLookupService uiUserLookupService,
                                     ApiKeyService apiKeyService) {
         this(eventQueryService, eventAuthzResolver, rabbitAdmin, objectMapper,
-            uiUserLookupService, apiKeyService, null, null);
+            uiUserLookupService, apiKeyService, null);
     }
 
-    /** Connected SSE clients: emitterId → client info */
-    private final Map<String, SseClientInfo> clients = new ConcurrentHashMap<>();
+    /** Connected SSE clients: emitterId → client session (writer machine, WO-AUDIT-9 шаг 2). */
+    private final Map<String, SseClientSession> clients = new ConcurrentHashMap<>();
 
     /**
      * WO-REL-47 (N07): BOUNDED pools — never a cached pool on this path.
@@ -202,7 +196,7 @@ public class SseEventStreamService implements SmartLifecycle {
 
     /**
      * WO-REL-47 HOLD finding 1: bounded retry lane for rejected pump kicks.
-     * One shared daemon scheduler (single thread) retries {@link SseClientInfo#pump}
+     * One shared daemon scheduler (single thread) retries {@link SseClientSession#pump}
      * at fixed 100ms intervals, at most {@value #PUMP_RETRY_MAX_ATTEMPTS}
      * attempts per arming. Bounded per-arming retries keep retry state at
      * O(live clients) even under sustained saturation; each attempt re-checks
@@ -219,23 +213,9 @@ public class SseEventStreamService implements SmartLifecycle {
     /** Max retry attempts per arming (100ms × 50 = ~5s, one send-timeout window). */
     private static final int PUMP_RETRY_MAX_ATTEMPTS = 50;
 
-    /**
-     * WO-AUDIT-8 (A-NEW4-10): размер retry-lane — настройка, а не хардкод 1.
-     * Дефолт 1 = поведение не меняется; ручка по правилам CFG-1 (relaxed
-     * binding: {@code ZORROBPM_SSE_RETRY_LANE_SIZE}, тест привязки —
-     * {@code SseRetryLaneConfigTest}). Fail-fast на &lt;1 — как у соседних
-     * script-ручек (P-41): новая ручка проходит ту же проверку, а не обходит.
-     */
-    @Value("${zorrobpm.sse.retry-lane-size:1}")
-    private int retryLaneSize = 1;
-
-    private synchronized java.util.concurrent.ScheduledExecutorService retryLane() {
+    public synchronized java.util.concurrent.ScheduledExecutorService retryLane() {
         java.util.concurrent.ScheduledExecutorService lane = retryScheduler;
         if (lane == null || lane.isShutdown()) {
-            if (retryLaneSize < 1) {
-                throw new IllegalArgumentException(
-                    "zorrobpm.sse.retry-lane-size must be >= 1, got " + retryLaneSize);
-            }
             java.util.concurrent.ThreadFactory factory = r -> {
                 Thread t = new Thread(r);
                 t.setName("sse-retry-" + t.getId());
@@ -243,7 +223,7 @@ public class SseEventStreamService implements SmartLifecycle {
                 return t;
             };
             java.util.concurrent.ScheduledThreadPoolExecutor fresh =
-                new java.util.concurrent.ScheduledThreadPoolExecutor(retryLaneSize, factory);
+                new java.util.concurrent.ScheduledThreadPoolExecutor(1, factory);
             fresh.setRemoveOnCancelPolicy(true);
             fresh.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
             fresh.allowCoreThreadTimeOut(true);
@@ -251,15 +231,10 @@ public class SseEventStreamService implements SmartLifecycle {
             retryScheduler = fresh;
             lane = fresh;
         }
-        // WO-AUDIT-8 (A-NEW4-10): глубина очереди retry-lane видна оператору
-        // (порог в алерте — рядом с Saturated-warn'ами этого же файла).
-        if (lane instanceof java.util.concurrent.ScheduledThreadPoolExecutor stpe && bpmMetrics != null) {
-            bpmMetrics.setSseRetryQueueDepth(stpe.getQueue().size());
-        }
         return lane;
     }
 
-    private synchronized ExecutorService dispatchLane() {
+    public synchronized ExecutorService dispatchLane() {
         ExecutorService lane = dispatchExecutor;
         if (lane == null || lane.isShutdown()) {
             lane = boundedPool("sse-dispatch-", Math.max(8,
@@ -270,7 +245,7 @@ public class SseEventStreamService implements SmartLifecycle {
         return lane;
     }
 
-    private synchronized ExecutorService sendLane() {
+    public synchronized ExecutorService sendLane() {
         ExecutorService lane = sendExecutor;
         if (lane == null || lane.isShutdown()) {
             lane = boundedPool("sse-send-", 128,
@@ -278,6 +253,43 @@ public class SseEventStreamService implements SmartLifecycle {
             sendExecutor = lane;
         }
         return lane;
+    }
+
+    /**
+     * WO-AUDIT-9 (шаг 2): {@link SseClientSession.Host} — сервис отдаёт сессии
+     * свои lanes/конфиг/реестр/notify. Public lanes выше ({@link #dispatchLane},
+     * {@link #sendLane}, {@link #retryLane}) закрывают три метода интерфейса
+     * напрямую; ниже — остальное.
+     */
+    @Override
+    public long pumpRetryDelayMs() {
+        return pumpRetryDelayMs;
+    }
+
+    @Override
+    public long sendTimeoutMs() {
+        return sendTimeoutMs;
+    }
+
+    @Override
+    public int perClientQueueEvents() {
+        return perClientQueueEvents;
+    }
+
+    @Override
+    public void terminalClose(SseClientSession session) {
+        removeClientState(session.clientId());
+    }
+
+    @Override
+    public void notifySent(SseClientSession session, Map<String, Object> envelope) {
+        for (EventDispatchListener listener : eventListeners) {
+            try {
+                listener.onEventSent(session.clientId(), envelope);
+            } catch (Exception listenerEx) {
+                log.warn("Event listener error", listenerEx);
+            }
+        }
     }
 
     @Value("${zorrobpm.sse.max-clients:1000}")
@@ -362,9 +374,6 @@ public class SseEventStreamService implements SmartLifecycle {
      */
     private volatile long heartbeatIntervalMs = 15_000;
 
-    /** WO-REL-57: heartbeat payload (wire form {@code ":heartbeat\n\n"}). */
-    static final String HEARTBEAT_COMMENT = "heartbeat";
-
     /** WO-REL-57: the armed periodic heartbeat (null = no clients yet / stopped). */
     private volatile java.util.concurrent.ScheduledFuture<?> heartbeatFuture;
 
@@ -402,7 +411,7 @@ public class SseEventStreamService implements SmartLifecycle {
         // (instead of born LIVE) so an event arriving between the map-put
         // and this line stages in the queue and is picked up by the
         // drain — never sent ahead of the subscription contract.
-        SseClientInfo live = clients.get(clientId);
+        SseClientSession live = clients.get(clientId);
         if (live != null) {
             live.drainToLive(0L);
         }
@@ -427,9 +436,9 @@ public class SseEventStreamService implements SmartLifecycle {
             String clientId = UUID.randomUUID().toString();
             Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
 
-            SseClientInfo info = new SseClientInfo(clientId, emitter, principal,
+            SseClientSession info = new SseClientSession(new SseClientDescriptor(clientId, emitter, principal,
                 currentTokenVersion(principal), allowedPdIds,
-                typeFilter, processInstanceIdFilter, processDefinitionKeyFilter);
+                typeFilter, processInstanceIdFilter, processDefinitionKeyFilter), this);
             clients.put(clientId, info);
             subjectCount.incrementAndGet();
 
@@ -490,14 +499,7 @@ public class SseEventStreamService implements SmartLifecycle {
      * тихого no-op.
      */
     private void removeClientState(String clientId) {
-        SseClientInfo removed = clients.remove(clientId);
-        // WO-AUDIT-7: сессия закрыта любым путём — пин снимается (транзитный
-        // пин не залипает: emitter-timeout/F-13 закрывают протухшие сессии
-        // принудительно; худший эффект пропущенного снятия — задержка
-        // удаления, никогда — удаление чужого).
-        if (cursorTracker != null) {
-            cursorTracker.untrack(clientId);
-        }
+        SseClientSession removed = clients.remove(clientId);
         if (removed != null) {
             removed.closeWriter();
         }
@@ -556,7 +558,7 @@ public class SseEventStreamService implements SmartLifecycle {
      * {@link #drainBufferedClient} с границей catchup: события с cursor <=
      * границы отбрасываются (дубль catchup), новее — доставляются. Режим и
      * очередь — одно значение под одним локом (см. writer-протокол в
-     * {@link SseClientInfo}): окно потери между catchup-чтением и подпиской
+     * {@link SseClientSession}): окно потери между catchup-чтением и подпиской
      * закрыто конструктивно — событие, пришедшее до drain, физически негде
      * потерять, кроме самой очереди клиента.
      *
@@ -570,7 +572,7 @@ public class SseEventStreamService implements SmartLifecycle {
         // window (WO-REL-37) would send ahead of the subscription contract.
         String clientId = registerClientInternal(emitter, principal, typeFilter,
             processInstanceIdFilter, processDefinitionKeyFilter);
-        SseClientInfo client = clients.get(clientId);
+        SseClientSession client = clients.get(clientId);
         if (client != null) {
             // Режим уже BUFFERING с конструктора — вызов для явности
             // протокола (idempotent: BUFFERING→BUFFERING — no-op).
@@ -592,30 +594,11 @@ public class SseEventStreamService implements SmartLifecycle {
      * снятия больше нет — флага нет вовсе).
      */
     public void drainBufferedClient(String clientId, long catchupBoundary) {
-        SseClientInfo client = clients.get(clientId);
+        SseClientSession client = clients.get(clientId);
         if (client == null) {
             return;
         }
         client.drainToLive(catchupBoundary);
-        // WO-AUDIT-7: catchup прочитан до границы — пин отпускает всё, что
-        // клиент уже получил (advance — max-merge: граница ниже текущего
-        // курсора — no-op).
-        if (cursorTracker != null) {
-            cursorTracker.advance(clientId, catchupBoundary);
-        }
-    }
-
-    /**
-     * WO-AUDIT-7: зарегистрировать курсор catchup'а клиента (зовёт
-     * контроллер ДО чтения catchup — окно register→read закрыто: проход
-     * retention, стартовавший между регистрацией и чтением, увидит пин).
-     * Без заголовка (since &lt;= 0) — не трекается: клиенту нужны только
-     * новые строки, старые ему не нужны.
-     */
-    public void trackCatchupCursor(String clientId, long since) {
-        if (cursorTracker != null) {
-            cursorTracker.track(clientId, since);
-        }
     }
 
     /**
@@ -660,7 +643,7 @@ public class SseEventStreamService implements SmartLifecycle {
      */
     void sendHeartbeatToAll() {
         try {
-            for (SseClientInfo client : clients.values()) {
+            for (SseClientSession client : clients.values()) {
                 try {
                     client.enqueueHeartbeat();
                 } catch (RuntimeException e) {
@@ -1164,9 +1147,9 @@ public class SseEventStreamService implements SmartLifecycle {
         log.warn("SSE cursor gap detected (dispatched up to {}, next is {}) — "
             + "closing LIVE clients so reconnect heals via catchup (drop-head suspected)",
             fromCursor, toCursor);
-        for (SseClientInfo client : java.util.List.copyOf(clients.values())) {
+        for (SseClientSession client : java.util.List.copyOf(clients.values())) {
             if (client.isLive()) {
-                closeRevokedClient(client.clientId,
+                closeRevokedClient(client.clientId(),
                     "cursor-gap " + fromCursor + "→" + toCursor + " (drop-head suspected)");
             }
         }
@@ -1301,20 +1284,6 @@ public class SseEventStreamService implements SmartLifecycle {
         return fallback;
     }
 
-    /**
-     * WO-REL-38: SSE id — позиция курсора (параметр метода уже курсор).
-     * WO-REL-47: построение builder'а — чистая функция без I/O (builder
-     * отправляется writer'ом клиента позже, последовательно).
-     */
-    private static SseEmitter.SseEventBuilder buildLiveEvent(
-            long cursor, String eventType, Map<String, Object> envelope) {
-        return SseEmitter.event()
-            .id(String.valueOf(cursor))
-            .name(eventType)
-            .data(envelope)
-            .reconnectTime(3000);
-    }
-
     private void dispatchToClientsTraced(Map<String, Object> envelope, String eventType,
             String processInstanceId, UUID pdUuid, long cursor) {
 
@@ -1329,21 +1298,21 @@ public class SseEventStreamService implements SmartLifecycle {
         // поток на следующем событии (проверка на каждое событие, не кэш —
         // окно валидности отозванных прав не расширено ни на секунду сверх
         // принятого; отдельный TTL-кэш не заводился осознанно — см. отчёт).
-        java.util.Map<String, java.util.List<SseClientInfo>> bySubject = null;
+        java.util.Map<String, java.util.List<SseClientSession>> bySubject = null;
         if (uiUserLookupService != null && apiKeyService != null) {
             bySubject = new java.util.LinkedHashMap<>();
         }
 
-        for (SseClientInfo client : clients.values()) {
+        for (SseClientSession client : clients.values()) {
             // Check type filter
-            if (client.typeFilter != null && !client.typeFilter.isBlank()
-                && !client.typeFilter.equals(eventType)) {
+            if (client.typeFilter() != null && !client.typeFilter().isBlank()
+                && !client.typeFilter().equals(eventType)) {
                 continue;
             }
 
             // Check processInstanceId filter
-            if (client.processInstanceIdFilter != null && !client.processInstanceIdFilter.isBlank()
-                && !client.processInstanceIdFilter.equals(processInstanceId)) {
+            if (client.processInstanceIdFilter() != null && !client.processInstanceIdFilter().isBlank()
+                && !client.processInstanceIdFilter().equals(processInstanceId)) {
                 continue;
             }
 
@@ -1356,20 +1325,20 @@ public class SseEventStreamService implements SmartLifecycle {
             // Unit-scope harness (null collaborators): прежний прямой путь
             // без группировки — семантика та же, делить нечего.
             if (!isCredentialLive(client)) {
-                closeRevokedClient(client.clientId, "credential dead");
+                closeRevokedClient(client.clientId(), "credential dead");
                 continue;
             }
             deliverToClient(client, envelope, eventType, cursor, pdUuid);
         }
 
         if (bySubject != null) {
-            for (java.util.List<SseClientInfo> group : bySubject.values()) {
+            for (java.util.List<SseClientSession> group : bySubject.values()) {
                 // Один row-read на группу + per-client вердикты без SQL.
                 if (!closeDeadInGroup(group)) {
                     continue;
                 }
-                for (SseClientInfo client : group) {
-                    if (clients.containsKey(client.clientId)) {
+                for (SseClientSession client : group) {
+                    if (clients.containsKey(client.clientId())) {
                         deliverToClient(client, envelope, eventType, cursor, pdUuid);
                     }
                 }
@@ -1390,52 +1359,52 @@ public class SseEventStreamService implements SmartLifecycle {
      *
      * @return true — есть кому доставлять (группа не вся мертва)
      */
-    private boolean closeDeadInGroup(java.util.List<SseClientInfo> group) {
-        SseClientInfo first = group.get(0);
+    private boolean closeDeadInGroup(java.util.List<SseClientSession> group) {
+        SseClientSession first = group.get(0);
         Principal principal = first.principal();
         try {
             if (principal instanceof Principal.UserPrincipal up) {
                 var state = uiUserLookupService.securityState(up.userId()).orElse(null);
                 if (state == null || !state.active()) {
-                    for (SseClientInfo client : group) {
-                        closeRevokedClient(client.clientId, "credential dead");
+                    for (SseClientSession client : group) {
+                        closeRevokedClient(client.clientId(), "credential dead");
                     }
                     return false;
                 }
                 boolean anyLive = false;
-                for (SseClientInfo client : group) {
+                for (SseClientSession client : group) {
                     Principal p = client.principal();
                     if (p instanceof Principal.UserPrincipal cpu
                         && state.tokenVersion() == client.tokenVersion()
                         && Objects.equals(state.role(), cpu.globalRole())) {
                         anyLive = true;
                     } else {
-                        closeRevokedClient(client.clientId, "credential dead");
+                        closeRevokedClient(client.clientId(), "credential dead");
                     }
                 }
                 return anyLive;
             }
             if (principal instanceof Principal.ServicePrincipal) {
                 if (!isPrincipalLive(principal, first.tokenVersion())) {
-                    for (SseClientInfo client : group) {
-                        closeRevokedClient(client.clientId, "credential dead");
+                    for (SseClientSession client : group) {
+                        closeRevokedClient(client.clientId(), "credential dead");
                     }
                     return false;
                 }
                 return true;
             }
-            for (SseClientInfo client : group) {
-                closeRevokedClient(client.clientId, "credential dead");
+            for (SseClientSession client : group) {
+                closeRevokedClient(client.clientId(), "credential dead");
             }
             return false;
         } catch (RuntimeException e) {
             log.warn("SSE group liveness check failed for subject {} — failing closed",
                 subjectKey(principal), e);
-            for (SseClientInfo client : group) {
+            for (SseClientSession client : group) {
                 try {
-                    closeRevokedClient(client.clientId, "credential dead");
+                    closeRevokedClient(client.clientId(), "credential dead");
                 } catch (RuntimeException ce) {
-                    log.warn("SSE close of revoked client {} failed", client.clientId, ce);
+                    log.warn("SSE close of revoked client {} failed", client.clientId(), ce);
                 }
             }
             return false;
@@ -1448,7 +1417,7 @@ public class SseEventStreamService implements SmartLifecycle {
      * re-resolution, narrowing-check, authz-гейт и enqueue те же,
      * построчно).
      */
-    private void deliverToClient(SseClientInfo client, Map<String, Object> envelope,
+    private void deliverToClient(SseClientSession client, Map<String, Object> envelope,
             String eventType, long cursor, UUID pdUuid) {
             // WO-SEC-67 (F13), step 2 — rights re-resolution (periodic): the
             // registration-time snapshot goes stale on membership removal /
@@ -1457,21 +1426,21 @@ public class SseEventStreamService implements SmartLifecycle {
             // snapshot's stream now — it must re-register for the new, smaller
             // view. Fail-closed on resolver error (see method).
             Collection<UUID> fresh = reevaluateRights(client);
-            if (fresh == null && client.allowedPdIds != null) {
+            if (fresh == null && client.allowedPdIds() != null) {
                 // Resolver error (not SUPER_ADMIN — that returns null by
                 // contract and stays null): fail closed, do not deliver.
-                closeRevokedClient(client.clientId, "rights re-check failed");
+                closeRevokedClient(client.clientId(), "rights re-check failed");
                 return;
             }
-            if (isNarrowed(client.allowedPdIds, fresh)) {
-                closeRevokedClient(client.clientId, "rights narrowed");
+            if (isNarrowed(client.allowedPdIds(), fresh)) {
+                closeRevokedClient(client.clientId(), "rights narrowed");
                 return;
             }
 
             // Check AuthZ: processDefinitionId must be in allowed set (fail-closed: G-L).
             // Uses the FRESH set when non-null, else the client snapshot
             // (SUPER_ADMIN null, or a still-valid cached view).
-            Collection<UUID> effective = fresh != null ? fresh : client.allowedPdIds;
+            Collection<UUID> effective = fresh != null ? fresh : client.allowedPdIds();
             if (effective != null) {
                 if (pdUuid == null || !effective.contains(pdUuid)) {
                     return;
@@ -1482,14 +1451,7 @@ public class SseEventStreamService implements SmartLifecycle {
             // BUFFERING — в очередь, в LIVE — в очередь pump'а на отправку;
             // решение под локом клиента, одним шагом — окно потери закрыто).
             // AuthZ-гейты выше (credential/rights) уже пройдены.
-            client.enqueueLive(buildLiveEvent(cursor, eventType, envelope), envelope, cursor);
-            // WO-AUDIT-7: клиент увидел позицию (очередь pump'а/BUFFERING —
-            // drain решит дубль/новое по границе catchup'а): пин двигается
-            // вперёд max-merge'ем. Строка свежая (только прибыла live), cutoff
-            // её всё равно держит — раннее продвижение безопасно.
-            if (cursorTracker != null && cursor > 0) {
-                cursorTracker.advance(client.clientId, cursor);
-            }
+            client.enqueueLive(SseWireProtocol.buildLiveEvent(cursor, eventType, envelope), envelope, cursor);
     }
 
     /**
@@ -1598,7 +1560,7 @@ public class SseEventStreamService implements SmartLifecycle {
      * Any lookup error → false (fail closed — the stream dies, it never
      * delivers into doubt).
      */
-    private boolean isCredentialLive(SseClientInfo client) {
+    private boolean isCredentialLive(SseClientSession client) {
         // WO-SEC-67: unit-scope harness (hand-built service with null
         // collaborators, e.g. SsePerf6IntegrationTest/SseBridgeStartupTest) —
         // there is nothing to check against. Production Spring wiring always
@@ -1659,7 +1621,7 @@ public class SseEventStreamService implements SmartLifecycle {
      * caller treats as fail-closed (close, do not deliver). A null snapshot
      * (SUPER_ADMIN) + null fresh = still see-all.
      */
-    private Collection<UUID> reevaluateRights(SseClientInfo client) {
+    private Collection<UUID> reevaluateRights(SseClientSession client) {
         if (client.principal().isSuperAdmin()) {
             return null;
         }
@@ -1705,11 +1667,11 @@ public class SseEventStreamService implements SmartLifecycle {
      * becomes a no-op (never {@code emitter.send()} on a completed emitter).
      */
     private void closeRevokedClient(String clientId, String reason) {
-        SseClientInfo client = clients.get(clientId);
+        SseClientSession client = clients.get(clientId);
         removeClientState(clientId);
         if (client != null) {
             rightsCache.invalidate(
-                new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter));
+                new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter()));
             try {
                 client.emitter().complete();
             } catch (Exception e) {
@@ -1727,10 +1689,10 @@ public class SseEventStreamService implements SmartLifecycle {
      * never fail because a stream misbehaves); failures are logged.
      */
     public void invalidateStreams() {
-        for (SseClientInfo client : List.copyOf(clients.values())) {
+        for (SseClientSession client : List.copyOf(clients.values())) {
             try {
                 if (!isCredentialLive(client)) {
-                    closeRevokedClient(client.clientId, "credential dead (event)");
+                    closeRevokedClient(client.clientId(), "credential dead (event)");
                     continue;
                 }
                 // Single truth via liveView (POF-proven: a divergent inline
@@ -1743,15 +1705,15 @@ public class SseEventStreamService implements SmartLifecycle {
                 } catch (RuntimeException e) {
                     log.warn("SSE event-driven re-resolution failed for client {} — failing closed",
                         client.clientId(), e);
-                    closeRevokedClient(client.clientId, "rights re-check failed (event)");
+                    closeRevokedClient(client.clientId(), "rights re-check failed (event)");
                     continue;
                 }
-                if (fresh == null && client.allowedPdIds != null) {
-                    closeRevokedClient(client.clientId, "rights re-check failed (event)");
+                if (fresh == null && client.allowedPdIds() != null) {
+                    closeRevokedClient(client.clientId(), "rights re-check failed (event)");
                     continue;
                 }
-                if (isNarrowed(client.allowedPdIds, fresh)) {
-                    closeRevokedClient(client.clientId, "rights narrowed (event)");
+                if (isNarrowed(client.allowedPdIds(), fresh)) {
+                    closeRevokedClient(client.clientId(), "rights narrowed (event)");
                 }
             } catch (RuntimeException e) {
                 log.warn("SSE event-driven invalidation failed for client {}", client.clientId(), e);
@@ -1771,11 +1733,11 @@ public class SseEventStreamService implements SmartLifecycle {
      *        refreshes the cache so a racing per-event check sees the same
      *        view; false on the per-event path (cache governs the 30s TTL).
      */
-    private Collection<UUID> liveView(SseClientInfo client) {
+    private Collection<UUID> liveView(SseClientSession client) {
         return liveView(client, false);
     }
 
-    private Collection<UUID> liveView(SseClientInfo client, boolean bypassCache) {
+    private Collection<UUID> liveView(SseClientSession client, boolean bypassCache) {
         // WO-SEC-67 verifier HOLD: SUPER_ADMIN bypass — see-all неизменно
         // (зеркало per-event reevaluateRights). Без него readableRuntimePdIds
         // вернул бы null → rightsCache.put(key, null) → Caffeine-NPE → любой
@@ -1788,18 +1750,18 @@ public class SseEventStreamService implements SmartLifecycle {
             // Uncached: grant changes are rare, correctness beats one query
             // per event here.
             return eventAuthzResolver.readableRuntimePdIdsForKey(
-                sp.apiKeyId(), sp.ownerUserId(), client.processDefinitionKeyFilter);
+                sp.apiKeyId(), sp.ownerUserId(), client.processDefinitionKeyFilter());
         }
-        ReevalKey key = new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter);
+        ReevalKey key = new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter());
         if (bypassCache) {
             Collection<UUID> fresh = eventAuthzResolver.readableRuntimePdIds(
-                client.principal(), client.processDefinitionKeyFilter);
+                client.principal(), client.processDefinitionKeyFilter());
             rightsCache.put(key, fresh);
             return fresh;
         }
         return rightsCache.get(key,
             k -> eventAuthzResolver.readableRuntimePdIds(
-                client.principal(), client.processDefinitionKeyFilter));
+                client.principal(), client.processDefinitionKeyFilter()));
     }
 
     /**
@@ -1810,11 +1772,11 @@ public class SseEventStreamService implements SmartLifecycle {
      * string comparisons. Best-effort and non-throwing like the sweep.
      */
     public void invalidateStreamsForKey(UUID apiKeyId) {
-        for (SseClientInfo client : List.copyOf(clients.values())) {
+        for (SseClientSession client : List.copyOf(clients.values())) {
             try {
                 if (client.principal() instanceof Principal.ServicePrincipal sp
                     && apiKeyId.equals(sp.apiKeyId())) {
-                    closeRevokedClient(client.clientId, "key rotated");
+                    closeRevokedClient(client.clientId(), "key rotated");
                 }
             } catch (RuntimeException e) {
                 log.warn("SSE key invalidation failed for client {}", client.clientId(), e);
@@ -2166,500 +2128,5 @@ public class SseEventStreamService implements SmartLifecycle {
         return Integer.MAX_VALUE - 100;
     }
 
-    /**
-     * WO-REL-47 (N07+N08): per-client single-writer state machine.
-     *
-     * <p>One value, one lock, three modes:
-     * <ul>
-     *   <li>BUFFERING — events accumulate in {@code queue} (catchup window,
-     *       WO-REL-37); nothing is sent.</li>
-     *   <li>LIVE — the pump sends strictly head-first, at most one send in
-     *       flight per client (the pump submits the next send only after the
-     *       previous settles — no arbitrary async tasks, no order inversion).</li>
-     *   <li>CLOSED — terminal (overflow → close + reconnect catchup,
-     *       timeout / failure / revoke / disconnect); enqueue/pump become
-     *       no-ops.</li>
-     * </ul>
-     *
-     * <p>The mode switch and the queue live under the SAME
-     * {@code synchronized} protocol (never split flag+map like the pre-REL-47
-     * {@code bufferingClients}+{@code bufferedEvents}, which could diverge
-     * mid-drain and lose an event). Consequently a concurrent producer either
-     * observes BUFFERING (its event lands in the queue BEFORE the drain
-     * decision sees it) or LIVE (its event is queued for the pump) — the
-     * lost-event interleave has no third outcome.
-     *
-     * <p>Record components stay the identity (clientId … processDefinitionKey-
-     * Filter — untouched by this WO, read by the authz paths); the writer
-     * state (mode + queue + pump flag + counters) lives in private mutable
-     * fields guarded by the instance monitor.
-     */
-    private final class SseClientInfo {
-        private final String clientId;
-        private final SseEmitter emitter;
-        private final Principal principal;
-        /**
-         * WO-SEC-67: JWT token_version frozen at registration. The liveness
-         * check compares the row's CURRENT version against this — logout bumps
-         * the row (the only version writer in prod), so a mismatch means
-         * "issued before the revoke". ServicePrincipal streams carry -1
-         * (unused — their liveness is the key row, not a version).
-         */
-        private final int tokenVersion;
-        private final Collection<UUID> allowedPdIds;
-        private final String typeFilter;
-        private final String processInstanceIdFilter;
-        private final String processDefinitionKeyFilter;
-
-        private enum Mode { BUFFERING, LIVE, CLOSED }
-
-        private Mode mode = Mode.BUFFERING;
-        /**
-         * WO-REL-47: the queued unit is builder + cursor + envelope TOGETHER.
-         * The envelope is already retained by the builder via
-         * {@code .data(envelope)} (wire payload) — the record only adds the
-         * cursor (drain dedup without re-parsing) and a direct envelope
-         * handle (post-send notify without re-extracting). No double
-         * retention worth mentioning: two references to the same map.
-         *
-         * <p>WO-REL-57: {@code heartbeat} marks a keep-alive comment (no
-         * cursor, no envelope — {@code Long.MIN_VALUE}/{@code null}): the
-         * drain drops it unconditionally (a pre-LIVE tick carries nothing
-         * worth delivering) and the post-send hook skips it (delivery
-         * observability is for domain events, not keep-alives).
-         */
-        private record QueuedSend(SseEmitter.SseEventBuilder event, long cursor,
-                Map<String, Object> envelope, boolean heartbeat) {}
-        private final java.util.ArrayDeque<QueuedSend> queue = new java.util.ArrayDeque<>();
-        /**
-         * True while a send is in flight OR a pump run is scheduled: exactly
-         * one pump continuation is ever outstanding per client (single
-         * writer), so sends never overlap and never reorder.
-         */
-        private boolean pumpActive;
-        /** WO-REL-47: overflow drops counted here (drop-newest, survivors ordered).
-         * WO-REL-52: поле оставлено намеренно (не удалено): REL-47-тест
-         * {@code slowClient_backpressureIsBounded} читает его white-box пробой
-         * как границу очереди; после перехода на close-on-overflow оно всегда
-         * 0 — это тоже утверждение (счётчик тихих потерь молчит, потому что
-         * тихих потерь больше нет). Удаление поля сломало бы пробой без пользы.
-         */
-        private long droppedOverflow;
-        SseClientInfo(String clientId, SseEmitter emitter, Principal principal,
-                int tokenVersion, Collection<UUID> allowedPdIds,
-                String typeFilter, String processInstanceIdFilter,
-                String processDefinitionKeyFilter) {
-            this.clientId = clientId;
-            this.emitter = emitter;
-            this.principal = principal;
-            this.tokenVersion = tokenVersion;
-            this.allowedPdIds = allowedPdIds;
-            this.typeFilter = typeFilter;
-            this.processInstanceIdFilter = processInstanceIdFilter;
-            this.processDefinitionKeyFilter = processDefinitionKeyFilter;
-        }
-
-        // Identity accessors (same names as the pre-REL-47 record components).
-        String clientId() { return clientId; }
-        SseEmitter emitter() { return emitter; }
-        Principal principal() { return principal; }
-        int tokenVersion() { return tokenVersion; }
-        Collection<UUID> allowedPdIds() { return allowedPdIds; }
-        String typeFilter() { return typeFilter; }
-        String processInstanceIdFilter() { return processInstanceIdFilter; }
-        String processDefinitionKeyFilter() { return processDefinitionKeyFilter; }
-
-        /** BUFFERING→BUFFERING idempotent (explicit protocol step, see registerBufferedClient). */
-        synchronized void setBuffering() {
-            // Fresh clients are born BUFFERING; only BUFFERING accepts this.
-        }
-
-        /**
-         * WO-REL-47: live enqueue — single protocol step. BUFFERING: stage for
-         * the drain decision. LIVE: queue for the pump + kick. CLOSED: drop.
-         * Overflow (beyond {@code perClientQueueEvents}): CLOSE the client
-         * (WO-REL-52 part B — see below), do not drop silently.
-         *
-         * <p>WO-REL-52 (NEW-04, part B): close-on-overflow, not silent drop.
-         * The client is slower than the event flow (but inside the 5s send
-         * timeout — otherwise the timeout path already closed it): events
-         * 1…1000 arrive, 1001…N would be silently skipped, then N+1… would
-         * resume — the client's Last-Event-ID jumps the hole and catchup on
-         * the next reconnect starts AFTER it (the event is lost for this
-         * client forever). Closing the stream instead makes the browser
-         * reconnect with the last REALLY delivered id and heal the hole
-         * through the regular catchup path (WO-REL-37), which already
-         * exists. The close is reasoned ("overflow") and counted.
-         */
-        void enqueueLive(SseEmitter.SseEventBuilder event, Map<String, Object> envelope, long cursor) {
-            boolean kick = false;
-            boolean overflowed = false;
-            synchronized (this) {
-                if (mode == Mode.CLOSED) {
-                    return;
-                }
-                if (queue.size() >= perClientQueueEvents) {
-                    // WO-REL-52: terminal for this writer — but the close
-                    // itself (failClient → removeClientState + emitter) runs
-                    // OUTSIDE the client lock (see below): failClient takes
-                    // other locks/orderings and must never run under it.
-                    mode = Mode.CLOSED;
-                    queue.clear();
-                    overflowed = true;
-                } else {
-                    queue.addLast(new QueuedSend(event, cursor, envelope, false));
-                    if (mode == Mode.LIVE && !pumpActive) {
-                        pumpActive = true;
-                        kick = true;
-                    }
-                }
-            }
-            if (overflowed) {
-                log.warn("SSE client {} queue full ({} events) — closing (overflow), reconnect heals via catchup",
-                    clientId, perClientQueueEvents);
-                failClient("overflow");
-                return;
-            }
-            if (kick) {
-                kickPump();
-            }
-        }
-
-        /**
-         * WO-REL-37 (F14) + WO-REL-47: BUFFERING→LIVE under the client lock.
-         * The dedup decision (cursor <= boundary → drop) runs on the drained
-         * snapshot in queue order (cursor 100 before 101 — criterion 4), then
-         * the survivors are re-queued head-first and the pump is kicked if
-         * anything remains. After this call returns, no producer can observe
-         * BUFFERING anymore: anything enqueued later takes the LIVE branch of
-         * {@link #enqueueLive} — the lost-event window is closed.
-         */
-        void drainToLive(long catchupBoundary) {
-            boolean kick = false;
-            synchronized (this) {
-                if (mode != Mode.BUFFERING) {
-                    return;
-                }
-                mode = Mode.LIVE;
-                if (!queue.isEmpty()) {
-                    java.util.ArrayDeque<QueuedSend> survivors = new java.util.ArrayDeque<>();
-                    for (QueuedSend queued : queue) {
-                        // WO-REL-57: heartbeat ticks queued pre-LIVE carry no
-                        // cursor and nothing worth delivering — drop, the next
-                        // tick re-arms on the live writer.
-                        if (queued.heartbeat) {
-                            continue;
-                        }
-                        // WO-REL-38: дедуп по позиции курсора (feedPosition;
-                        // fallback — sequence, см. cursorOf выше).
-                        if (queued.cursor <= catchupBoundary) {
-                            continue;
-                        }
-                        survivors.addLast(queued);
-                    }
-                    queue.clear();
-                    queue.addAll(survivors);
-                }
-                if (!queue.isEmpty() && !pumpActive) {
-                    pumpActive = true;
-                    kick = true;
-                }
-            }
-            if (kick) {
-                kickPump();
-            }
-        }
-
-        /**
-         * WO-REL-55 (NEW2-09, часть B): gap-close видит только LIVE-писателей.
-         * BUFFERING-клиенты (поток не стартовал) лечатся drain-пересечением,
-         * CLOSED — уже сняты.
-         */
-        synchronized boolean isLive() {
-            return mode == Mode.LIVE;
-        }
-
-        /** Close the writer: terminal, idempotent; the pump drains to no-op. */
-        synchronized void closeWriter() {
-            mode = Mode.CLOSED;
-            queue.clear();
-        }
-
-        /**
-         * WO-REL-57: queue one heartbeat comment for the pump. LIVE only
-         * (BUFFERING ticks would sit in the pre-drain queue and be dropped
-         * by the drain anyway — skip them early). A FULL queue skips the
-         * tick for this client WITHOUT closing: the heartbeat carries no
-         * data worth losing the stream over, and closing here would turn
-         * event pressure into heartbeat-driven overflow kills. CLOSED drops.
-         */
-        void enqueueHeartbeat() {
-            boolean kick = false;
-            synchronized (this) {
-                if (mode != Mode.LIVE) {
-                    return;
-                }
-                if (queue.size() >= perClientQueueEvents) {
-                    return;
-                }
-                queue.addLast(new QueuedSend(SseEmitter.event().comment(HEARTBEAT_COMMENT),
-                    Long.MIN_VALUE, null, true));
-                if (!pumpActive) {
-                    pumpActive = true;
-                    kick = true;
-                }
-            }
-            if (kick) {
-                kickPump();
-            }
-        }
-
-        /**
-         * Single-writer pump: poll head, send it with timeout, repeat while
-         * the queue is non-empty — strictly head-first (order = enqueue
-         * order). At most one send in flight per client: the continuation
-         * (next poll) is scheduled only after the current send settles, via
-         * the orTimeout callback — no pooled thread ever waits on a send.
-         */
-        void pump() {
-            QueuedSend head;
-            synchronized (this) {
-                if (mode == Mode.CLOSED) {
-                    pumpActive = false;
-                    return;
-                }
-                head = queue.pollFirst();
-                if (head == null) {
-                    pumpActive = false;
-                    return;
-                }
-            }
-            sendOne(head);
-        }
-
-        /**
-         * One send on the send lane with a non-blocking timeout: the caller
-         * (dispatch lane) returns immediately after submit; settle/timeout
-         * handling runs as an orTimeout callback. Slow clients pin at most
-         * one send-lane thread each (bounded pool caps the total); the queue
-         * behind them stays bounded by {@code perClientQueueEvents}.
-         */
-        private void sendOne(QueuedSend queued) {
-            CompletableFuture<Void> send;
-            // WO-URGENT-1 (NEW2-03): the CLOSED-drop below returns WITHOUT
-            // sending, but the continuation used to treat "no exception" as
-            // "delivered" and called notifySent anyway — a closed writer
-            // reported sends that never happened (phantom delivery,
-            // notified 1 != delivered 0). The flag carries the fact of a
-            // REAL send across the async boundary; notifySent fires only
-            // when an actual emitter.send() happened.
-            java.util.concurrent.atomic.AtomicBoolean actuallySent =
-                new java.util.concurrent.atomic.AtomicBoolean(false);
-            try {
-                send = CompletableFuture.runAsync(() -> {
-                    try {
-                        // WO-REL-47 HOLD finding 4: the writer may have closed
-                        // while this send was queued (revoke / disconnect /
-                        // stop) — the emitter below may already be completed.
-                        // Never send into a closed writer: drop silently
-                        // instead of emitting into IllegalStateException and a
-                        // misleading "send error" log line.
-                        synchronized (SseClientInfo.this) {
-                            if (mode == Mode.CLOSED) {
-                                return;
-                            }
-                        }
-                        emitter.send(queued.event);
-                        actuallySent.set(true);
-                    } catch (IOException e) {
-                        throw new java.util.concurrent.CompletionException(e);
-                    }
-                }, sendLane());
-            } catch (java.util.concurrent.RejectedExecutionException re) {
-                // WO-REL-47 HOLD finding 1: send lane saturated (all threads
-                // pinned by slow clients). Re-queue at HEAD (order preserved)
-                // and re-arm the pump through the bounded retry lane — the
-                // pre-HOLD shape only cleared pumpActive ("reactivates on the
-                // next kick"), which stranded narrow-filter clients whose
-                // next matching event might never come.
-                synchronized (this) {
-                    if (mode != Mode.CLOSED) {
-                        queue.addFirst(queued);
-                    }
-                    pumpActive = false;
-                }
-                schedulePumpRetry("send-lane saturated");
-                return;
-            }
-            send.orTimeout(sendTimeoutMs, TimeUnit.MILLISECONDS).whenCompleteAsync((v, ex) -> {
-                if (ex == null) {
-                    // WO-URGENT-1 (NEW2-03): report a delivery ONLY when the
-                    // send above really ran. A CLOSED-drop (flag unset) still
-                    // pumps so pumpActive resets through the CLOSED no-op —
-                    // but never notifies.
-                    // WO-REL-57: heartbeats never notify either (keep-alive,
-                    // not delivery — the listener hook is for domain events).
-                    if (actuallySent.get() && !queued.heartbeat) {
-                        notifySent(queued.envelope);
-                    }
-                    pump();
-                    return;
-                }
-                Throwable cause = ex instanceof java.util.concurrent.CompletionException ce
-                    ? ce.getCause() : ex;
-                if (cause instanceof TimeoutException
-                        || ex instanceof java.util.concurrent.TimeoutException) {
-                    // WO-PERF-6: timeout — lagging client is dropped (its
-                    // cursor catchup on reconnect heals the gap, WO-REL-47
-                    // criterion 3 path), never blocking the rest.
-                    // WO-PERF-6: cancel(true) does NOT interrupt a blocking
-                    // network write (Java IO without InterruptibleChannel) —
-                    // the thread frees only when emitter.complete()/
-                    // IOException fires, non-deterministically. We at least
-                    // isolate the block to ONE send-lane slot per client.
-                    log.warn("Slow SSE client {} timed out ({}ms), dropping", clientId, sendTimeoutMs);
-                    send.cancel(true);
-                    failClient("send timeout");
-                } else if (isSendIoFailure(cause)) {
-                    log.warn("Failed to send event to client {}: {}", clientId, cause.getMessage());
-                    failClient("send failure");
-                } else if (cause instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
-                    failClient("send interrupted");
-                } else {
-                    log.error("Error sending event to client {}", clientId, cause != null ? cause : ex);
-                    failClient("send error");
-                }
-            }, dispatchLane());
-        }
-
-        /**
-         * WO-REL-47 HOLD finding 1: bounded re-arm of the pump after a lane
-         * rejection. Schedules up to {@value #PUMP_RETRY_MAX_ATTEMPTS}
-         * attempts at {@code pumpRetryDelayMs} intervals; each attempt takes
-         * the pump slot (pumpActive) under the client lock and runs
-         * {@link #pump} on the dispatch lane. Attempts stop early when the
-         * queue drains, the writer closes, or the budget runs out — whichever
-         * comes first. A later enqueue/drain kick re-arms independently, so a
-         * retry budget exhausted under SUSTAINED saturation resumes as soon as
-         * new work arrives or the lanes free up.
-         *
-         * @param reason log context (which lane rejected)
-         */
-        private void schedulePumpRetry(String reason) {
-            java.util.concurrent.ScheduledExecutorService lane;
-            try {
-                lane = retryLane();
-            } catch (java.util.concurrent.RejectedExecutionException re) {
-                log.warn("SSE client {} pump stalled ({}; retry lane saturated)", clientId, reason);
-                return;
-            }
-            final java.util.concurrent.atomic.AtomicInteger attemptsLeft =
-                new java.util.concurrent.atomic.AtomicInteger(PUMP_RETRY_MAX_ATTEMPTS);
-            final java.util.concurrent.ScheduledFuture<?>[] holder =
-                new java.util.concurrent.ScheduledFuture<?>[1];
-            holder[0] = lane.scheduleWithFixedDelay(() -> {
-                // WO-REL-47 HOLD finding 4: never pump a closed writer —
-                // the retry is a no-op (and self-cancels) once CLOSED.
-                boolean run = false;
-                synchronized (SseClientInfo.this) {
-                    if (mode == Mode.CLOSED) {
-                        run = false;
-                    } else if (!queue.isEmpty() && !pumpActive) {
-                        pumpActive = true;
-                        run = true;
-                    } else if (queue.isEmpty()) {
-                        run = false;
-                    } else {
-                        // Pump already active (a kick got through meanwhile):
-                        // this arming is redundant — cancel it.
-                        run = false;
-                    }
-                }
-                if (run) {
-                    try {
-                        dispatchLane().execute(this::pump);
-                    } catch (java.util.concurrent.RejectedExecutionException re) {
-                        synchronized (SseClientInfo.this) {
-                            pumpActive = false;
-                        }
-                        // Stay armed: the next tick retries again (budget
-                        // still applies below).
-                    }
-                    if (attemptsLeft.decrementAndGet() <= 0) {
-                        holder[0].cancel(false);
-                        log.warn("SSE client {} pump retry budget exhausted ({}); "
-                            + "next enqueue/drain kick re-arms", clientId, reason);
-                    }
-                    return;
-                }
-                // Terminal states for this arming: closed, drained, or
-                // superseded by a live pump — cancel, do not spin.
-                if (mode == Mode.CLOSED || queue.isEmpty() || attemptsLeft.get() <= 0) {
-                    holder[0].cancel(false);
-                } else if (pumpActive) {
-                    holder[0].cancel(false);
-                }
-            }, pumpRetryDelayMs, pumpRetryDelayMs, TimeUnit.MILLISECONDS);
-        }
-
-        /**
-         * WO-REL-47 HOLD finding 4: the writer also closes HERE (mode=CLOSED,
-         * queue dropped): removeClientState() already closes it — this is the
-         * second, belt-and-braces close for the one path that never goes
-         * through removeClientState (failClient is the terminal path; the
-         * emitter is completed below and no pump/send may touch it after).
-         */
-        private void failClient(String reason) {
-            closeWriter();
-            // WO-SEC-67 red-team #3: full state removal (per-subject slot),
-            // not a bare map drop — the slot would leak.
-            removeClientState(clientId);
-            try {
-                emitter.complete();
-            } catch (Exception ignore) {
-            }
-            log.info("SSE client {} closed ({})", clientId, reason);
-        }
-
-        /** Test/observability hook — fires only after a REAL send (WO-REL-47, §7.2 audit). */
-        private void notifySent(Map<String, Object> envelope) {
-            for (EventDispatchListener listener : eventListeners) {
-                try {
-                    listener.onEventSent(clientId, envelope);
-                } catch (Exception listenerEx) {
-                    log.warn("Event listener error", listenerEx);
-                }
-            }
-        }
-
-        /** Kick the pump on the dispatch lane; a reject re-arms via the bounded retry lane. */
-        private void kickPump() {
-            try {
-                dispatchLane().execute(this::pump);
-            } catch (java.util.concurrent.RejectedExecutionException re) {
-                // WO-REL-47 HOLD finding 1: dispatch lane saturated. The
-                // pre-HOLD shape only cleared pumpActive ("self-heals via the
-                // next kick") — a client with a narrow filter might never get
-                // that kick. Bounded retry lane re-arms the pump instead.
-                synchronized (this) {
-                    pumpActive = false;
-                }
-                schedulePumpRetry("dispatch-lane saturated");
-            }
-        }
-        /**
-         * WO-REL-47: unwraps CompletionException layers to the send's real
-         * cause (the pre-REL-47 code distinguished the IOException cause two
-         * levels down for the log line — same classification, kept).
-         */
-        private static boolean isSendIoFailure(Throwable cause) {
-            for (Throwable t = cause; t != null; t = t.getCause()) {
-                if (t instanceof IOException) {
-                    return true;
-                }
-            }
-            return false;
-        }
-    }
+    // WO-AUDIT-9 (шаг 2, часть 2/2): конец перенесённого тела (см. SseClientSession.java).
 }
