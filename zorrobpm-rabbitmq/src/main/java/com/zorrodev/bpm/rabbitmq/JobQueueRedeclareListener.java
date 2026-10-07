@@ -53,6 +53,14 @@ public class JobQueueRedeclareListener {
 
     private final AtomicBoolean inFlight = new AtomicBoolean(false);
     private final AtomicLong lastRedeclareAllMs = new AtomicLong(0);
+    /**
+     * WO-REL-66: the very first connection in this JVM's life is catch-up,
+     * not a flap — its round does NOT move the debounce clock (otherwise a
+     * broker flap seconds after startup would be skipped while the topology
+     * is still unhealed; caught live in the worker-side IT). Debounce guards
+     * flap rounds against each other only.
+     */
+    private final AtomicBoolean catchUpDone = new AtomicBoolean(false);
 
     @PostConstruct
     void registerForReconnect() {
@@ -76,19 +84,29 @@ public class JobQueueRedeclareListener {
             return;
         }
         try {
-            long now = System.currentTimeMillis();
-            if (now - lastRedeclareAllMs.get() < REDECLARE_ALL_DEBOUNCE_MS) {
-                return;
-            }
-            lastRedeclareAllMs.set(now);
             Set<String> jobTypes = declarer.declaredJobTypes();
             if (jobTypes.isEmpty()) {
+                // Nothing known yet (e.g. the very first connection at startup
+                // before any announcement) — NOT a round: neither the debounce
+                // clock nor the catch-up flag moves, or a broker flap seconds
+                // later would be skipped while the topology is still unhealed
+                // (caught live).
                 return;
             }
-            for (String jobType : jobTypes) {
-                declarer.declare(jobType);
+            boolean catchUp = !catchUpDone.getAndSet(true);
+            if (!catchUp) {
+                long now = System.currentTimeMillis();
+                if (now - lastRedeclareAllMs.get() < REDECLARE_ALL_DEBOUNCE_MS) {
+                    return;
+                }
+                lastRedeclareAllMs.set(now);
             }
-            declarer.countRedeclare("connection");
+            // WO-REL-66: force-redeclare, NOT declare — the `declared` cache
+            // is intact (the loss is on the broker), so a plain declare()
+            // would early-return as a no-op and heal nothing.
+            for (String jobType : jobTypes) {
+                declarer.forceRedeclare(jobType, "connection");
+            }
             log.info("WO-REL-66: redeclared {} known job queue(s) on new broker connection",
                 jobTypes.size());
         } finally {

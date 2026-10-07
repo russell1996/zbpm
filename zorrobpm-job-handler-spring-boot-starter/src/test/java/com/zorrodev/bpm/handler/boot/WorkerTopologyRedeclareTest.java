@@ -96,11 +96,14 @@ class WorkerTopologyRedeclareTest {
         configuration.init();
         List<ConnectionListener> listeners = permanentListeners();
 
+        // catch-up (первое соединение, без метки) + первый flap (метка) +
+        // второй flap подряд (в окне дебаунса).
+        listeners.get(0).onCreate(mock(Connection.class));
         listeners.get(0).onCreate(mock(Connection.class));
         listeners.get(0).onCreate(mock(Connection.class));
 
-        // Старт + ровно один раунд: второй подряд — в окне дебаунса.
-        verify(amqpAdmin, times(2)).declareQueue(
+        // Старт + catch-up + ровно один flap-раунд.
+        verify(amqpAdmin, times(3)).declareQueue(
             argThat(q -> q != null && QUEUE.equals(q.getName())));
     }
 

@@ -46,17 +46,38 @@ class JobQueueRedeclareUnitTest {
     }
 
     @Test
-    void redeclareForSend_skipsLegacyPinned() {
+    void forceRedeclare_dropsCacheAndDeclaresAgain_evenWithoutPriorLoss() {
+        declarer.declare("billing");
+        reset(amqpAdmin);
+
+        // Кэш цел (потеря — на брокере): plain declare был бы no-op.
+        verify(amqpAdmin, never()).declareQueue(any(Queue.class));
+        assertThat(declarer.forceRedeclare("billing", "connection")).isTrue();
+
+        // Полный declare заново: DLQ + рабочая очередь.
+        verify(amqpAdmin, times(2)).declareQueue(any(Queue.class));
+    }
+
+    @Test
+    void forceRedeclare_skipsLegacyPinned() {
         doThrow(preconditionFailed()).when(amqpAdmin)
             .declareQueue(argThat(q -> q != null && q.getName().equals("zorrobpm.jobs.billing")));
         declarer.declare("billing");
         assertThat(declarer.isLegacyDeclared("billing")).isTrue();
         reset(amqpAdmin);
 
-        assertThat(declarer.redeclareForSend("billing")).isFalse();
+        assertThat(declarer.forceRedeclare("billing", "connection")).isFalse();
 
         verify(amqpAdmin, never()).declareQueue(any(Queue.class));
         verify(amqpAdmin, never()).declareExchange(any());
+    }
+
+    @Test
+    void forceRedeclare_blank_returnsFalseWithoutBrokerCalls() {
+        assertThat(declarer.forceRedeclare(null, "connection")).isFalse();
+        assertThat(declarer.forceRedeclare("  ", "connection")).isFalse();
+
+        verify(amqpAdmin, never()).declareQueue(any(Queue.class));
     }
 
     @Test
