@@ -159,15 +159,6 @@ public class MessageSubscriptionDbOperationsImpl implements MessageSubscriptionD
 
     @Override
     @Transactional
-    public int consumeMessageSubscriptionsByActivityIds(UUID processInstanceId, java.util.Collection<UUID> activityIds) {
-        if (activityIds == null || activityIds.isEmpty()) {
-            return 0;
-        }
-        return messageSubscriptionRepository.consumeByActivityIds(processInstanceId, activityIds);
-    }
-
-    @Override
-    @Transactional
     public boolean consumeMessageSubscription(UUID subscriptionId) {
         // WO-SEC-59 #2: CAS — only one concurrent correlation may consume the subscription.
         // A plain findById+save would let two concurrent callers both observe "not consumed"

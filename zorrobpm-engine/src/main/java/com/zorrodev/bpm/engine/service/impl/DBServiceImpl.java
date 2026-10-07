@@ -606,12 +606,6 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    @Transactional
-    public int consumeMessageSubscriptionsByActivityIds(UUID processInstanceId, java.util.Collection<UUID> activityIds) {
-        return messageSubscriptionDbOperations.consumeMessageSubscriptionsByActivityIds(processInstanceId, activityIds);
-    }
-
-    @Override
     public UUID createSignalSubscription(UUID processInstanceId, UUID activityId, String signalName) {
         return signalSubscriptionDbOperations.createSignalSubscription(processInstanceId, activityId, signalName);
     }

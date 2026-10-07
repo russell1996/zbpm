@@ -400,12 +400,6 @@ public interface DBService {
 
     boolean consumeMessageSubscription(UUID subscriptionId);
 
-    /**
-     * WO-C8-37 (C37-3): consumes every unconsumed subscription bound to one of the
-     * given (finished) activity rows. Returns the number of rows consumed.
-     */
-    int consumeMessageSubscriptionsByActivityIds(UUID processInstanceId, java.util.Collection<UUID> activityIds);
-
     UUID createSignalSubscription(UUID processInstanceId, UUID activityId, String signalName);
 
     /** Creates a signal subscription for a signal boundary event attached to {@code activityId}. */
