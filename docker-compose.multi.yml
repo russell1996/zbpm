@@ -118,6 +118,9 @@ services:
       # флаг выше; прежнее ZORROBPM_COMPLETION_DEDUP_TTL_SECONDS в контейнере не
       # разрешалось (см. комментарий в docker-compose.yml).
       ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS: ${ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS:-3600}
+      # WO-AUDIT-8 (A-NEW4-10): размер retry-lane SSE-моста (relaxed-binding
+      # форма ключа `zorrobpm.sse.retry-lane-size`; дефолт 1 = как хардкод до WO).
+      ZORROBPM_SSE_RETRY_LANE_SIZE: ${ZORROBPM_SSE_RETRY_LANE_SIZE:-1}
       # WO-CFG-1: ручки движка, для которых compose НЕ задавал умолчание (здесь — пусто,
       # значит в контейнер уходит пустая строка; Spring для `${VAR:default}` применяет
       # умолчание только когда переменной НЕТ, а для пустой — отдаёт пустую строку, так
