@@ -78,9 +78,10 @@ public class AdHocSubProcessHandler implements ElementHandler, TypedElementHandl
         // the scope (the CR-05 defect: without it an interrupting boundary orphaned
         // inner work — it could not kill "everything on the token" without hitting
         // a fork sibling — and terminate killed the whole instance).
-        // The scope ROW stays on the incoming token (unchanged): join/boundary/
-        // worker identity all read scope.getToken(), whose findToken().parent IS
-        // the incoming token — resumeTokenForScope needs no special case.
+        // The scope ROW stays on the incoming token (unchanged): the scope token
+        // is its child (createToken above). resumeTokenForScope walks up from
+        // scope.getToken() to the token carrying this scopeActivityId and takes
+        // its parent — the incoming branch — so no special case is needed here.
         com.zorrodev.bpm.engine.dto.Token scopeToken = dbService.createToken(tokenId, activityId);
         ExecutionCtx scopeCtx = new ExecutionCtx(processInstanceId, scopeToken.getId(),
             ctx.executor(), ctx.executionContext());
