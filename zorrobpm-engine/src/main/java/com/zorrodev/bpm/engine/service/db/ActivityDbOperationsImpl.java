@@ -10,6 +10,7 @@ import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +31,7 @@ import java.util.UUID;
 public class ActivityDbOperationsImpl implements ActivityDbOperations {
 
     private final ActivityRepository activityRepository;
+    private final MessageSubscriptionRepository messageSubscriptionRepository;
     private final ProcessInstanceRepository processInstanceRepository;
     private final ServiceTaskRepository serviceTaskRepository;
     private final DomainEventEmitter domainEventEmitter;
@@ -68,6 +70,18 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
     public void completeActivity(UUID activityId) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
         activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.COMPLETED, Instant.now());
+        // WO-C8-37 (C37-3): the host's wait is over — its unconsumed message
+        // subscriptions can never be claimed by the dead host again. Consume them
+        // here (single UPDATE, consumed=true — history preserved) so a later
+        // message is NOT eaten by this finished row and DOES reach the next live
+        // subscription (consumeMessageSubscription is CAS-first, so the dead row
+        // would otherwise win the race by id order). Boundary rows ride the host
+        // row (BoundaryScheduler registers them ON the host activity id); the
+        // CAREFUL carve-outs: event-subprocess subscriptions have activityId NULL
+        // (untouched — they outlive any single host by design), and already
+        // consumed rows stay consumed.
+        messageSubscriptionRepository.consumeByActivityIds(
+            activity.getProcessInstanceId(), java.util.List.of(activityId));
         ProcessInstanceEntity pi = processInstanceRepository.findById(activity.getProcessInstanceId()).orElseThrow();
         // WO-EVT-9: service tasks carry their stable job id in the event data; other element types keep data empty.
         String job = serviceTaskRepository.findById(activityId).map(ServiceTaskEntity::getJob).orElse(null);
@@ -248,6 +262,12 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
 
     @Override
     public void cancelActivity(UUID activityId) {
+        // WO-C8-37 (C37-3): same subscription close as completeActivity (the
+        // interrupted host's wait is over too — its rows must not eat later
+        // messages). Single UPDATE, carve-outs identical.
+        activityRepository.findById(activityId).ifPresent(dead ->
+            messageSubscriptionRepository.consumeByActivityIds(
+                dead.getProcessInstanceId(), java.util.List.of(activityId)));
         activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.CANCELLED, Instant.now());
     }
 

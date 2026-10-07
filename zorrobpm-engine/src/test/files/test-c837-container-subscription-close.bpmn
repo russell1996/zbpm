@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-37 (C37-3): a message catch waits first; a LATER message catch for the
+     SAME message waits second (sequential chain: waitA -f-> waitB, correlated via
+     the second catch's own subscription after the first completes). The finished
+     first catch's subscription must be closed (consumed) at completion — the
+     second message must reach the live second catch, not be eaten by the dead
+     first row. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c837sub" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c837-container-subscription-close" name="c837-container-subscription-close" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="waitA" />
+    <bpmn:intermediateCatchEvent id="waitA" name="waitA">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="medA" messageRef="Msg_hold" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="waitA" targetRef="waitB" />
+    <bpmn:intermediateCatchEvent id="waitB" name="waitB">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="medB" messageRef="Msg_hold" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="f3" name="f3" sourceRef="waitB" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmn:message id="Msg_hold" name="holdSignal" />
+</bpmn:definitions>
