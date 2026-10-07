@@ -108,6 +108,13 @@ public class BpmMetrics {
     // --- SSE bridge (WO-REL-56, part B) ---
     private final Counter sseForeignSequenceDropped;
 
+    // --- SSE retry-lane (WO-AUDIT-8, A-NEW4-10) ---
+    // Глубина очереди retry-lane SseEventStreamService: порог в алерте — рядом
+    // с Saturated-warn'ами; gauge обновляется при каждом обращении к lane.
+    // Живёт здесь (тот же домен реестра → Prometheus), отдельный бин под один
+    // gauge — распил ради распила.
+    private final AtomicLong sseRetryQueueDepth = new AtomicLong(0);
+
     /**
      * WO-REL-48: feed-position backlog visibility. NOT new injected
      * dependencies — these three meters live in BpmMetrics because that is
@@ -260,6 +267,12 @@ public class BpmMetrics {
         this.sseForeignSequenceDropped = Counter.builder("zbpm.sse.foreign.dropped")
             .description("SSE live events dropped: sequence has no row in this DB (foreign installation/test publish)")
             .register(registry);
+
+        // WO-AUDIT-8 (A-NEW4-10): retry-lane queue depth — насыщение lane
+        // видно в Grafana, а не только в Saturated-warn'ах лога.
+        Gauge.builder("zbpm.sse.retry.queue", sseRetryQueueDepth, AtomicLong::doubleValue)
+            .description("SSE retry-lane queue depth (deferred cursor resolutions + pump retries)")
+            .register(registry);
     }
 
     // --- Process lifecycle ---
@@ -349,4 +362,6 @@ public class BpmMetrics {
 
     // --- SSE bridge (WO-REL-56, part B) ---
     public void sseForeignSequenceDropped() { sseForeignSequenceDropped.increment(); }
+
+    public void setSseRetryQueueDepth(long depth) { sseRetryQueueDepth.set(depth); }
 }

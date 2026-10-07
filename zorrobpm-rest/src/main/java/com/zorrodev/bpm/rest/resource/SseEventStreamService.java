@@ -213,9 +213,23 @@ public class SseEventStreamService implements SmartLifecycle {
     /** Max retry attempts per arming (100ms × 50 = ~5s, one send-timeout window). */
     private static final int PUMP_RETRY_MAX_ATTEMPTS = 50;
 
+    /**
+     * WO-AUDIT-8 (A-NEW4-10): размер retry-lane — настройка, а не хардкод 1.
+     * Дефолт 1 = поведение не меняется; ручка по правилам CFG-1 (relaxed
+     * binding: {@code ZORROBPM_SSE_RETRY_LANE_SIZE}, тест привязки —
+     * {@code SseRetryLaneConfigTest}). Fail-fast на &lt;1 — как у соседних
+     * script-ручек (P-41): новая ручка проходит ту же проверку, а не обходит.
+     */
+    @Value("${zorrobpm.sse.retry-lane-size:1}")
+    private int retryLaneSize = 1;
+
     private synchronized java.util.concurrent.ScheduledExecutorService retryLane() {
         java.util.concurrent.ScheduledExecutorService lane = retryScheduler;
         if (lane == null || lane.isShutdown()) {
+            if (retryLaneSize < 1) {
+                throw new IllegalArgumentException(
+                    "zorrobpm.sse.retry-lane-size must be >= 1, got " + retryLaneSize);
+            }
             java.util.concurrent.ThreadFactory factory = r -> {
                 Thread t = new Thread(r);
                 t.setName("sse-retry-" + t.getId());
@@ -223,13 +237,18 @@ public class SseEventStreamService implements SmartLifecycle {
                 return t;
             };
             java.util.concurrent.ScheduledThreadPoolExecutor fresh =
-                new java.util.concurrent.ScheduledThreadPoolExecutor(1, factory);
+                new java.util.concurrent.ScheduledThreadPoolExecutor(retryLaneSize, factory);
             fresh.setRemoveOnCancelPolicy(true);
             fresh.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
             fresh.allowCoreThreadTimeOut(true);
             fresh.setKeepAliveTime(60L, TimeUnit.SECONDS);
             retryScheduler = fresh;
             lane = fresh;
+        }
+        // WO-AUDIT-8 (A-NEW4-10): глубина очереди retry-lane видна оператору
+        // (порог в алерте — рядом с Saturated-warn'ами этого же файла).
+        if (lane instanceof java.util.concurrent.ScheduledThreadPoolExecutor stpe && bpmMetrics != null) {
+            bpmMetrics.setSseRetryQueueDepth(stpe.getQueue().size());
         }
         return lane;
     }
