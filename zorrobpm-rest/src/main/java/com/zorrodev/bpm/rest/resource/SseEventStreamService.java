@@ -8,7 +8,6 @@ import com.zorrodev.bpm.engine.service.EventQueryService;
 import com.zorrodev.bpm.exchange.TraceHeaders;
 import com.zorrodev.bpm.rabbitmq.configuration.RabbitConfiguration;
 import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,9 +22,7 @@ import org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer;
 import org.springframework.amqp.rabbit.listener.adapter.MessageListenerAdapter;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.SmartLifecycle;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -97,6 +94,8 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         this.sessionRegistry = new SseSessionRegistry(
             () -> maxClients, () -> maxClientsPerSubject, () -> heartbeatIntervalMs,
             this::scheduleHeartbeat);
+        this.authzGate = new SseAuthzGate(eventAuthzResolver, uiUserLookupService, apiKeyService,
+            (session, reason) -> closeRevokedClient(session.clientId(), reason));
     }
 
     /**
@@ -115,6 +114,8 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
 
     /** Connected SSE clients: registry of sessions (WO-AUDIT-9 шаг 3). */
     private final SseSessionRegistry sessionRegistry;
+    /** Authz-гейт сессий: liveness/rights/revoke (WO-AUDIT-9 шаг 4). */
+    private final SseAuthzGate authzGate;
 
     /**
      * WO-REL-47 (N07): BOUNDED pools — never a cached pool on this path.
@@ -322,23 +323,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
 
     /** Live registrations per subject key — owned by SseSessionRegistry (шаг 3). */
 
-    /**
-     * WO-SEC-67 (F13): re-resolution cache for the per-event rights
-     * re-check. {@code readableRuntimePdIds} is a multi-query JPA read
-     * (membership → processes → definitions); re-running it on EVERY event
-     * for EVERY client would multiply DB load by clients×events. A 30s TTL
-     * bounds the revocation window (stale rights live at most 30s + delivery
-     * lag) instead of the stream lifetime (was: infinite). Keyed by the
-     * subject + definition-key filter — the two inputs of the resolution.
-     * SUPER_ADMIN bypasses (always null = see all, no query to cache).
-     * Caffeine is already on the classpath (JwtAuthFilter debounce precedent).
-     */
-    private final Cache<ReevalKey, Collection<UUID>> rightsCache = Caffeine.newBuilder()
-        .maximumSize(10_000)
-        .expireAfterWrite(Duration.ofSeconds(30))
-        .build();
-
-    private record ReevalKey(String subjectKey, String processDefinitionKeyFilter) {}
+    /** Rights re-resolution cache — owned by SseAuthzGate (шаг 4). */
 
     /** RabbitMQ listener container for this instance */
     private volatile SimpleMessageListenerContainer listenerContainer;
@@ -425,10 +410,10 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         // SseSessionRegistry.add — the registry owns both structures now).
         String subjectKey = subjectKey(principal);
         String clientId = UUID.randomUUID().toString();
-        Collection<UUID> allowedPdIds = eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
+        Collection<UUID> allowedPdIds = authzGateInitialPdIds(principal, processDefinitionKeyFilter);
 
         SseClientSession info = new SseClientSession(new SseClientDescriptor(clientId, emitter, principal,
-            currentTokenVersion(principal), allowedPdIds,
+            authzGate.currentTokenVersion(principal), allowedPdIds,
             typeFilter, processInstanceIdFilter, processDefinitionKeyFilter), this);
         sessionRegistry.add(info, subjectKey);
 
@@ -495,23 +480,17 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         sessionRegistry.remove(clientId, subjectKey(known.principal()));
     }
 
+    /** Initial pdId snapshot at registration — delegates to the gate's resolver (шаг 4). */
+    private Collection<UUID> authzGateInitialPdIds(Principal principal, String processDefinitionKeyFilter) {
+        return eventAuthzResolver.readableRuntimePdIds(principal, processDefinitionKeyFilter);
+    }
+
     /**
-     * WO-SEC-67: freeze the JWT token_version at registration (the liveness
-     * baseline). Fail-closed: an unreadable row → -1, which can only mismatch
-     * a real version (versions start at 0) and close the stream — never grant.
+     * WO-SEC-67: token_version baseline at registration — delegates to the
+     * gate (шаг 4); kept as a private delegate so registration code is untouched.
      */
     private int currentTokenVersion(Principal principal) {
-        if (principal instanceof Principal.UserPrincipal up) {
-            try {
-                return uiUserLookupService.securityState(up.userId())
-                    .map(com.zorrodev.bpm.engine.security.UiUserLookupService.UserSecurityState::tokenVersion)
-                    .orElse(-1);
-            } catch (RuntimeException e) {
-                log.warn("SSE registration: token_version unreadable — freezing -1 (fail closed)", e);
-                return -1;
-            }
-        }
-        return -1;
+        return authzGate.currentTokenVersion(principal);
     }
 
     /**
@@ -1272,7 +1251,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
 
             // Unit-scope harness (null collaborators): прежний прямой путь
             // без группировки — семантика та же, делить нечего.
-            if (!isCredentialLive(client)) {
+            if (!authzGate.isCredentialLive(client)) {
                 closeRevokedClient(client.clientId(), "credential dead");
                 continue;
             }
@@ -1321,10 +1300,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
                 }
                 boolean anyLive = false;
                 for (SseClientSession client : group) {
-                    Principal p = client.principal();
-                    if (p instanceof Principal.UserPrincipal cpu
-                        && state.tokenVersion() == client.tokenVersion()
-                        && Objects.equals(state.role(), cpu.globalRole())) {
+                    if (authzGate.matchesLiveUserState(client, state)) {
                         anyLive = true;
                     } else {
                         closeRevokedClient(client.clientId(), "credential dead");
@@ -1333,7 +1309,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
                 return anyLive;
             }
             if (principal instanceof Principal.ServicePrincipal) {
-                if (!isPrincipalLive(principal, first.tokenVersion())) {
+                if (!authzGate.isPrincipalLive(principal, first.tokenVersion())) {
                     for (SseClientSession client : group) {
                         closeRevokedClient(client.clientId(), "credential dead");
                     }
@@ -1373,14 +1349,14 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
             // compare against the snapshot; on ANY narrowing close the stale
             // snapshot's stream now — it must re-register for the new, smaller
             // view. Fail-closed on resolver error (see method).
-            Collection<UUID> fresh = reevaluateRights(client);
+            Collection<UUID> fresh = authzGate.reevaluateRights(client);
             if (fresh == null && client.allowedPdIds() != null) {
                 // Resolver error (not SUPER_ADMIN — that returns null by
                 // contract and stays null): fail closed, do not deliver.
                 closeRevokedClient(client.clientId(), "rights re-check failed");
                 return;
             }
-            if (isNarrowed(client.allowedPdIds(), fresh)) {
+            if (SseAuthzGate.isNarrowed(client.allowedPdIds(), fresh)) {
                 closeRevokedClient(client.clientId(), "rights narrowed");
                 return;
             }
@@ -1508,24 +1484,12 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      * Any lookup error → false (fail closed — the stream dies, it never
      * delivers into doubt).
      */
+    /**
+     * WO-SEC-67 liveness — delegates to the gate (шаг 4); kept as a private
+     * delegate so dispatch call-sites are untouched.
+     */
     private boolean isCredentialLive(SseClientSession client) {
-        // WO-SEC-67: unit-scope harness (hand-built service with null
-        // collaborators, e.g. SsePerf6IntegrationTest/SseBridgeStartupTest) —
-        // there is nothing to check against. Production Spring wiring always
-        // injects real beans; the full-context proof (SseRevocationIT) runs
-        // with real rows. A null collaborator is a missing harness, never a
-        // dead credential — failing closed here would only test the harness.
-        if (uiUserLookupService == null || apiKeyService == null) {
-            return true;
-        }
-        Principal principal = client.principal();
-        // WO-REL-52 (NEW-03, part A): liveness РАЗ на пользователя за
-        // событие, а не раз на клиента — клиенты одного principal делят один
-        // lookup (группировка перед проверкой, см. dispatchToClientsTraced).
-        // Однопользовательский путь (reconnect-порог без толпы) идёт сюда
-        // напрямую — семантика та же, кэширования нет (событийно-точный
-        // revoke: logout между двумя событиями закрывает поток на втором).
-        return isPrincipalLive(principal, client.tokenVersion());
+        return authzGate.isCredentialLive(client);
     }
 
     /**
@@ -1534,30 +1498,12 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      * fail-closed направление). Пакетный путь вызывает это один раз на
      * пользователя и раздаёт результат его клиентам.
      */
+    /**
+     * WO-REL-52 single-principal liveness — delegates to the gate (шаг 4);
+     * kept as a private delegate so dispatch call-sites are untouched.
+     */
     private boolean isPrincipalLive(Principal principal, int tokenVersion) {
-        try {
-            if (principal instanceof Principal.UserPrincipal up) {
-                // The JWT claims are frozen at registration; the row is live.
-                // Same comparison as JwtAuthFilter: version + active + role.
-                var state = uiUserLookupService.securityState(up.userId()).orElse(null);
-                if (state == null || !state.active()
-                    || state.tokenVersion() != tokenVersion
-                    || !Objects.equals(state.role(), up.globalRole())) {
-                    return false;
-                }
-                return true;
-            }
-            if (principal instanceof Principal.ServicePrincipal sp) {
-                // Key liveness via the engine-side owner (WO-DEBT-7: no
-                // engine.repository import in rest/resource).
-                return apiKeyService.isKeyLive(sp.apiKeyId());
-            }
-            return false;
-        } catch (RuntimeException e) {
-            log.warn("SSE credential liveness check failed for principal {} — failing closed",
-                subjectKey(principal), e);
-            return false;
-        }
+        return authzGate.isPrincipalLive(principal, tokenVersion);
     }
 
     /**
@@ -1569,44 +1515,33 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      * caller treats as fail-closed (close, do not deliver). A null snapshot
      * (SUPER_ADMIN) + null fresh = still see-all.
      */
+    /**
+     * WO-SEC-67 fresh rights — delegates to the gate (шаг 4); kept as a
+     * private delegate so dispatch call-sites are untouched.
+     */
     private Collection<UUID> reevaluateRights(SseClientSession client) {
-        if (client.principal().isSuperAdmin()) {
-            return null;
-        }
-        try {
-            return liveView(client);
-        } catch (RuntimeException e) {
-            log.warn("SSE rights re-resolution failed for client {} — failing closed",
-                client.clientId(), e);
-            return null;
-        }
+        return authzGate.reevaluateRights(client);
     }
 
     /**
-     * WO-SEC-67 (F13): has the fresh view narrowed vs the snapshot? null fresh
-     * = SUPER_ADMIN see-all = never narrowed. A non-null fresh that is missing
-     * ANY snapshot id (removal) closes the stream — even when it also ADDS ids
-     * (a changed key filter outcome is still a different view; the client
-     * re-registers for exactly it). Pure widening without loss keeps the
-     * stream (fail-open on MORE rights would leak nothing the fresh set does
-     * not already grant — delivery itself is checked against fresh).
+     * WO-SEC-67 narrowing — delegates to the gate (шаг 4); kept package-visible:
+     * unit harnesses may call it directly.
      */
     static boolean isNarrowed(Collection<UUID> snapshot, Collection<UUID> fresh) {
-        if (fresh == null) {
-            return false;
-        }
-        if (snapshot == null) {
-            // Was see-all (non-admin snapshot cannot be null by contract —
-            // defensive): any finite fresh view is narrower.
-            return true;
-        }
-        return !fresh.containsAll(snapshot);
+        return SseAuthzGate.isNarrowed(snapshot, fresh);
     }
 
     /**
-     * WO-SEC-67 (F13): close one client's stream now (revocation path).
+     * WO-SEC-67 red-team #1/#2 — live view и key-sweep живут в гейте (шаг 4).
+     */
+    public void invalidateStreamsForKey(UUID apiKeyId) {
+        authzGate.invalidateStreamsForKey(sessionRegistry.snapshot(), apiKeyId);
+    }
+
+    /**
+     * WO-SEC-67 (F13): close one session's stream now (revocation path).
      * Removes state (releases the per-subject slot) and completes the
-     * emitter; also evicts the client's rights-cache entry so a later
+     * emitter; also evicts the session's rights-cache entry so a later
      * stream starts from a cold read.
      *
      * <p>WO-REL-47 HOLD finding 4: {@code removeClientState} already closes
@@ -1618,8 +1553,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         SseClientSession client = sessionRegistry.get(clientId);
         removeClientState(clientId);
         if (client != null) {
-            rightsCache.invalidate(
-                new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter()));
+            authzGate.evict(client);
             try {
                 client.emitter().complete();
             } catch (Exception e) {
@@ -1630,106 +1564,12 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
     }
 
     /**
-     * WO-SEC-67 (F13): event-driven invalidation. Called by the revoke/logout/
-     * membership paths; closes every open stream whose credential is now dead
-     * or whose rights narrowed — immediately, without waiting for the next
-     * event or the 30s cache TTL. Best-effort and non-throwing (a revoke must
-     * never fail because a stream misbehaves); failures are logged.
+     * WO-SEC-67 (F13): event-driven invalidation entry point (called by the
+     * revoke/logout/membership paths). The sweep itself lives in the gate
+     * (шаг 4); kept here so external callers are untouched.
      */
     public void invalidateStreams() {
-        for (SseClientSession client : sessionRegistry.snapshot()) {
-            try {
-                if (!isCredentialLive(client)) {
-                    closeRevokedClient(client.clientId(), "credential dead (event)");
-                    continue;
-                }
-                // Single truth via liveView (POF-proven: a divergent inline
-                // copy here once hid revokes from this sweep — SseRevocationIT
-                // caught it). bypassCache=true: the revoke JUST happened, so
-                // any cached view predates it by up to 30s.
-                Collection<UUID> fresh;
-                try {
-                    fresh = liveView(client, true);
-                } catch (RuntimeException e) {
-                    log.warn("SSE event-driven re-resolution failed for client {} — failing closed",
-                        client.clientId(), e);
-                    closeRevokedClient(client.clientId(), "rights re-check failed (event)");
-                    continue;
-                }
-                if (fresh == null && client.allowedPdIds() != null) {
-                    closeRevokedClient(client.clientId(), "rights re-check failed (event)");
-                    continue;
-                }
-                if (isNarrowed(client.allowedPdIds(), fresh)) {
-                    closeRevokedClient(client.clientId(), "rights narrowed (event)");
-                }
-            } catch (RuntimeException e) {
-                log.warn("SSE event-driven invalidation failed for client {}", client.clientId(), e);
-            }
-        }
-    }
-
-    /**
-     * WO-SEC-67 red-team #1: the CURRENT view for a client — live key rows for
-     * service keys (frozen registration grants would hide a setGrants
-     * narrowing forever), 30s-cached membership resolution for JWT users.
-     * Single truth for the per-event check and the event-driven invalidation
-     * (no double logic to diverge).
-     *
-     * @param bypassCache true on the event-driven path (the revoke JUST
-     *        happened — a cached view predates it) — resolves fresh AND
-     *        refreshes the cache so a racing per-event check sees the same
-     *        view; false on the per-event path (cache governs the 30s TTL).
-     */
-    private Collection<UUID> liveView(SseClientSession client) {
-        return liveView(client, false);
-    }
-
-    private Collection<UUID> liveView(SseClientSession client, boolean bypassCache) {
-        // WO-SEC-67 verifier HOLD: SUPER_ADMIN bypass — see-all неизменно
-        // (зеркало per-event reevaluateRights). Без него readableRuntimePdIds
-        // вернул бы null → rightsCache.put(key, null) → Caffeine-NPE → любой
-        // sweep закрывал бы ВСЕ admin-потоки. Credential-liveness админа
-        // проверяется отдельно выше (logout бампает его version).
-        if (client.principal().isSuperAdmin()) {
-            return null;
-        }
-        if (client.principal() instanceof Principal.ServicePrincipal sp) {
-            // Uncached: grant changes are rare, correctness beats one query
-            // per event here.
-            return eventAuthzResolver.readableRuntimePdIdsForKey(
-                sp.apiKeyId(), sp.ownerUserId(), client.processDefinitionKeyFilter());
-        }
-        ReevalKey key = new ReevalKey(subjectKey(client.principal()), client.processDefinitionKeyFilter());
-        if (bypassCache) {
-            Collection<UUID> fresh = eventAuthzResolver.readableRuntimePdIds(
-                client.principal(), client.processDefinitionKeyFilter());
-            rightsCache.put(key, fresh);
-            return fresh;
-        }
-        return rightsCache.get(key,
-            k -> eventAuthzResolver.readableRuntimePdIds(
-                client.principal(), client.processDefinitionKeyFilter()));
-    }
-
-    /**
-     * WO-SEC-67 red-team #2: key rotation replaces the key MATERIAL in place
-     * (same row id — liveness stays green), so the generic sweep cannot see
-     * it. Rotation kills the old credential explicitly: close every stream
-     * standing on this key id NOW, deterministically, without depending on
-     * string comparisons. Best-effort and non-throwing like the sweep.
-     */
-    public void invalidateStreamsForKey(UUID apiKeyId) {
-        for (SseClientSession client : sessionRegistry.snapshot()) {
-            try {
-                if (client.principal() instanceof Principal.ServicePrincipal sp
-                    && apiKeyId.equals(sp.apiKeyId())) {
-                    closeRevokedClient(client.clientId(), "key rotated");
-                }
-            } catch (RuntimeException e) {
-                log.warn("SSE key invalidation failed for client {}", client.clientId(), e);
-            }
-        }
+        authzGate.invalidateStreams(sessionRegistry.snapshot());
     }
 
     /**
