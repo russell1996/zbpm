@@ -65,6 +65,11 @@ class EventTriggerTest {
     private InclusiveGatewayHandler inclusiveGatewayHandler;
     @Mock
     private CancelingPhaseService cancelingPhaseService;
+    // WO-C8-38: новый конструкторный параметр ScopeContainment (stateless-компонент
+    // containment'а scope'ов; существующие тесты путей без отмены его не трогают,
+    // но @InjectMocks без мока дал бы null).
+    @Mock
+    private ScopeContainment scopeContainment;
 
     @InjectMocks
     private EventTrigger eventTrigger;
