@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-37 (раунд 2, БЛОКИРУЮЩАЯ №1, вложенный вариант): внутренний ad-hoc
+      финиширует досрочно по completionCondition с cancelRemainingInstances=false
+      (taskI2 остаётся жить на внутреннем scope-токене), затем финиширует второй
+      корень outer (taskB, 2/2 arrivals). Внешний join обязан ждать taskI2:
+      quiescence смотрит поддерево скоупа (chain-walk), а не равенство токенов. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c837adhocnc" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c837-adhoc-nested-chain" name="c837-adhoc-nested-chain" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="adhoc" />
+
+    <bpmn:adHocSubProcess id="adhoc" name="adhoc">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:adHoc activeElementsCollection="=[&quot;inner&quot;, &quot;taskB&quot;]" />
+      </bpmn:extensionElements>
+      <bpmn:adHocSubProcess id="inner" name="inner" cancelRemainingInstances="false">
+        <bpmn:extensionElements>
+          <zeebe:adHoc activeElementsCollection="=[&quot;taskI1&quot;, &quot;taskI2&quot;]" />
+        </bpmn:extensionElements>
+        <bpmn:completionCondition>=stopEarly = true</bpmn:completionCondition>
+        <bpmn:userTask id="taskI1" name="taskI1" />
+        <bpmn:userTask id="taskI2" name="taskI2" />
+      </bpmn:adHocSubProcess>
+      <bpmn:userTask id="taskB" name="taskB" />
+    </bpmn:adHocSubProcess>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="adhoc" targetRef="afterAdhoc" />
+    <bpmn:userTask id="afterAdhoc" name="afterAdhoc">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fAfter2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fAfter2" name="fAfter2" sourceRef="afterAdhoc" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fAfter2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
