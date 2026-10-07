@@ -46,10 +46,4 @@ public interface MessageSubscriptionDbOperations {
     List<MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey, UUID cursorId);
 
     boolean consumeMessageSubscription(UUID subscriptionId);
-
-    /**
-     * WO-C8-37 (C37-3): consumes every unconsumed subscription bound to one of the
-     * given (finished) activity rows. Returns the number of rows consumed.
-     */
-    int consumeMessageSubscriptionsByActivityIds(UUID processInstanceId, java.util.Collection<UUID> activityIds);
 }
