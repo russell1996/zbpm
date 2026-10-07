@@ -84,6 +84,15 @@ public class EventSubProcessIntegrationTests {
         });
     }
 
+    @org.junit.jupiter.api.BeforeEach
+    void armCleanupWindow() {
+        // WO-C8-37: the cleanup() window must exist even when a test fails before
+        // setting testStartedAt (only the timer test sets it) — otherwise @AfterEach
+        // NPEs on testStartedAt and masks the real failure with 5 ERRORs. A fresh
+        // window per test also keeps the time-scoped cleanup tight.
+        testStartedAt = Instant.now();
+    }
+
     @AfterEach
     void cleanup() {
         // WO-REL-13: tests commit their own rows now (REQUIRES_NEW fires), so the shared H2

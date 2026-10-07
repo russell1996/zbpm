@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-37 (C37-4): embedded subprocess with ioMapping, inner flow ends in
+     terminate. The scope must close like a normal exit (output mappings
+     promoted, scope locals dropped) while the row stays CANCELLED and the
+     parent flow continues past the subprocess. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c837term" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c837-terminate-subscope-teardown" name="c837-terminate-subscope-teardown" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=parentVar" target="subLocal" />
+          <zeebe:output source="=subLocal" target="subOut" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subF1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subF1" name="subF1" sourceRef="subStart" targetRef="innerTask" />
+      <bpmn:userTask id="innerTask" name="innerTask">
+        <bpmn:incoming>subF1</bpmn:incoming>
+        <bpmn:outgoing>subF2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="subF2" name="subF2" sourceRef="innerTask" targetRef="subTerm" />
+      <bpmn:endEvent id="subTerm" name="subTerm">
+        <bpmn:incoming>subF2</bpmn:incoming>
+        <bpmn:terminateEventDefinition id="TerminateDef_sub" />
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="sub1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

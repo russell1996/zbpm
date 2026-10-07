@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-37 (C37-1/m1): terminate end event inside an ad-hoc container in a
+     parallel fork. The terminate must end ONLY the ad-hoc scope (the container
+     closes, the parent flow continues past it) — the instance and the outer
+     fork sibling survive. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c837adhoct" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c837-adhoc-terminate-scope" name="c837-adhoc-terminate-scope" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f0</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f0" name="f0" sourceRef="startEvent" targetRef="fork" />
+    <bpmn:parallelGateway id="fork" name="fork">
+      <bpmn:incoming>f0</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fB</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="fork" targetRef="adhoc" />
+    <bpmn:sequenceFlow id="fB" name="fB" sourceRef="fork" targetRef="outerTask" />
+
+    <bpmn:adHocSubProcess id="adhoc" name="adhoc">
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:adHoc activeElementsCollection="=[&quot;taskA&quot;]" />
+      </bpmn:extensionElements>
+      <bpmn:userTask id="taskA" name="taskA">
+        <bpmn:outgoing>fA1</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fA1" name="fA1" sourceRef="taskA" targetRef="termEnd" />
+      <bpmn:endEvent id="termEnd" name="termEnd">
+        <bpmn:incoming>fA1</bpmn:incoming>
+        <bpmn:terminateEventDefinition id="TerminateDef_adhoc37" />
+      </bpmn:endEvent>
+    </bpmn:adHocSubProcess>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="adhoc" targetRef="afterAdhoc" />
+    <bpmn:userTask id="afterAdhoc" name="afterAdhoc">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fAfter2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fAfter2" name="fAfter2" sourceRef="afterAdhoc" targetRef="endMain" />
+    <bpmn:endEvent id="endMain" name="endMain">
+      <bpmn:incoming>fAfter2</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:userTask id="outerTask" name="outerTask">
+      <bpmn:incoming>fB</bpmn:incoming>
+      <bpmn:outgoing>fB2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fB2" name="fB2" sourceRef="outerTask" targetRef="endOuter" />
+    <bpmn:endEvent id="endOuter" name="endOuter">
+      <bpmn:incoming>fB2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

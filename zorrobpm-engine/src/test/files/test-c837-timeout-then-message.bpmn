@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-37 (C37-3, POF): a user task with a message boundary waits; the task
+     is completed directly (no message, no boundary fire). The boundary
+     subscription row bound to the finished host must be consumed by the
+     completion itself — proven by reading the subscription TABLE (consumed flag
+     on the dead host's row), not by any wake-up path. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c837tm" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c837-timeout-then-message" name="c837-timeout-then-message" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="work" />
+    <bpmn:userTask id="work" name="work">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="workMsg" name="workMsg" attachedToRef="work">
+      <bpmn:outgoing>fB</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="medWork" messageRef="Msg_work" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="work" targetRef="endEvent" />
+    <bpmn:sequenceFlow id="fB" name="fB" sourceRef="workMsg" targetRef="endBoundary" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endBoundary" name="endBoundary">
+      <bpmn:incoming>fB</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+  <bpmn:message id="Msg_work" name="workPing" />
+</bpmn:definitions>

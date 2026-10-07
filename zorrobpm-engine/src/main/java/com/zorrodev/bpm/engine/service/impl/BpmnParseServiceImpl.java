@@ -924,10 +924,26 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         if (sub.getOutgoing() != null) {
             element.getOutgoing().addAll(sub.getOutgoing());
         }
-        if ((sub.getStartEvents() != null && !sub.getStartEvents().isEmpty())
-            || (sub.getEndEvents() != null && !sub.getEndEvents().isEmpty())) {
+        if (sub.getStartEvents() != null && !sub.getStartEvents().isEmpty()) {
             throw new BpmnParseException("Ad-hoc subprocess '" + sub.getId()
-                + "' must not contain start or end events (Camunda docs constraint)");
+                + "' must not contain start events (Camunda docs constraint)");
+        }
+        // WO-C8-37 (C37-1): end events ARE allowed inside ad-hoc — with a scope
+        // token the container supports inner exits (a plain end is a join
+        // arrival, a terminate end is a scope-confined terminate). Mapped exactly
+        // like embedded-subprocess ends in toSubProcessElement (same toElementModel
+        // + attachEventDefinition call shape); start events stay forbidden (ad-hoc
+        // activation is collection-driven, there is no nested start to dispatch).
+        // End events are NOT added to the activatable inner-element ids
+        // (collectAdHocInnerElements): they are reached by flow, never activated.
+        if (sub.getEndEvents() != null) {
+            for (BpmnEndEventModel end : sub.getEndEvents()) {
+                BpmnElementModel child = toElementModel(end);
+                child.setProcessDefinition(pd);
+                attachEventDefinition(child, end.getErrorEventDefinition(), end.getSignalEventDefinition(),
+                    end.getEscalationEventDefinition(), null, null, end.getCompensateEventDefinition(), registry);
+                pd.addElement(child);
+            }
         }
         com.zorrodev.bpm.engine.bpmn.model.AdHocSubProcessExtensionModel ext = new com.zorrodev.bpm.engine.bpmn.model.AdHocSubProcessExtensionModel();
         if (sub.getExtensionElements() != null && sub.getExtensionElements().getAdHoc() != null) {
@@ -962,7 +978,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
      * {@code adHocSubProcessElements} scope variable (job-worker mode). Mirrors the child
      * lists flattened by {@link #flattenSubProcessChildren} minus the non-executable ones
      * (boundary events attach to a host, flows/associations are not elements to execute,
-     * start/end events are forbidden outright).
+     * start events are forbidden outright, end events are reached by flow and never
+     * activated by collection).
      */
     private void collectAdHocInnerElements(BpmnSubProcessModel sub, com.zorrodev.bpm.engine.bpmn.model.AdHocSubProcessExtensionModel ext) {
         addInnerElements(ext, sub.getServiceTasks(), BpmnBaseElementModel::getId, BpmnBaseElementModel::getName, BpmnBaseElementModel::getDocumentation, BpmnServiceTaskModel::getExtensionElements);
@@ -1026,7 +1043,8 @@ public class BpmnParseServiceImpl implements BpmnParseService {
      * definition — extracted 1:1 from {@link #toSubProcessElement} (no logic changes),
      * shared by regular subprocesses, transactions and ad-hoc subprocesses so the
      * three cannot diverge. Start/end events are NOT handled here (regular containers
-     * map them in their own prologue; ad-hoc forbids them outright).
+     * map them in their own prologue; ad-hoc maps its ends in
+     * {@code toAdHocSubProcessElement} and still forbids starts).
      */
     private void flattenSubProcessChildren(BpmnSubProcessModel sub, String rawBpmn, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames, Map<String, String> messageKeys) {
         if (sub.getServiceTasks() != null) {

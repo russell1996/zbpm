@@ -30,7 +30,7 @@ public class EndEventHandler {
     @RequiredArgsConstructor
     public static class EndEvent implements ElementHandler, TypedElementHandler {
         private final DBService dbService;
-        private final ActivityService activityService;
+        private final FlowNavigator flowNavigator;
 
         @Override
         public BpmnElementType elementType() { return BpmnElementType.END_EVENT; }
@@ -43,7 +43,35 @@ public class EndEventHandler {
             UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
             dbService.completeActivity(activityId);
             log.info("{}/{}: Entering and completing {}: {}/{}", ctx.processInstanceId(), ctx.tokenId(), el.getType(), activityId, el.getId());
-            activityService.finishBranch(ctx.processInstanceId(), ctx.tokenId(), bpmn);
+            // WO-C8-37 (C37-1): a plain end inside a LIVE ad-hoc scope is a chain-end
+            // arrival, not a scope exit — the ad-hoc join owns completion (counter +
+            // quiescence) and consumes the branch when the scope actually finished.
+            // A scope that just finished routes the END THROUGH the join (arrival
+            // recorded, SCOPE_FINISHED consumed) so the join's incoming-token
+            // continuation — not a scope-token re-entry — carries the branch.
+            // Otherwise (no live ad-hoc scope on this token — the common linear
+            // case, and any end on a scope token whose scope already closed) the
+            // historical finishBranch path ends the branch/instance, exactly as before.
+            Token token = dbService.findToken(ctx.tokenId()).orElse(null);
+            if (token != null && token.getScopeActivityId() != null) {
+                Activity scope = dbService.getActivity(token.getScopeActivityId());
+                if (scope != null
+                    && scope.getType() == BpmnElementType.AD_HOC_SUB_PROCESS
+                    && (scope.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED
+                        || scope.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS)) {
+                    if (flowNavigator.handleAdHocArrival(ctx.processInstanceId(), ctx.tokenId(), bpmn, el, ctx.executor())
+                        == ArrivalOutcome.SCOPE_FINISHED) {
+                        return;
+                    }
+                    // Live scope, join not finished: the end element's own chain is
+                    // over — park silently (the scope join will consume the scope
+                    // when its counter/quiescence says done). Flowing into
+                    // finishBranch on the scope token would mis-close the scope
+                    // (SUB-path completes the container off the join's control).
+                    return;
+                }
+            }
+            flowNavigator.finishBranch(ctx.processInstanceId(), ctx.tokenId(), bpmn, ctx.executor());
         }
     }
 
@@ -83,8 +111,20 @@ public class EndEventHandler {
                 dbService.cancelActivity(active.getId());
             }
             Activity scope = dbService.getActivity(scopeActivityId);
-            dbService.cancelActivity(scopeActivityId);
+            // WO-C8-37 (C37-4): terminate closes the scope like a normal exit —
+            // the container's output mappings are promoted to root and the scope
+            // locals are dropped, exactly as FlowNavigator.finishBranch does
+            // (same gate: SUB_PROCESS with an ioMapping extension; otherwise zero
+            // behaviour change). Row status stays CANCELLED (terminate semantic).
             BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
+            if (scopeElement != null
+                && scopeElement.getType() == BpmnElementType.SUB_PROCESS
+                && scopeElement.getExtensions() != null
+                && scopeElement.getExtensions().getIoMappingExtension() != null) {
+                elementSupport.applyIoMappings(ctx.processInstanceId(), scopeActivityId, scopeElement, false);
+                dbService.deleteVariables(ctx.processInstanceId(), scopeActivityId);
+            }
+            dbService.cancelActivity(scopeActivityId);
             flowNavigator.proceedToOutgoing(ctx.processInstanceId(), token.getParentId(), bpmn, scopeElement, ctx.executor());
         }
     }

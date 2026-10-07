@@ -10,6 +10,7 @@ import com.zorrodev.bpm.engine.entity.ProcessInstanceEntity;
 import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,7 @@ import static org.mockito.Mockito.when;
 class ActivityDbOperationsImplTest {
 
     @Mock private ActivityRepository activityRepository;
+    @Mock private MessageSubscriptionRepository messageSubscriptionRepository;
     @Mock private ProcessInstanceRepository processInstanceRepository;
     @Mock private ServiceTaskRepository serviceTaskRepository;
     @Mock private DomainEventEmitter domainEventEmitter;
@@ -71,7 +73,19 @@ class ActivityDbOperationsImplTest {
         when(serviceTaskRepository.findById(activityId)).thenReturn(Optional.of(st));
         db.completeActivity(activityId);
         verify(activityRepository).setStatusAndCompletedAt(eq(activityId), eq(ActivityStatus.COMPLETED), any(java.time.Instant.class));
+        // WO-C8-37 (C37-3): the completion closes the host's own subscriptions too.
+        verify(messageSubscriptionRepository).consumeByActivityIds(eq(piId), eq(List.of(activityId)));
         verify(domainEventEmitter).emitActivityCompleted(eq(piId), any(UUID.class), eq("Activity_7f3"), eq("draftCreate"));
+    }
+
+    @Test
+    void cancelActivity_closesHostSubscriptions() {
+        UUID activityId = UUID.randomUUID(); UUID piId = UUID.randomUUID();
+        ActivityEntity act = new ActivityEntity(); act.setId(activityId); act.setProcessInstanceId(piId); act.setBpmnElementId("work");
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(act));
+        db.cancelActivity(activityId);
+        verify(messageSubscriptionRepository).consumeByActivityIds(eq(piId), eq(List.of(activityId)));
+        verify(activityRepository).setStatusAndCompletedAt(eq(activityId), eq(ActivityStatus.CANCELLED), any(java.time.Instant.class));
     }
 
     @Test

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-37 (C37-2): interrupting PT1H boundary timer on a RECEIVE_TASK host. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c837recv" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="holdMsg" name="hold" />
+  <bpmn:process id="c837-receivetask-boundary-timer" name="c837-receivetask-boundary-timer" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="waitForHold" />
+    <bpmn:receiveTask id="waitForHold" name="waitForHold" messageRef="holdMsg">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:boundaryEvent id="recvTimeout" name="recvTimeout" attachedToRef="waitForHold">
+      <bpmn:outgoing>fTimeout</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="tedRecv">
+        <bpmn:timeDuration>PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="waitForHold" targetRef="endEvent" />
+    <bpmn:sequenceFlow id="fTimeout" name="fTimeout" sourceRef="recvTimeout" targetRef="endTimeout" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endTimeout" name="endTimeout">
+      <bpmn:incoming>fTimeout</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

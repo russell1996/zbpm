@@ -52,4 +52,16 @@ public interface MessageSubscriptionRepository extends JpaRepository<MessageSubs
     @org.springframework.data.jpa.repository.Modifying
     @org.springframework.data.jpa.repository.Query("DELETE FROM MessageSubscriptionEntity m WHERE m.processInstanceId = :processInstanceId")
     void deleteByProcessInstanceId(@org.springframework.data.repository.query.Param("processInstanceId") UUID processInstanceId);
+
+    /**
+     * WO-C8-37 (C37-3): consumes every unconsumed subscription bound to a finished
+     * activity (host row COMPLETED/CANCELLED — the wait is over, its message can
+     * never be claimed by the dead host again). Consumed rows stay untouched
+     * (history); other activities' rows stay live.
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("UPDATE MessageSubscriptionEntity m SET m.consumed = true "
+        + "WHERE m.processInstanceId = :processInstanceId AND m.consumed = false AND m.activityId IN :activityIds")
+    int consumeByActivityIds(@org.springframework.data.repository.query.Param("processInstanceId") UUID processInstanceId,
+        @org.springframework.data.repository.query.Param("activityIds") java.util.Collection<UUID> activityIds);
 }
