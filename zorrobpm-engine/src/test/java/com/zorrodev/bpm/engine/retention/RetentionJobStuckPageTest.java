@@ -42,7 +42,7 @@ class RetentionJobStuckPageTest {
     @BeforeEach
     void setUp() {
         config = new RetentionConfig();
-        job = new RetentionJob(config, batchProcessor, bpmMetrics);
+        job = new RetentionJob(config, batchProcessor, bpmMetrics, new com.zorrodev.bpm.engine.event.SseLiveCursorTracker());
     }
 
     private void stubIdleProcessors(int batchSize) {
