@@ -31,6 +31,12 @@ public class CancelEndHandler implements ElementHandler, TypedElementHandler {
     private final FlowNavigator flowNavigator;
     private final ActivityService activityService;
     private final CompensationThrowHandler compensationThrowHandler;
+    /**
+     * WO-C8-38 (C38-2): containment для чистки arrived-строк join'ов ВНУТРИ
+     * отменяемой транзакции (та же транзакция, без резюма — воскрешать join
+     * отменённого scope = выполнить хвост отменённого потока, контрпример раунда 4).
+     */
+    private final ScopeContainment scopeContainment;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.CANCEL_END_EVENT; }
@@ -69,6 +75,9 @@ public class CancelEndHandler implements ElementHandler, TypedElementHandler {
         // cancel the transaction scope, then continue from the (interrupting) cancel boundary
         dbService.cancelActiveActivitiesForToken(tokenId);
         dbService.cancelActivity(scopeActivityId);
+        // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемой транзакции.
+        dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
+            scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, transaction.getId()));
 
         BpmnElementModel cancelBoundary = findCancelBoundary(bpmn, transaction.getId());
         if (cancelBoundary != null) {

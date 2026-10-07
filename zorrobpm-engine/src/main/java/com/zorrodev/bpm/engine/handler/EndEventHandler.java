@@ -81,6 +81,7 @@ public class EndEventHandler {
         private final DBService dbService;
         private final FlowNavigator flowNavigator;
         private final ElementSupport elementSupport;
+        private final ScopeContainment scopeContainment;
 
         @Override
         public BpmnElementType elementType() { return BpmnElementType.TERMINATE_END_EVENT; }
@@ -125,6 +126,11 @@ public class EndEventHandler {
                 dbService.deleteVariables(ctx.processInstanceId(), scopeActivityId);
             }
             dbService.cancelActivity(scopeActivityId);
+            // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемого scope —
+            // та же транзакция, без резюма (воскрешать join отменённого scope = выполнить
+            // хвост отменённого потока, контрпример раунда 4).
+            dbService.clearParallelGatewayArrivalsInJoins(ctx.processInstanceId(),
+                scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, scope.getBpmnElementId()));
             flowNavigator.proceedToOutgoing(ctx.processInstanceId(), token.getParentId(), bpmn, scopeElement, ctx.executor());
         }
     }
