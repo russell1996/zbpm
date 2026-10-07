@@ -1,0 +1,147 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c838_cancelend" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c838-cancelend-holds-neighbour-join" name="test-c838-cancelend-holds-neighbour-join" isExecutable="true">
+    <!--   WO-C8-38 (C38-2, раунд 2, БЛОКИРУЮЩАЯ №1): cancel-end отмена транзакции чистит arrived-строки.
+         Форма - та же, что мост P0-зонда красной команды: parked joinIn внутри subProc +
+         boundary-ребро taskY через bndY в fBnd в joinMain (canReach(joinIn,joinMain)=TRUE
+         по МОДЕЛИ, хотя доставить некому).
+         pfork в { h1 в joinIn ; subProc в joinMain ; taskA в joinMain ; taskB в joinMain }.
+         Тело subProc ЛИНЕЙНО на scope-токене (cancel-конец внутри subProcess гасит
+         транзакционную семантику контейнера; см. TransactionCancelIntegrationTests): sStart в subFork (parallel 1 в 2): ветвь h2in в joinIn ПАРКУЕТ joinIn;
+         ветвь cTask в cancelEnd. Токен cancelEnd - ДИТЯ scope-токена.
+         (компенсаций нет - runCompensation no-op; cancel-граница ведёт в afterCancel).
+         h1 (снаружи) приходит в joinIn первым: h2in жив и достижим через ребро НЕПРЕРЫВАЮЩЕЙ
+         границы bTrig (bTrig в fTrig в joinIn) - joinIn припаркован.
+         cTask в cancelEnd на scope-токене транзакции: cancel-end гасит транзакцию,
+         ЧИСТИТ joinIn (фикс) и продолжает cancel-границей cb в afterCancel в endCancel.
+         БЕЗ чистки: joinIn висит в openArrivals + мост => joinMain НЕ срабатывает
+         (joinMain COMPLETED=0, вечное висение без инцидента). С чисткой: joinMain ровно 1 раз.
+         joinIn сам стрелять НЕ должен (хвост отменённого scope, POF-2 раунда 4 C8-35). -->
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fH1</bpmn:outgoing>
+      <bpmn:outgoing>fSub</bpmn:outgoing>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fB</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fH1" name="fH1" sourceRef="pfork" targetRef="h1" />
+    <bpmn:sequenceFlow id="fSub" name="fSub" sourceRef="pfork" targetRef="subProc" />
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="pfork" targetRef="taskA" />
+    <bpmn:sequenceFlow id="fB" name="fB" sourceRef="pfork" targetRef="taskB" />
+
+    <bpmn:userTask id="h1" name="h1">
+      <bpmn:incoming>fH1</bpmn:incoming>
+      <bpmn:outgoing>fH1Join</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fH1Join" name="fH1Join" sourceRef="h1" targetRef="joinIn" />
+
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:outgoing>fAMain</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fAMain" name="fAMain" sourceRef="taskA" targetRef="joinMain" />
+
+    <bpmn:userTask id="taskB" name="taskB">
+      <bpmn:incoming>fB</bpmn:incoming>
+      <bpmn:outgoing>fBMain</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fBMain" name="fBMain" sourceRef="taskB" targetRef="joinMain" />
+
+    <bpmn:subProcess id="subProc" name="subProc">
+      <bpmn:incoming>fSub</bpmn:incoming>
+      <bpmn:outgoing>fSubAfter</bpmn:outgoing>
+      <bpmn:startEvent id="sStart" name="sStart">
+        <bpmn:outgoing>fSChain</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="fSChain" name="fSChain" sourceRef="sStart" targetRef="subFork" />
+      <bpmn:parallelGateway id="subFork" name="subFork">
+        <bpmn:incoming>fSChain</bpmn:incoming>
+        <bpmn:outgoing>fH2</bpmn:outgoing>
+        <bpmn:outgoing>fTrigIn</bpmn:outgoing>
+      </bpmn:parallelGateway>
+      <bpmn:sequenceFlow id="fH2" name="fH2" sourceRef="subFork" targetRef="h2in" />
+      <bpmn:sequenceFlow id="fTrigIn" name="fTrigIn" sourceRef="subFork" targetRef="cTask" />
+      <bpmn:userTask id="h2in" name="h2in">
+        <bpmn:incoming>fH2</bpmn:incoming>
+        <bpmn:outgoing>fH2Trig</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fH2Trig" name="fH2Trig" sourceRef="h2in" targetRef="joinIn" />
+      <bpmn:scriptTask id="cTask" name="cTask" scriptFormat="feel" resultVariable="log">
+        <bpmn:incoming>fTrigIn</bpmn:incoming>
+        <bpmn:outgoing>fTrigCancel</bpmn:outgoing>
+        <bpmn:script>log + 1</bpmn:script>
+      </bpmn:scriptTask>
+      <bpmn:sequenceFlow id="fTrigCancel" name="fTrigCancel" sourceRef="cTask" targetRef="cancelEnd" />
+      <bpmn:endEvent id="cancelEnd" name="cancelEnd">
+        <bpmn:incoming>fTrigCancel</bpmn:incoming>
+        <bpmn:cancelEventDefinition id="cad1" />
+      </bpmn:endEvent>
+      <!--   bTrig: НЕПРЕРЫВАЮЩАЯ таймерная граница на h2in (PT100H - за тест не выстрелит).
+           Чистое МОДЕЛЬНОЕ ребро h2in  через (bTrig)вfTrigвjoinIn: пока h2in жив, joinIn
+           видит живого доставщика и паркуется; хост умер - ребро исчерпано. -->
+      <bpmn:boundaryEvent id="bTrig" name="bTrig" attachedToRef="h2in" cancelActivity="false">
+        <bpmn:outgoing>fTrig</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="bTrigDef">
+          <bpmn:timeDuration>PT100H</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:boundaryEvent>
+      <bpmn:sequenceFlow id="fTrig" name="fTrig" sourceRef="bTrig" targetRef="joinIn" />
+      <bpmn:inclusiveGateway id="joinIn" name="joinIn">
+        <bpmn:incoming>fH1Join</bpmn:incoming>
+        <bpmn:incoming>fTrig</bpmn:incoming>
+        <bpmn:outgoing>fInTask</bpmn:outgoing>
+      </bpmn:inclusiveGateway>
+      <bpmn:sequenceFlow id="fInTask" name="fInTask" sourceRef="joinIn" targetRef="taskY" />
+      <bpmn:userTask id="taskY" name="taskY">
+        <bpmn:incoming>fInTask</bpmn:incoming>
+      </bpmn:userTask>
+      <!--   bndY: МОСТ - НЕПРЕРЫВАЮЩАЯ таймерная граница на taskY (taskY никогда не стартует,
+           граница никогда не взводится/не исчерпывается - ребро чисто модельное):
+           joinIn в taskY  через (bndY)в fBnd в joinMain. -->
+      <bpmn:boundaryEvent id="bndY" name="bndY" attachedToRef="taskY" cancelActivity="false">
+        <bpmn:outgoing>fBnd</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="bndYDef">
+          <bpmn:timeDuration>PT100H</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:boundaryEvent>
+      <bpmn:sequenceFlow id="fBnd" name="fBnd" sourceRef="bndY" targetRef="joinMain" />
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="fSubAfter" name="fSubAfter" sourceRef="subProc" targetRef="joinMain" />
+
+    <bpmn:boundaryEvent id="cancelBnd" name="cancelBnd" attachedToRef="subProc">
+      <bpmn:outgoing>fCancelBnd</bpmn:outgoing>
+      <bpmn:cancelEventDefinition id="cad2" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fCancelBnd" name="fCancelBnd" sourceRef="cancelBnd" targetRef="afterCancel" />
+    <bpmn:scriptTask id="afterCancel" name="afterCancel" scriptFormat="feel" resultVariable="log">
+      <bpmn:incoming>fCancelBnd</bpmn:incoming>
+      <bpmn:outgoing>fCancelDone</bpmn:outgoing>
+      <bpmn:script>log + 1000</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="fCancelDone" name="fCancelDone" sourceRef="afterCancel" targetRef="endCancel" />
+    <bpmn:endEvent id="endCancel" name="endCancel">
+      <bpmn:incoming>fCancelDone</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:inclusiveGateway id="joinMain" name="joinMain">
+      <bpmn:incoming>fAMain</bpmn:incoming>
+      <bpmn:incoming>fSubAfter</bpmn:incoming>
+      <bpmn:incoming>fBMain</bpmn:incoming>
+      <bpmn:incoming>fBnd</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="joinMain" targetRef="taskAfter" />
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
