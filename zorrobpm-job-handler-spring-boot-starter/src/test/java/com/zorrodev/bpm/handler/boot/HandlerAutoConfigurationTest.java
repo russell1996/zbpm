@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -113,9 +114,9 @@ class HandlerAutoConfigurationTest {
         verify(amqpAdmin).declareQueue(argThat(q -> q.getName().equals("zorrobpm.jobs.taskA")));
         verify(amqpAdmin).declareQueue(argThat(q -> q.getName().equals("zorrobpm.jobs.taskB")));
 
-        // Two containers created (one per handler)
-        verify(connectionFactory, times(2)).createListenerContainer();
-        verify(container, times(2)).start();
+        // Two containers created (one per handler) + WO-REL-64 poison-retry container
+        verify(connectionFactory, times(3)).createListenerContainer();
+        verify(container, times(3)).start();
     }
 
     @Test
@@ -131,23 +132,34 @@ class HandlerAutoConfigurationTest {
         // When
         configuration.init();
 
-        // Then: queue not declared (already exists)
-        verify(amqpAdmin, times(0)).declareQueue(any());
+        // Then: job queue not declared (already exists); WO-REL-64 poison
+        // topology still declared (new queues, unrelated to the job queue).
+        verify(amqpAdmin, times(0)).declareQueue(
+            argThat(q -> q != null && q.getName().equals("zorrobpm.jobs.taskA")));
+        verify(amqpAdmin, times(1)).declareQueue(
+            argThat(q -> q != null
+                && q.getName().equals(CompletionPoisonRetryListener.POISON_QUEUE)));
+        verify(amqpAdmin, times(1)).declareQueue(
+            argThat(q -> q != null
+                && q.getName().equals(CompletionPoisonRetryListener.RETRY_DELAY_QUEUE)));
     }
 
     @Test
-    @DisplayName("No handlers found — no queues or containers created")
+    @DisplayName("No handlers found — no job queues or containers created (poison-retry still starts)")
     void noHandlers() {
         when(applicationContext.getBeansOfType(JobHandler.class))
                 .thenReturn(Map.of());
+        when(connectionFactory.createListenerContainer()).thenReturn(container);
 
         // When
         configuration.init();
 
-        // Then: no containers created, no setMessageConverter called
+        // Then: no job containers created — but WO-REL-64 poison-retry container
+        // starts anyway (any live worker drains poison parked by others).
         verify(connectionFactory, times(1)).setMessageConverter(any());
         verify(rabbitTemplate, times(1)).setMessageConverter(any());
-        verify(connectionFactory, times(0)).createListenerContainer();
+        verify(connectionFactory, times(1)).createListenerContainer();
+        verify(container).setQueueNames(CompletionPoisonRetryListener.POISON_QUEUE);
     }
 
     @Test
@@ -201,8 +213,69 @@ class HandlerAutoConfigurationTest {
 
         ArgumentCaptor<org.springframework.amqp.core.MessageListener> listenerCaptor =
                 ArgumentCaptor.forClass(org.springframework.amqp.core.MessageListener.class);
-        verify(container).setMessageListener(listenerCaptor.capture());
-        assertThat(listenerCaptor.getValue()).isInstanceOf(JobCompletionListener.class);
+        // WO-REL-64: контейнеров два (рабочий + poison-повтор) на одном моке —
+        // забираем именно рабочий слушатель, а не первый попавшийся.
+        verify(container, times(2)).setMessageListener(listenerCaptor.capture());
+        assertThat(listenerCaptor.getAllValues())
+            .filteredOn(JobCompletionListener.class::isInstance)
+            .hasSize(1);
+    }
+
+    @Test
+    @DisplayName("WO-REL-64: poison-retry container subscribes the poison queue with its own listener")
+    void poisonRetryListenerSubscribed() {
+        when(applicationContext.getBeansOfType(JobHandler.class))
+                .thenReturn(Map.of("handlerA", handlerA));
+        when(handlerA.getJob()).thenReturn("taskA");
+        when(connectionFactory.createListenerContainer()).thenReturn(container);
+        when(amqpAdmin.getQueueInfo(anyString())).thenReturn(null);
+
+        configuration.init();
+
+        // Топология яда объявлена настоящим declare (не копией аргументов —
+        // G-N: убери declarePoisonTopology из init, и тест красный).
+        verify(amqpAdmin).declareQueue(argThat(q -> q != null
+            && q.getName().equals(CompletionPoisonRetryListener.POISON_QUEUE)));
+        verify(amqpAdmin).declareQueue(argThat(q -> q != null
+            && q.getName().equals(CompletionPoisonRetryListener.RETRY_DELAY_QUEUE)));
+
+        ArgumentCaptor<String> queueNames = ArgumentCaptor.forClass(String.class);
+        verify(container, times(2)).setQueueNames(queueNames.capture());
+        assertThat(queueNames.getAllValues()).containsExactlyInAnyOrder(
+            "zorrobpm.jobs.taskA", CompletionPoisonRetryListener.POISON_QUEUE);
+
+        ArgumentCaptor<org.springframework.amqp.core.MessageListener> listenerCaptor =
+                ArgumentCaptor.forClass(org.springframework.amqp.core.MessageListener.class);
+        verify(container, times(2)).setMessageListener(listenerCaptor.capture());
+        assertThat(listenerCaptor.getAllValues())
+            .filteredOn(CompletionPoisonRetryListener.class::isInstance)
+            .hasSize(1);
+        verify(container, times(2)).start();
+    }
+
+    @Test
+    @DisplayName("WO-REL-64: poison topology and listener absent when parking is disabled")
+    void noPoisonTopologyWhenDisabled() {
+        org.springframework.test.util.ReflectionTestUtils.setField(
+            configuration, "completionPoisonEnabled", false);
+        when(applicationContext.getBeansOfType(JobHandler.class))
+                .thenReturn(Map.of("handlerA", handlerA));
+        when(handlerA.getJob()).thenReturn("taskA");
+        when(connectionFactory.createListenerContainer()).thenReturn(container);
+        when(amqpAdmin.getQueueInfo(anyString())).thenReturn(null);
+
+        configuration.init();
+
+        verify(amqpAdmin, never()).declareQueue(argThat(q -> q != null
+            && q.getName().equals(CompletionPoisonRetryListener.POISON_QUEUE)));
+        verify(amqpAdmin, never()).declareQueue(argThat(q -> q != null
+            && q.getName().equals(CompletionPoisonRetryListener.RETRY_DELAY_QUEUE)));
+        ArgumentCaptor<org.springframework.amqp.core.MessageListener> listenerCaptor =
+                ArgumentCaptor.forClass(org.springframework.amqp.core.MessageListener.class);
+        verify(container, times(1)).setMessageListener(listenerCaptor.capture());
+        assertThat(listenerCaptor.getAllValues())
+            .filteredOn(CompletionPoisonRetryListener.class::isInstance)
+            .isEmpty();
     }
 
     @Test
@@ -218,8 +291,13 @@ class HandlerAutoConfigurationTest {
 
         ArgumentCaptor<org.springframework.amqp.core.MessageListener> listenerCaptor =
                 ArgumentCaptor.forClass(org.springframework.amqp.core.MessageListener.class);
-        verify(container).setMessageListener(listenerCaptor.capture());
-        org.springframework.amqp.core.MessageListener listener = listenerCaptor.getValue();
+        // WO-REL-64: контейнеров два — забираем рабочий слушатель из всех.
+        verify(container, times(2)).setMessageListener(listenerCaptor.capture());
+        org.springframework.amqp.core.MessageListener listener = listenerCaptor.getAllValues()
+            .stream()
+            .filter(JobCompletionListener.class::isInstance)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no JobCompletionListener subscribed"));
 
         java.util.UUID taskId = java.util.UUID.randomUUID();
         String body = "{\"serviceTaskId\":\"" + taskId + "\",\"job\":\"taskA\",\"variables\":{}}";
@@ -265,20 +343,30 @@ class HandlerAutoConfigurationTest {
         // When: init НЕ бросает — приложение стартует без брокера (критерий 1: не "healthy и глухой").
         configuration.init();
 
-        // Then: ОБА контейнера созданы, привязаны и СТАРТОВАНЫ (reconnect-цикл подхватит брокер).
+        // Then: ОБА рабочих контейнера созданы, привязаны и СТАРТОВАНЫ (reconnect-цикл
+        // подхватит брокер) + WO-REL-64 poison-контейнер (ядро очереди течёт, повтор отделён).
         ArgumentCaptor<String> queueNames = ArgumentCaptor.forClass(String.class);
-        verify(container, times(2)).setQueueNames(queueNames.capture());
+        verify(container, times(3)).setQueueNames(queueNames.capture());
         assertThat(queueNames.getAllValues()).containsExactlyInAnyOrder(
-            "zorrobpm.jobs.zorrobpm:http", "zorrobpm.jobs.ext-billing");
+            "zorrobpm.jobs.zorrobpm:http", "zorrobpm.jobs.ext-billing",
+            CompletionPoisonRetryListener.POISON_QUEUE);
         ArgumentCaptor<org.springframework.amqp.core.MessageListener> listenerCaptor =
                 ArgumentCaptor.forClass(org.springframework.amqp.core.MessageListener.class);
-        verify(container, times(2)).setMessageListener(listenerCaptor.capture());
-        assertThat(listenerCaptor.getAllValues()).allMatch(JobCompletionListener.class::isInstance);
+        verify(container, times(3)).setMessageListener(listenerCaptor.capture());
+        assertThat(listenerCaptor.getAllValues())
+            .filteredOn(JobCompletionListener.class::isInstance)
+            .hasSize(2);
+        assertThat(listenerCaptor.getAllValues())
+            .filteredOn(CompletionPoisonRetryListener.class::isInstance)
+            .hasSize(1);
         // Очередь может появиться позже (declare на reconnect) — контейнер не умирает, а ждёт.
-        verify(container, times(2)).setMissingQueuesFatal(false);
-        verify(container, times(2)).start();
-        // Стартовых declare'ов не было (брокер лежал), но redeclare запланирован на reconnect.
-        verify(amqpAdmin, times(0)).declareQueue(any());
+        verify(container, times(3)).setMissingQueuesFatal(false);
+        verify(container, times(3)).start();
+        // Стартовых РАБОЧИХ declare'ов не было (брокер лежал), но redeclare
+        // запланирован на reconnect. WO-REL-64: poison-топология declare'ится
+        // ПРЯМО (не per-handler): брокер лежал и тут — declare тоже отложен.
+        verify(amqpAdmin, times(0)).declareQueue(
+            argThat(q -> q != null && q.getName().startsWith("zorrobpm.jobs.")));
         ArgumentCaptor<ConnectionListener> reconnectCaptor =
                 ArgumentCaptor.forClass(ConnectionListener.class);
         verify(cachingConnectionFactory, times(2)).addConnectionListener(reconnectCaptor.capture());
@@ -317,8 +405,9 @@ class HandlerAutoConfigurationTest {
         // When: init НЕ бросает.
         configuration.init();
 
-        // Then: контейнер стартован, redeclare запланирован.
-        verify(container, times(1)).start();
+        // Then: контейнеры стартованы (рабочий + WO-REL-64 poison: яд-топология
+        // declare'ится прямо, брокер на неё не умирал), redeclare запланирован.
+        verify(container, times(2)).start();
         ArgumentCaptor<ConnectionListener> reconnectCaptor =
                 ArgumentCaptor.forClass(ConnectionListener.class);
         verify(cachingConnectionFactory, times(1)).addConnectionListener(reconnectCaptor.capture());

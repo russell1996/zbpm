@@ -10,11 +10,8 @@ import com.zorrodev.bpm.exchange.TraceHeaders;
 import com.zorrodev.bpm.handler.JobHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
-import org.springframework.amqp.AmqpException;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageListener;
-import org.springframework.amqp.rabbit.connection.ConnectionFactory;
-import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import java.time.Duration;
@@ -161,7 +158,7 @@ public class JobCompletionListener implements MessageListener {
 
     /**
      * WO-C8-36 (red-team 1.2 + пересмотр HOLD-6): немаршрутизиваемость читается с
-     * САМОЙ отправки — {@link CorrelationData#getReturned()}, который spring-amqp
+     * САМОЙ отправки — {@link org.springframework.amqp.rabbit.connection.CorrelationData#getReturned()}, который spring-amqp
      * заполняет в {@code basic.return}-обработчике ({@code PublisherCallbackChannelImpl});
      * разделяемый сет возвратов НЕ держим.
      *
@@ -228,6 +225,84 @@ public class JobCompletionListener implements MessageListener {
         return confirmsUnavailableCount.get();
     }
 
+    /**
+     * WO-REL-64: потолок попыток публикации одного результата.
+     *
+     * <p>После стольких неудач подряд результат паркуется в poison-очередь
+     * (см. {@code CompletionPoisonRetryListener}), а вход подтверждается —
+     * основная очередь продолжает работать. Без потолка одно отравленное
+     * задание держало единственный поток потребителя вечно (измерено в
+     * WO-C8-36, принято временно, закрывается здесь).
+     */
+    static final int DEFAULT_MAX_COMPLETION_ATTEMPTS = 10;
+
+    /** WO-REL-64: пол — при 0 попыток результат парковался бы сразу, не пытаясь. */
+    static final int MIN_MAX_COMPLETION_ATTEMPTS = 1;
+
+    /**
+     * WO-REL-64: потолок потолка — та же логика, что M-2 у confirm-таймаута
+     * (P-41: новая ручка рядом с проверяемой не должна быть ловушкой с другой
+     * стороны): сотни попыток по 30с — это годы горячей очереди вместо
+     * видимой парковки.
+     */
+    static final int MAX_MAX_COMPLETION_ATTEMPTS = 100;
+
+    private int maxCompletionAttempts = DEFAULT_MAX_COMPLETION_ATTEMPTS;
+    private boolean poisonParkingEnabled = true;
+    private String poisonQueueName = CompletionPoisonRetryListener.POISON_QUEUE;
+
+    /** WO-REL-64: сколько результатов ушло в poison-очередь (не drop, не потеря). */
+    private final java.util.concurrent.atomic.AtomicLong poisonedCount =
+        new java.util.concurrent.atomic.AtomicLong(0);
+
+    /** WO-REL-64: сколько результатов ушло в poison-очередь. */
+    public long poisonedCountForTest() {
+        return poisonedCount.get();
+    }
+
+    /**
+     * WO-REL-64: потолок попыток публикации. Конфиг — недоверенный ввод:
+     * зажимаем обе границы с warn'ом (та же дисциплина, что
+     * {@link #setConfirmTimeoutMs}).
+     */
+    public void setMaxCompletionAttempts(int maxCompletionAttempts) {
+        if (maxCompletionAttempts < MIN_MAX_COMPLETION_ATTEMPTS) {
+            log.warn("completion-max-attempts={} is below the {} floor — clamped. "
+                    + "Zero attempts would park every result without even trying.",
+                maxCompletionAttempts, MIN_MAX_COMPLETION_ATTEMPTS);
+            this.maxCompletionAttempts = MIN_MAX_COMPLETION_ATTEMPTS;
+            return;
+        }
+        if (maxCompletionAttempts > MAX_MAX_COMPLETION_ATTEMPTS) {
+            log.warn("completion-max-attempts={} is above the {} ceiling — clamped. "
+                    + "Hundreds of 30s-spaced attempts keep a poisoned result hot for years "
+                    + "instead of parking it visibly.",
+                maxCompletionAttempts, MAX_MAX_COMPLETION_ATTEMPTS);
+            this.maxCompletionAttempts = MAX_MAX_COMPLETION_ATTEMPTS;
+            return;
+        }
+        this.maxCompletionAttempts = maxCompletionAttempts;
+    }
+
+    /** Тест-хук: применённый потолок попыток. */
+    int maxCompletionAttemptsForTest() {
+        return maxCompletionAttempts;
+    }
+
+    /**
+     * WO-REL-64: выключатель парковки (осознанный opt-out в старую семантику
+     * «бесконечный backoff на потоке потребителя» — см. javadoc
+     * {@code CompletionRedeliveryBackoff} про HOL-блокировку).
+     */
+    public void setPoisonParkingEnabled(boolean poisonParkingEnabled) {
+        this.poisonParkingEnabled = poisonParkingEnabled;
+    }
+
+    /** Тест-хук: очередь парковки (в проде — {@code POISON_QUEUE}). */
+    void setPoisonQueueName(String poisonQueueName) {
+        this.poisonQueueName = poisonQueueName;
+    }
+
     /** WO-C8-36: сколько completion'ов поймано как unroutable. */
     public long unroutableCountForTest() {
         return unroutableCount.get();
@@ -254,19 +329,11 @@ public class JobCompletionListener implements MessageListener {
 
     /**
      * WO-C8-36: доступны ли publisher confirms на фабрике шаблона.
-     * {@code waitForConfirmsOrDie} на канале без confirms кидает ПОСЛЕ успешной
-     * публикации → каждый redelivery публиковал бы ещё один дубликат (поймано
-     * живьём: 14k сообщений в очереди — см. отчёт). Поэтому wait — только при
-     * реальных confirms (прод-стартер ставит CORRELATED); прямое использование
-     * без confirms — старое поведение (sync-исключения) + один warn.
+     * Делегирует общему отправителю (тот же предикат — см.
+     * {@link ConfirmedCompletionSender#confirmsAvailable}).
      */
     private boolean confirmsAvailable() {
-        try {
-            ConnectionFactory cf = rabbitTemplate.getConnectionFactory();
-            return cf != null && cf.isPublisherConfirms();
-        } catch (RuntimeException e) {
-            return false;
-        }
+        return ConfirmedCompletionSender.confirmsAvailable(rabbitTemplate);
     }
 
     public JobCompletionListener(JobHandler handler, RabbitTemplate rabbitTemplate,
@@ -351,7 +418,7 @@ public class JobCompletionListener implements MessageListener {
         if (cached != null) {
             // Redelivery: работа уже сделана, переотправляем только результат.
             // Сбой и здесь — тоже проброс (вход не подтверждаем).
-            sendCompletion(cached);
+            sendCompletion(cached, cached.getCompletionId());
             return;
         }
 
@@ -388,10 +455,30 @@ public class JobCompletionListener implements MessageListener {
         if (correlationId != null) {
             resultCache.put(correlationId, completeData);
         }
-        sendCompletion(completeData);
+        // WO-REL-64 (red-team H-1): ключ шкалы попыток обязан быть стабилен на
+        // redelivery того же входящего сообщения. При correlationId это
+        // completionId (объект переигрывается из кэша, id тот же); БЕЗ
+        // correlationId кэша нет и каждый redelivery создаёт новый объект с
+        // новым UUID — ключ по completionId давал бы вечно «попытку №1» и
+        // потолок не наступал бы никогда. Fallback — serviceTaskId + фаза:
+        // то же сообщение переигрывается с теми же значениями, шкала растёт.
+        // Два РАЗНЫХ задания одного serviceTask делят fallback-шкалу — это
+        // fail-safe направление (парковка раньше, результат не теряется).
+        String attemptKey = correlationId != null ? null : fallbackAttemptKey(completeData);
+        sendCompletion(completeData, attemptKey);
     }
 
-    private void sendCompletion(ServiceTaskCompleteData completeData) {
+    /**
+     * WO-REL-64 (red-team H-1): ключ шкалы для отправок без correlationId —
+     * стабилен между redelivery одного сообщения (те же serviceTaskId/фаза).
+     */
+    private static String fallbackAttemptKey(ServiceTaskCompleteData completeData) {
+        return "nocorr:" + completeData.getServiceTaskId()
+            + "#" + completeData.getDispatchPhase()
+            + "#" + completeData.getDispatchIndex();
+    }
+
+    private void sendCompletion(ServiceTaskCompleteData completeData, String attemptKeyOverride) {
         // WO-C8-36 (CR-13): per-send CorrelationData — confirm/return маппятся на
         // ЭТУ отправку (общий confirm-callback движка без correlation data их
         // игнорировал — та же дыра, что чиним).
@@ -405,99 +492,30 @@ public class JobCompletionListener implements MessageListener {
             completeData.setCompletionId(idFromBody);
         }
         final String completionId = idFromBody;
-        CorrelationData correlationData = new CorrelationData(completionId);
+        boolean waitForConfirm = ensurePublisherConfirms && confirmsAvailable();
+        // WO-REL-64 (red-team H-1): null — обычный путь с correlationId
+        // (шкала по completionId, он стабилен через кэш).
+        final String attemptKey =
+            attemptKeyOverride != null ? attemptKeyOverride : completionId;
         try {
-            // WO-C8-36 (red-team blocker 1.1): RabbitTemplate.waitForConfirmsOrDie
-            // ТРЕБУЕТ scope invoke(...) — вне его бросает IllegalStateException
-            // («This operation is only available within the scope of an invoke
-            // operation», подтверждено байткодом spring-rabbit 4.0.4: метод читает
-            // ThreadLocal dedicatedChannels). Наш send идёт обычным
-            // convertAndSend, поэтому каждый completion падал бы с
-            // IllegalStateException → NACK входа → после retry-окна задание в DLQ,
-            // т.е. фикс давал противоположность заявленной гарантии.
-            // Заменяем на per-send confirm-future: корреляция ровно с ЭТОЙ
-            // отправкой (channel-wide waitForConfirms при concurrency 3-5 ждал бы
-            // чужие confirms и давал ложные NACK).
-            // WO-OBS-8: the completion hop carries the forwarded trace context as AMQP
-            // headers (the engine-side @RabbitListener reads them via @Headers) AND
-            // inside the converted body (belt and braces: the body fields feed the
-            // engine-internal Spring event when headers are stripped by an
-            // intermediate). Tolerant: absent when the job arrived untraced.
-            rabbitTemplate.convertAndSend(completeQueueName, completeData, m -> {
-                m.getMessageProperties().setCorrelationId(completionId);
-                if (completeData.getTraceParent() != null) {
-                    m.getMessageProperties().setHeader(TraceHeaders.TRACE_PARENT_HEADER,
-                        completeData.getTraceParent());
-                }
-                if (completeData.getProcessInstanceId() != null) {
-                    m.getMessageProperties().setHeader(TraceHeaders.PROCESS_INSTANCE_ID_HEADER,
-                        completeData.getProcessInstanceId());
-                }
-                return m;
-            }, correlationData);
-            if (ensurePublisherConfirms && confirmsAvailable()) {
-                // Синхронный per-send confirm: NACK/timeout/разрыв до confirm →
-                // исключение (тот же transport-проброс, что выше — вход не
-                // подтверждается). Unroutable даёт confirm ack=true ПОСЛЕ
-                // basic.return — возврат ловится отдельно ниже (голый ack
-                // доставке не равен).
+            // WO-REL-64: сама отправка — через общего отправителя
+            // (Confirm/return-контракт WO-C8-36 — см. ConfirmedCompletionSender —
+            // здесь был дословно; per-send CorrelationData, trace-forward
+            // WO-OBS-8 и waitForConfirmsOrDie-запрет red-team blocker 1.1 —
+            // всё переехало туда без изменения поведения).
+            ConfirmedCompletionSender.sendAndConfirm(rabbitTemplate, completeQueueName,
+                completeData, null, null, confirmTimeoutMs, waitForConfirm, unroutableCount);
+            if (waitForConfirm) {
+                // NACK/timeout/разрыв до confirm и unroutable-возврат бросают из
+                // общего отправителя (см. выше) — сюда доходим только когда
+                // результат надёжно опубликован и маршрутизируем.
                 //
-                // WO-C8-36 (red-team HOLD-6 re-pass): порядок return-vs-confirm.
-                // Брокер шлёт basic.return ДО confirm-ack на том же канале;
-                // spring-amqp доставляет оба колбэка последовательно через
-                // executor соединения, а future завершается только по confirm —
-                // в штатном случае к моменту проверки callback уже отработал и
-                // id в сете. Строгого happens-before спецификация executor'а не
-                // даёт — остаточное окно (return опоздал ПОСЛЕ confirm): текущий
-                // send засчитан успехом, вход ACK'нут, а сообщение
-                // немаршрутизируемо = результат потерян (CR-13-режим в
-                // миниатюре; окно микроскопическое — return идёт до confirm на том
-                // же канале, опоздание требует переупорядочивания в executor'е).
-                // Это остаточный риск, а не «ложного успеха нет»: он не чинится
-                // TTL-чисткой (сет возвратов удалён в re-pass HOLD-6) и не чинится
-                // повтором — чтобы сузить его до нуля, нужен was-accepted-сигнал
-                // брокера, которого в AMQP 0-9-1 нет. Оставлен явным, не спрятан.
-                //
-                // Per-send future вместо waitForConfirmsOrDie: у того есть
-                // invoke-scope-требование (см. комментарий выше про dedicatedChannels),
-                // а channel-wide барьер при concurrency 3-5 ждал бы чужие confirms.
-                try {
-                    CorrelationData.Confirm confirm =
-                        correlationData.getFuture().get(confirmTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
-                    if (!confirm.isAck()) {
-                        throw new AmqpException("Completion " + completionId
-                            + " was NACKed by broker: " + confirm.getReason()
-                            + " — will be redelivered");
-                    }
-                } catch (java.util.concurrent.ExecutionException e) {
-                    throw new AmqpException("Completion " + completionId
-                        + " confirm failed: " + e.getCause(), e.getCause());
-                } catch (java.util.concurrent.TimeoutException e) {
-                    throw new AmqpException("Completion " + completionId
-                        + " was not confirmed within " + confirmTimeoutMs + "ms"
-                        + " — will be redelivered", e);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new AmqpException("Completion " + completionId
-                        + " confirm wait was interrupted — will be redelivered", e);
-                }
-                // Голый confirm ack НЕ равен доставке: брокер подтверждает ПРИЁМ
-                // и для немаршрутизируемого сообщения (сперва basic.return, потом
-                // ack). Ответ лежит на самой отправке (см. javadoc про
-                // getReturned) — гонки нет, чужой отправки не коснёмся.
-                org.springframework.amqp.core.ReturnedMessage returnedMessage =
-                    correlationData.getReturned();
-                if (returnedMessage != null) {
-                    unroutableCount.incrementAndGet();
-                    throw new AmqpException("Completion " + completionId
-                        + " returned as unroutable by broker (mandatory): "
-                        + returnedMessage.getReplyCode() + " " + returnedMessage.getReplyText()
-                        + " — will be redelivered");
-                }
-                // Доставка подтверждена и маршрутизируема: сбрасываем шкалу
-                // backoff для этой отправки, иначе задание, у которого сначала
-                // был немаршрутизируемый маршрут, осталось бы на 30с навсегда.
-                redeliveryBackoffRef.get().reset(completionId);
+                // WO-C8-36 (red-team HOLD-6 re-pass), остаточное окно return-vs-confirm:
+                // брокер шлёт basic.return ДО confirm-ack на том же канале, окно
+                // «return опоздал ПОСЛЕ confirm» микроскопическое и в AMQP 0-9-1
+                // неустранимо (нужен was-accepted-сигнал, которого нет). Оставлено
+                // явным, не спрятано — было здесь дословно, переехало в отчёт.
+                redeliveryBackoffRef.get().reset(attemptKey);
             } else if (ensurePublisherConfirms) {
                 long n = confirmsUnavailableCount.incrementAndGet();
                 log.warn("Publisher confirms unavailable on worker connection factory "
@@ -505,38 +523,80 @@ public class JobCompletionListener implements MessageListener {
                     + "falls back to sync-exceptions-only (fallback #{} until confirms appear)",
                     completionId, n);
             }
-        } catch (AmqpException e) {
-            // Transport failure: проброс наружу — контейнер NACK'ает/ретраит вход,
-            // результат (уже в resultCache) не теряется. НЕ логируем как deserialize.
-            backOffBeforeRedelivery(completionId, e);
-            throw e;
         } catch (RuntimeException e) {
-            // Не-AMQP сбой отправки (сериализация конвертера и т.п.) — та же семантика.
-            backOffBeforeRedelivery(completionId, e);
-            throw e;
+            // Transport failure: потолок → парковка в poison (вход ACK'ается,
+            // очередь течёт), иначе проброс наружу — контейнер NACK'ает/ретраит
+            // вход, результат (уже в resultCache) не теряется. НЕ логируем как
+            // deserialize.
+            handleSendFailure(completeData, completionId, attemptKey, e);
         }
     }
 
     /**
-     * WO-C8-36 (M-1): перед тем как отказ уйдёт наружу (и контейнер сделает
-     * requeue), выдерживаем ограниченный экспоненциальный интервал.
+     * WO-REL-64: отказ публикации результата — либо парковка, либо backoff и
+     * проброс.
      *
-     * <p>Ключ счётчика — {@code completionId}: он стабилен на переотправке одной
-     * отправки (результат переигрывается из кэша), поэтому наши же повторы
-     * копятся в одну шкалу, а разные задания не замедляют друг друга.
-     *
-     * <p>Лог — ERROR, а не WARN: без задержки это был тихий цикл, и WARN на
-     * каждой итерации его не делал заметным. Сообщение называет попытку и
-     * интервал, чтобы по логу было видно, что темп действительно растёт.
+     * <p>Счётчик попыток ведётся на отправку: ключ — completionId при наличии
+     * correlationId (стабилен на redelivery через resultCache) либо
+     * fallback-ключ serviceTaskId#фаза без него (см. H-1 выше). N-я неудача
+     * подряд при включённой парковке и {@code N >= maxCompletionAttempts} —
+     * последняя: результат уходит в poison-очередь verbatim (тот же completionId —
+     * движок дедуплицирует), шкала сбрасывается, вход подтверждается
+     * (нормальный возврат — очередь продолжает работать). Иначе — ограниченный
+     * backoff и проброс исходного исключения (вход НЕ подтверждается).
      */
-    private void backOffBeforeRedelivery(String completionId, Exception cause) {
+    private void handleSendFailure(ServiceTaskCompleteData completeData, String completionId,
+            String attemptKey, RuntimeException cause) {
         CompletionRedeliveryBackoff backoff = redeliveryBackoffRef.get();
-        int attempt = backoff.recordFailedAttempt(completionId);
+        int attempt = backoff.recordFailedAttempt(attemptKey);
+        if (poisonParkingEnabled && attempt >= maxCompletionAttempts) {
+            try {
+                parkPoisonedCompletion(completeData, completionId, attempt, cause);
+            } catch (RuntimeException parkFailure) {
+                // Сама парковка не удалась (брокер в беде): терять результат
+                // нельзя — откатываемся к старому поведению (backoff + проброс).
+                // Попытка уже засчитана выше, второй раз не считаем.
+                long delay = backoff.awaitBeforeRedelivery(attemptKey, attempt);
+                log.error("Completion {} could not be parked in {} ({}) — "
+                        + "falling back to redelivery #{} in {}ms: {}",
+                    completionId, poisonQueueName, parkFailure.getMessage(),
+                    attempt, delay, cause.getMessage(), cause);
+                throw parkFailure;
+            }
+            backoff.reset(attemptKey);
+            long n = poisonedCount.incrementAndGet();
+            log.error("Completion {} parked in {} after {} failed attempts "
+                    + "(parked total={}): {} — main queue keeps flowing, "
+                    + "retry with growing delay from the poison queue",
+                completionId, poisonQueueName, attempt, n, cause.getMessage());
+            return;
+        }
         redeliveryCount.incrementAndGet();
-        long delay = backoff.awaitBeforeRedelivery(completionId, attempt);
+        long delay = backoff.awaitBeforeRedelivery(attemptKey, attempt);
         log.error("Completion send failed (transport) — redelivery #{} of this send, "
                 + "retrying in {}ms (retry backoff is bounded 1s..30s and never drops the job): {}",
             attempt, delay, cause.getMessage());
+        throw cause;
+    }
+
+    /**
+     * WO-REL-64: парковка отравленного результата — та же надёжная отправка
+     * (confirm/return), что основная, плюс заголовки попыток и причины.
+     */
+    private void parkPoisonedCompletion(ServiceTaskCompleteData completeData, String completionId,
+            int attempt, RuntimeException cause) {
+        String reason = cause.getClass().getSimpleName()
+            + (cause.getMessage() != null
+                ? ": " + truncate(cause.getMessage(), 500) : "");
+        ConfirmedCompletionSender.sendAndConfirm(rabbitTemplate, poisonQueueName, completeData,
+            Map.of(CompletionPoisonRetryListener.HDR_ATTEMPTS, attempt,
+                CompletionPoisonRetryListener.HDR_REASON, reason),
+            null, confirmTimeoutMs,
+            ensurePublisherConfirms && confirmsAvailable(), unroutableCount);
+    }
+
+    private static String truncate(String s, int max) {
+        return s.length() <= max ? s : s.substring(0, max);
     }
 
     /** Тест-хук: сколько результатов сейчас закэшировано (не размер кэша Caffeine). */
