@@ -29,17 +29,18 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * WO-C8-38 (C38-2, раунд 2, решение CTO по эскалации V10, вопрос 2, вариант А):
- * defense-in-depth чистка arrived-строк join'ов отменённого scope на четырёх путях,
- * которые раунд 1 не покрыл (error scope-walk, interrupting-escalation, terminate
- * in-scope, cancel-end транзакции).
+ * WO-C8-38 (C38-2, раунд 2, решение CTO по эскалации V10, вопрос 2, вариант А;
+ * раунд 3, БЛОКИРУЮЩАЯ №1 рецензии r3): чистка arrived-строк join'ов отменённого
+ * scope на четырёх путях, которые раунд 1 не покрыл (error scope-walk,
+ * interrupting-escalation, terminate in-scope, cancel-end транзакции).
  *
- * <p>Сквозной живой IT для этих сайтов невозможен по теореме недостижимости (§8
- * отчёта: scope-ветки входят только на токене с {@code scopeActivityId}, а такой
- * токен один — живая парковка join и позиция триггера на нём несовместны). Поэтому
- * здесь — unit-доказательство ВЫЗОВА: каждый сайт в своей отменяющей ветке зовёт
- * {@code clearParallelGatewayArrivalsInJoins} с join'ами своего scope в ТОЙ ЖЕ
- * транзакции и БЕЗ резюма (резюм запрещён контрпримером раунда 4 C8-35).
+ * <p>Сквозные живые IT этих сайтов —
+ * {@code AdhocScopeArrivalCleanupIntegrationTests} 4/4 (ad-hoc scope + мост:
+ * чистка — ЖИВОЙ фикс живого сценария, каждая мутация «убрать строку» роняет
+ * свой IT). Здесь — unit-доказательство ВЫЗОВА: каждый сайт в своей отменяющей
+ * ветке зовёт {@code clearParallelGatewayArrivalsInJoins} с join'ами своего
+ * scope в ТОЙ ЖЕ транзакции и БЕЗ резюма (резюм запрещён контрпримером
+ * раунда 4 C8-35).
  *
  * <p>P-67: мутация «убрать строку чистки» роняет ровно свой тест (verify фиксирует
  * вызов). Containment ({@code inclusiveGatewayIdsInsideScope}) мокается — его

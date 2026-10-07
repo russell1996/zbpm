@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c838_adhoc_escalate" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:escalation id="esc1" name="overdue" escalationCode="ESC-1" />
+  <bpmn:process id="test-c838-adhoc-escalate-holds-neighbour-join" name="test-c838-adhoc-escalate-holds-neighbour-join" isExecutable="true">
+    <!-- WO-C8-38 (C38-2, раунд 3, БЛОКИРУЮЩАЯ №1 рецензии r3): та же ad-hoc топология,
+         что errwalk-вариант, триггер — ПРЕРЫВАЮЩАЯ escalation-граница на S2.
+         E бросает ESC-1 на scope-токене — interrupting-escalation walk ВХОДИТ.
+         Без чистки: joinMain=0, taskAfter=0, joinIn-хвост=1 — HANG.
+         С чисткой (throwEscalation interrupting, та же TX, без resume):
+         joinMain=1, taskAfter=1, joinIn=0, incidents=0.
+         Ход: complete taskY → complete A → complete E. -->
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fY</bpmn:outgoing>
+      <bpmn:outgoing>fS</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fY" name="fY" sourceRef="pfork" targetRef="taskY" />
+    <bpmn:sequenceFlow id="fS" name="fS" sourceRef="pfork" targetRef="S2" />
+
+    <bpmn:userTask id="taskY" name="taskY">
+      <bpmn:incoming>fY</bpmn:incoming>
+      <bpmn:outgoing>fYMain</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fYMain" name="fYMain" sourceRef="taskY" targetRef="joinMain" />
+
+    <bpmn:adHocSubProcess id="S2" name="S2">
+      <bpmn:incoming>fS</bpmn:incoming>
+      <bpmn:outgoing>fSubAfter</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:adHoc activeElementsCollection="=[&quot;A&quot;, &quot;B&quot;, &quot;E&quot;]" />
+      </bpmn:extensionElements>
+      <bpmn:userTask id="A" name="A">
+        <bpmn:outgoing>fAJoin</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fAJoin" name="fAJoin" sourceRef="A" targetRef="joinIn" />
+      <bpmn:userTask id="B" name="B">
+        <bpmn:outgoing>fBJoin</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fBJoin" name="fBJoin" sourceRef="B" targetRef="joinIn" />
+      <bpmn:userTask id="E" name="E">
+        <bpmn:outgoing>fTrigEsc</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fTrigEsc" name="fTrigEsc" sourceRef="E" targetRef="escEnd" />
+      <bpmn:endEvent id="escEnd" name="escEnd">
+        <bpmn:incoming>fTrigEsc</bpmn:incoming>
+        <bpmn:escalationEventDefinition id="eed1" escalationRef="esc1" />
+      </bpmn:endEvent>
+      <bpmn:inclusiveGateway id="joinIn" name="joinIn">
+        <bpmn:incoming>fAJoin</bpmn:incoming>
+        <bpmn:incoming>fBJoin</bpmn:incoming>
+        <bpmn:outgoing>fInTask</bpmn:outgoing>
+      </bpmn:inclusiveGateway>
+      <bpmn:sequenceFlow id="fInTask" name="fInTask" sourceRef="joinIn" targetRef="taskIn" />
+      <bpmn:userTask id="taskIn" name="taskIn">
+        <bpmn:incoming>fInTask</bpmn:incoming>
+      </bpmn:userTask>
+      <!-- bndH: МОСТ — см. errwalk-вариант. -->
+      <bpmn:boundaryEvent id="bndH" name="bndH" attachedToRef="taskIn" cancelActivity="false">
+        <bpmn:outgoing>fBnd</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="bndHDef">
+          <bpmn:timeDuration>PT100H</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:boundaryEvent>
+      <bpmn:sequenceFlow id="fBnd" name="fBnd" sourceRef="bndH" targetRef="joinMain" />
+    </bpmn:adHocSubProcess>
+    <bpmn:sequenceFlow id="fSubAfter" name="fSubAfter" sourceRef="S2" targetRef="joinMain" />
+
+    <bpmn:boundaryEvent id="escBndS2" name="escBndS2" attachedToRef="S2" cancelActivity="true">
+      <bpmn:outgoing>fEscBnd</bpmn:outgoing>
+      <bpmn:escalationEventDefinition id="eed2" escalationRef="esc1" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fEscBnd" name="fEscBnd" sourceRef="escBndS2" targetRef="bndEnd" />
+    <bpmn:endEvent id="bndEnd" name="bndEnd">
+      <bpmn:incoming>fEscBnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:inclusiveGateway id="joinMain" name="joinMain">
+      <bpmn:incoming>fYMain</bpmn:incoming>
+      <bpmn:incoming>fSubAfter</bpmn:incoming>
+      <bpmn:incoming>fBnd</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="joinMain" targetRef="taskAfter" />
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

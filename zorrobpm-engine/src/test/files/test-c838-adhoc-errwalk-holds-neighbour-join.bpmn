@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c838_adhoc_errwalk" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:error id="bizErr" name="Business Error" errorCode="E-1" />
+  <bpmn:process id="test-c838-adhoc-errwalk-holds-neighbour-join" name="test-c838-adhoc-errwalk-holds-neighbour-join" isExecutable="true">
+    <!-- WO-C8-38 (C38-2, раунд 3, БЛОКИРУЮЩАЯ №1 рецензии r3): опровержение теоремы
+         недостижимости живым путём. Ad-hoc S2 даёт ТРИ concurrent-позиции на ОДНОМ
+         scope-токене (внутренние корни диспатчатся на scope-токене, форка внутри нет):
+         A приходит в joinIn (парковка, B жив-доставщик), E бросает E-1 на том же
+         scope-токене — error scope-walk ВХОДИТ (tok.getScopeActivityId() != null).
+         Без чистки: мёртвая строка joinIn держит joinMain через мост
+         (joinIn→taskIn—(bndH)→fBnd→joinMain, canReach=true) + хвост отменённого
+         scope стреляет (joinIn=1): joinMain=0, taskAfter=0, incidents=0 — HANG.
+         С чисткой (ErrorEscalationThrower scope-walk, та же TX, без resume):
+         joinMain=1, taskAfter=1, joinIn=0, incidents=0.
+         Ход: complete taskY (joinMain паркуется) → complete A (joinIn паркуется,
+         B жив) → complete E (бросок, отмена S2 + чистка). -->
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fY</bpmn:outgoing>
+      <bpmn:outgoing>fS</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fY" name="fY" sourceRef="pfork" targetRef="taskY" />
+    <bpmn:sequenceFlow id="fS" name="fS" sourceRef="pfork" targetRef="S2" />
+
+    <bpmn:userTask id="taskY" name="taskY">
+      <bpmn:incoming>fY</bpmn:incoming>
+      <bpmn:outgoing>fYMain</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fYMain" name="fYMain" sourceRef="taskY" targetRef="joinMain" />
+
+    <bpmn:adHocSubProcess id="S2" name="S2">
+      <bpmn:incoming>fS</bpmn:incoming>
+      <bpmn:outgoing>fSubAfter</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:adHoc activeElementsCollection="=[&quot;A&quot;, &quot;B&quot;, &quot;E&quot;]" />
+      </bpmn:extensionElements>
+      <bpmn:userTask id="A" name="A">
+        <bpmn:outgoing>fAJoin</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fAJoin" name="fAJoin" sourceRef="A" targetRef="joinIn" />
+      <bpmn:userTask id="B" name="B">
+        <bpmn:outgoing>fBJoin</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fBJoin" name="fBJoin" sourceRef="B" targetRef="joinIn" />
+      <bpmn:userTask id="E" name="E">
+        <bpmn:outgoing>fTrigErr</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fTrigErr" name="fTrigErr" sourceRef="E" targetRef="errEnd" />
+      <bpmn:endEvent id="errEnd" name="errEnd">
+        <bpmn:incoming>fTrigErr</bpmn:incoming>
+        <bpmn:errorEventDefinition id="ed1" errorRef="bizErr" />
+      </bpmn:endEvent>
+      <bpmn:inclusiveGateway id="joinIn" name="joinIn">
+        <bpmn:incoming>fAJoin</bpmn:incoming>
+        <bpmn:incoming>fBJoin</bpmn:incoming>
+        <bpmn:outgoing>fInTask</bpmn:outgoing>
+      </bpmn:inclusiveGateway>
+      <bpmn:sequenceFlow id="fInTask" name="fInTask" sourceRef="joinIn" targetRef="taskIn" />
+      <bpmn:userTask id="taskIn" name="taskIn">
+        <bpmn:incoming>fInTask</bpmn:incoming>
+      </bpmn:userTask>
+      <!-- bndH: МОСТ — НЕПРЕРЫВАЮЩАЯ таймерная граница на taskIn (taskIn стартует
+           только если joinIn сработает; за тест не выстрелит — ребро чисто модельное):
+           joinIn → taskIn —(bndH)→ fBnd → joinMain. -->
+      <bpmn:boundaryEvent id="bndH" name="bndH" attachedToRef="taskIn" cancelActivity="false">
+        <bpmn:outgoing>fBnd</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="bndHDef">
+          <bpmn:timeDuration>PT100H</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:boundaryEvent>
+      <bpmn:sequenceFlow id="fBnd" name="fBnd" sourceRef="bndH" targetRef="joinMain" />
+    </bpmn:adHocSubProcess>
+    <bpmn:sequenceFlow id="fSubAfter" name="fSubAfter" sourceRef="S2" targetRef="joinMain" />
+
+    <bpmn:boundaryEvent id="errBndS2" name="errBndS2" attachedToRef="S2">
+      <bpmn:outgoing>fErrBnd</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ed2" errorRef="bizErr" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fErrBnd" name="fErrBnd" sourceRef="errBndS2" targetRef="bndEnd" />
+    <bpmn:endEvent id="bndEnd" name="bndEnd">
+      <bpmn:incoming>fErrBnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:inclusiveGateway id="joinMain" name="joinMain">
+      <bpmn:incoming>fYMain</bpmn:incoming>
+      <bpmn:incoming>fSubAfter</bpmn:incoming>
+      <bpmn:incoming>fBnd</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="joinMain" targetRef="taskAfter" />
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
