@@ -33,4 +33,19 @@ public class BpmnElementModel {
     @Getter
     @Setter
     private String eventSubProcessId;
+
+    /**
+     * WO-C8-38: lexical parent container element id in the BPMN source
+     * ({@code subProcess}/{@code transaction}/{@code adHocSubProcess} that directly contains
+     * this element), {@code null} for process-level elements. The runtime model is FLAT
+     * (nested flow nodes live in the same map as top-level ones), so without this field
+     * «which joins are inside scope S» is not answerable from the model.
+     *
+     * <p>Set once at parse time ({@code BpmnParseServiceImpl}); read-only afterwards and
+     * therefore safe to share via the cached definition model. Pure structure — no runtime
+     * state, no schema change.
+     */
+    @Getter
+    @Setter
+    private String parentContainerElementId;
 }

@@ -720,6 +720,17 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void clearParallelGatewayArrivalsInJoins(UUID processInstanceId,
+            java.util.Collection<String> gatewayElementIds) {
+        parallelGatewayDbOperations.clearParallelGatewayArrivalsInJoins(processInstanceId, gatewayElementIds);
+    }
+
+    @Override
+    public void clearAllParallelGatewayArrivals(UUID processInstanceId) {
+        parallelGatewayDbOperations.clearAllParallelGatewayArrivals(processInstanceId);
+    }
+
+    @Override
     public void recordInclusiveExpected(UUID processInstanceId, String gatewayElementId, int expectedCount) {
         parallelGatewayDbOperations.recordInclusiveExpected(processInstanceId, gatewayElementId, expectedCount);
     }

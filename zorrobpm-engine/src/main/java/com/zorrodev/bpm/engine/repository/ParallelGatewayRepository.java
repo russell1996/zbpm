@@ -34,4 +34,27 @@ public interface ParallelGatewayRepository extends JpaRepository<ParallelGateway
 
     @Modifying
     void deleteByProcessInstanceIdAndGatewayElementId(UUID processInstanceId, String gatewayElementId);
+
+    /**
+     * WO-C8-38 (C38-2): scope-confined arrival cleanup — deletes arrival rows of the
+     * given joins of one instance (e.g. joins lexically inside a cancelled scope, see
+     * {@code ScopeContainment}). Marker rows ({@code expectedCount} set — MI/ad-hoc
+     * bookkeeping) are excluded: they belong to their own handlers.
+     */
+    @Modifying
+    @Query("DELETE FROM ParallelGatewayEntity pg "
+        + "WHERE pg.processInstanceId = :processInstanceId "
+        + "AND pg.gatewayElementId IN :gatewayElementIds AND pg.expectedCount IS NULL")
+    void deleteArrivalsByProcessInstanceIdAndGatewayElementIds(UUID processInstanceId,
+        java.util.Collection<String> gatewayElementIds);
+
+    /**
+     * WO-C8-38 (C38-2): whole-instance arrival cleanup — deletes arrival rows of the
+     * instance (its joins will never fire: interrupting ESP replaced the flow,
+     * operator cancelled the instance). Same marker-row exclusion as above.
+     */
+    @Modifying
+    @Query("DELETE FROM ParallelGatewayEntity pg "
+        + "WHERE pg.processInstanceId = :processInstanceId AND pg.expectedCount IS NULL")
+    void deleteArrivalsByProcessInstanceId(UUID processInstanceId);
 }

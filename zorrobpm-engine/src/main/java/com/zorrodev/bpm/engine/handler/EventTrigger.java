@@ -51,6 +51,7 @@ public class EventTrigger {
     private final TimerJobRepository timerJobRepository;
     private final CancelingPhaseService cancelingPhaseService;
     private final InclusiveGatewayHandler inclusiveGatewayHandler;
+    private final ScopeContainment scopeContainment;
 
     // WO-REL-17: explicit business zone for cycle re-arm resolution (same as TimerJobExecutor)
     @Value("${zorrobpm.business-timezone:Asia/Almaty}")
@@ -148,6 +149,7 @@ public class EventTrigger {
             boolean miHost = isMultiInstanceHost(hostElement);
             if (isScopeContainerHost(hostElement) && !miHost) {
                 cancelCandidates = cancelScopeContainer(processInstanceId, tokenId, hostActivityId, host);
+                clearScopeJoinArrivals(processInstanceId, bpmn, host.getBpmnElementId());
             } else if (miHost && isPlainHostOnSharedToken(processInstanceId, tokenId, host)) {
                 // WO-C8-34 (CR-05, red-team M2): an MI host that sits on a FORK token.
                 // Token-wide cancel is right for MI siblings (they share the token,
@@ -392,7 +394,8 @@ public class EventTrigger {
         }
 
         if (ext.isInterrupting()) {
-            dbService.cancelActiveActivities(processInstanceId);
+            String nestedScope = scopeContainment.innermostScopeForEventSubprocess(bpmn, eventSubprocessId);
+            cancelForInterruptingEsp(processInstanceId, nestedScope, bpmn);
             // ЗДЕСЬ НЕТ перепроверки припаркованных inclusive-join'ов, и это НЕ пропуск, а откат
             // моей собственной правки раунда 3-bis: @verifier (второй проход, sha 14f5d71a) доказал
             // живьём, что вызов с токеном припаркованной ветви здесь недоступен (в arrived-строках
@@ -412,6 +415,84 @@ public class EventTrigger {
         log.info("{}/{}: Non-interrupting event sub-process {} starting at {} (scope {})", processInstanceId, scopeToken.getId(), eventSubprocessId, ext.getStartEventId(), containerActivityId);
         executor.execute(processInstanceId, scopeToken.getId(), ext.getStartEventId());
         return false;
+    }
+
+    /**
+     * WO-C8-38 (C38-2): arrived-строки join'ов ВНУТРИ отменённого scope умирают вместе
+     * со scope в ТОЙ ЖЕ транзакции отмены (без запуска хвоста). Иначе
+     * {@code getGatewaysWithOpenArrivals} возвращает мёртвый id, и
+     * {@code hasParkedJoinReaching} через {@code canReach(мёртвый join, соседний join)}
+     * удерживает СОСЕДНИЙ join вечно: выход scope ведёт в него по модели, а доставить
+     * больше некому. Вынесено в метод ради гранулярности охранного теста
+     * (ветка cancelScopeContainer-пути, а не весь fireBoundary).
+     */
+    private void clearScopeJoinArrivals(UUID processInstanceId, BpmnProcessDefinitionModel bpmn,
+            String scopeElementId) {
+        dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
+            scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, scopeElementId));
+    }
+
+    /**
+     * WO-C8-38 (C38-3): отмена для прерывающего ESP — scope-confined.
+     *
+     * <p>{@code nestedScope == null} (верхнеуровневый ESP): прежнее поведение 1:1 —
+     * гасится весь инстанс, чистятся arrived-строки ВСЕХ его join'ов (C38-2, та же
+     * транзакция, без запуска хвоста: сами join'ы отменённого потока стрелять не
+     * должны — контрпример раунда 4).
+     *
+     * <p>{@code nestedScope != null} (ESP лексически внутри подпроцесса/ad-hoc/call
+     * activity): гасится только РОДИТЕЛЬСКИЙ scope (scope-confinement, принцип
+     * C8-34) — activity внутри scope по {@code enclosingScopeChain} + сама строка
+     * scope-контейнера + дочерние инстансы call activity (зеркало
+     * {@code cancelScopeContainer}); параллельные ветви ВНЕ scope живут дальше.
+     * Чистятся только arrived-строки join'ов ВНУТРИ этого scope (C38-2).
+     *
+     * <p>Резюма припаркованных join'ов здесь НЕТ в обеих ветках — тем же контрпримером
+     * раунда 4: воскрешать join отменённого scope значит выполнить хвост отменённого
+     * потока. Вынесено в метод ради гранулярности охранного теста
+     * {@code DeactivationWakeupCoverageTest} (ветка, а не весь triggerEventSubprocess).
+     */
+    private void cancelForInterruptingEsp(UUID processInstanceId, String nestedScope,
+            BpmnProcessDefinitionModel bpmn) {
+        if (nestedScope == null) {
+            dbService.cancelActiveActivities(processInstanceId);
+            dbService.clearAllParallelGatewayArrivals(processInstanceId);
+            return;
+        }
+        List<Activity> live = dbService.getActiveActivities(processInstanceId);
+        List<UUID> scopeActivityIds = new java.util.ArrayList<>();
+        scopeActivityIds.add(null);
+        for (Activity a : live) {
+            for (UUID chainId : elementSupport.enclosingScopeChain(processInstanceId, a.getId())) {
+                Activity scope = dbService.getActivity(chainId);
+                if (scope != null && nestedScope.equals(scope.getBpmnElementId())
+                    && !scopeActivityIds.contains(chainId)) {
+                    scopeActivityIds.add(chainId);
+                }
+            }
+        }
+        for (Activity a : live) {
+            List<UUID> chain = elementSupport.enclosingScopeChain(processInstanceId, a.getId());
+            boolean inside = scopeActivityIds.stream().anyMatch(chain::contains);
+            if (inside) {
+                dbService.cancelActivity(a.getId());
+            }
+        }
+        for (UUID scopeActivityId : scopeActivityIds) {
+            if (scopeActivityId != null) {
+                Activity scope = dbService.getActivity(scopeActivityId);
+                if (scope != null && (scope.getStatus() == ActivityStatus.CREATED
+                    || scope.getStatus() == ActivityStatus.IN_PROGRESS)) {
+                    dbService.cancelActivity(scopeActivityId);
+                }
+                for (UUID childInstanceId : dbService.findRunningChildInstanceIds(scopeActivityId)) {
+                    dbService.cancelActiveActivities(childInstanceId);
+                    dbService.completeProcessInstance(childInstanceId);
+                }
+            }
+        }
+        dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
+            scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, nestedScope));
     }
 
     /**

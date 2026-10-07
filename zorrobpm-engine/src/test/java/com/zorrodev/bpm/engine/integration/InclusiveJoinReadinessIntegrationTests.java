@@ -90,6 +90,14 @@ public class InclusiveJoinReadinessIntegrationTests {
         return v;
     }
 
+    private ProcessVariable jsonVar(String name, String value) {
+        ProcessVariable v = new ProcessVariable();
+        v.setName(name);
+        v.setType(ProcessVariableType.JSON);
+        v.setValue(value);
+        return v;
+    }
+
     private void complete(UUID pi, String elementId) {
         complete(pi, elementId, List.of());
     }
@@ -503,6 +511,41 @@ public class InclusiveJoinReadinessIntegrationTests {
         runtimeService.completeUserTask(lastCopyId, List.of());
         assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
             .as("the join must pass through EXACTLY ONCE — not zero (hang), not twice (double delivery)")
+            .isEqualTo(1L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED)).isEqualTo(1L);
+        assertThat(incidents(pi)).isEqualTo(0L);
+
+        complete(pi, "taskAfter");
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt())
+            .as("the instance must actually complete, not hang with a parked token")
+            .isNotNull();
+    }
+
+    // ── WO-C8-38 (C38-1, регресс «цикл возвращается в хост») ────────────────────────
+    @Transactional
+    @Test
+    void loopHostReturningToTheSameTask_boundaryKeepsTheJoinParkedAcrossIterations() throws Exception {
+        // Второй недостающий кейс C38-1 (решение CTO по Э-1): хост loopTask возвращается
+        // в себя через XOR-цикл. Пока хост ЖИВ (хоть после N итераций — строки каждый раз
+        // новые, но мёртвость считается по ВСЕМ строкам элемента, NOT EXISTS), его
+        // одноразовая граница tmrLoop остаётся возможным доставщиком: join при приходе
+        // taskFlag обязан ЖДАТЬ. Хост завершается выходом из цикла (again=false) —
+        // граница снята смертью хоста — и join обязан сработать РОВНО ОДИН РАЗ.
+        // Идёт через НАСТОЯЩИЙ прод-путь (правило готовности + exhausted-ids), G-N чисто.
+        UUID pi = startWithVars("test-c838-loop-timer-incl-join.bpmn",
+            List.of(jsonVar("again", "true")));
+
+        complete(pi, "taskFlag");
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("loopTask is still LIVE after the first iteration — tmrLoop can still deliver")
+            .isEqualTo(0L);
+        assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED))
+            .as("no early firing while the loop host is alive")
+            .isEqualTo(0L);
+
+        complete(pi, "loopTask", List.of(jsonVar("again", "false")));
+        assertThat(countOf(pi, "join", ActivityStatus.COMPLETED))
+            .as("the loop exited, the host is dead, tmrLoop is stripped — the join fires exactly once")
             .isEqualTo(1L);
         assertThat(countOf(pi, "taskAfter", ActivityStatus.CREATED)).isEqualTo(1L);
         assertThat(incidents(pi)).isEqualTo(0L);

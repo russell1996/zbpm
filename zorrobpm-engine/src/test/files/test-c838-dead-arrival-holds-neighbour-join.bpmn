@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c838_dead" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c838-dead-arrival-holds-neighbour-join" name="test-c838-dead-arrival-holds-neighbour-join" isExecutable="true">
+    <!-- WO-C8-38 (C38-2): «мёртвая» arrived-строка отменённого scope держит соседний join.
+         pfork -> { taskA -> joinMain ; subProc -> joinMain ; taskKill -> joinMain }:
+         subProc — embedded-подпроцесс с ВНУТРЕННИМ inclusive-join (joinIn), в который
+         приходят его внутренние ветви h1/h2; killBnd — ПРЕРЫВАЮЩАЯ граница на subProc.
+         Шаг 1: h1 приходит в joinIn (arrived-строка записана, joinIn припаркован —
+         h2 ещё жив и достижим). Шаг 2: killBnd срабатывает — scope subProc отменён
+         (все внутренние ветви мертвы, включая h2), joinIn срабатывать НЕ ДОЛЖЕН
+         (хвост отменённого scope запускать нельзя, POF-2 раунда 4), но его arrived-
+         строка остаётся. Шаг 3: taskA и taskKill завершаются — их ветви приходят
+         в joinMain. БЕЗ чистки: hasParkedJoinReaching видит joinIn (открытая строка)
+         и joinIn -> ... -> joinMain достижим по графу (fInEnd -> fSubEnd -> joinMain
+         через завершение scope? нет — scope отменён; но joinIn->joinMain достижимость
+         идёт по МОДЕЛИ через выход подпроцесса fSubAfter -> joinMain: canReach(joinIn,
+         joinMain) истинна) — и joinMain НЕ срабатывает, хотя доставить больше некому.
+         С чисткой (clear в той же транзакции отмены scope): joinIn исчезает из
+         getGatewaysWithOpenArrivals, и joinMain срабатывает РОВНО ОДИН РАЗ.
+         taskAfter создаётся ровно один раз, инстанс завершается. -->
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fSub</bpmn:outgoing>
+      <bpmn:outgoing>fKill</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="pfork" targetRef="taskA" />
+    <bpmn:sequenceFlow id="fSub" name="fSub" sourceRef="pfork" targetRef="subProc" />
+    <bpmn:sequenceFlow id="fKill" name="fKill" sourceRef="pfork" targetRef="taskKill" />
+
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:outgoing>fAMain</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fAMain" name="fAMain" sourceRef="taskA" targetRef="joinMain" />
+
+    <bpmn:subProcess id="subProc" name="subProc">
+      <bpmn:incoming>fSub</bpmn:incoming>
+      <bpmn:outgoing>fSubAfter</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>fSubFork</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="fSubFork" name="fSubFork" sourceRef="subStart" targetRef="subFork" />
+      <bpmn:parallelGateway id="subFork" name="subFork">
+        <bpmn:incoming>fSubFork</bpmn:incoming>
+        <bpmn:outgoing>fH1</bpmn:outgoing>
+        <bpmn:outgoing>fH2</bpmn:outgoing>
+      </bpmn:parallelGateway>
+      <bpmn:sequenceFlow id="fH1" name="fH1" sourceRef="subFork" targetRef="h1" />
+      <bpmn:sequenceFlow id="fH2" name="fH2" sourceRef="subFork" targetRef="h2" />
+      <bpmn:userTask id="h1" name="h1">
+        <bpmn:incoming>fH1</bpmn:incoming>
+        <bpmn:outgoing>fH1Join</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:userTask id="h2" name="h2">
+        <bpmn:incoming>fH2</bpmn:incoming>
+        <bpmn:outgoing>fH2Join</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fH1Join" name="fH1Join" sourceRef="h1" targetRef="joinIn" />
+      <bpmn:sequenceFlow id="fH2Join" name="fH2Join" sourceRef="h2" targetRef="joinIn" />
+      <bpmn:inclusiveGateway id="joinIn" name="joinIn">
+        <bpmn:incoming>fH1Join</bpmn:incoming>
+        <bpmn:incoming>fH2Join</bpmn:incoming>
+        <bpmn:outgoing>fInEnd</bpmn:outgoing>
+      </bpmn:inclusiveGateway>
+      <bpmn:sequenceFlow id="fInEnd" name="fInEnd" sourceRef="joinIn" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd" name="subEnd">
+        <bpmn:incoming>fInEnd</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="fSubAfter" name="fSubAfter" sourceRef="subProc" targetRef="joinMain" />
+
+    <bpmn:boundaryEvent id="killBnd" name="killBnd" attachedToRef="subProc" cancelActivity="true">
+      <bpmn:outgoing>fKillBnd</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="killBndDef">
+        <bpmn:timeDuration>PT100H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fKillBnd" name="fKillBnd" sourceRef="killBnd" targetRef="killEnd" />
+    <bpmn:endEvent id="killEnd" name="killEnd">
+      <bpmn:incoming>fKillBnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:userTask id="taskKill" name="taskKill">
+      <bpmn:incoming>fKill</bpmn:incoming>
+      <bpmn:outgoing>fKillMain</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fKillMain" name="fKillMain" sourceRef="taskKill" targetRef="joinMain" />
+
+    <bpmn:inclusiveGateway id="joinMain" name="joinMain">
+      <bpmn:incoming>fAMain</bpmn:incoming>
+      <bpmn:incoming>fSubAfter</bpmn:incoming>
+      <bpmn:incoming>fKillMain</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="joinMain" targetRef="taskAfter" />
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

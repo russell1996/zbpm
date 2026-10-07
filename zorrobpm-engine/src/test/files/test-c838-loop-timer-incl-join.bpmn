@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c838_loop" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c838-loop-timer-incl-join" name="test-c838-loop-timer-incl-join" isExecutable="true">
+    <!-- WO-C8-38 (C38-1, регресс «цикл возвращается в хост»): loopTask возвращается
+         в себя через XOR-цикл; tmrLoop — ПРЕРЫВАЮЩИЙ одноразовый граничный таймер
+         (таймер долго не стреляет — PT100H, в тесте его вообще не трогают; он важен
+         только как РЕБРО «хост -> join» в правиле готовности). taskFlag — вторая
+         ветвь в тот же join. Пока loopTask ЖИВ (хоть после N итераций), его граница
+         остаётся возможным доставщиком: join при приходе taskFlag обязан ЖДАТЬ
+         (деактивация taskFlag в методе — перепроверка резюма видит живой хост).
+         Когда хост завершается И одноразовый таймер отстрелял (fired=true,
+         перевзвода нет — outlet исчерпан, DBServiceImpl:740-743) — граница снята,
+         и join обязан сработать РОВНО ОДИН РАЗ. -->
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fLoop</bpmn:outgoing>
+      <bpmn:outgoing>fFlag</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fLoop" name="fLoop" sourceRef="pfork" targetRef="loopTask" />
+    <bpmn:sequenceFlow id="fFlag" name="fFlag" sourceRef="pfork" targetRef="taskFlag" />
+
+    <bpmn:userTask id="loopTask" name="loopTask">
+      <bpmn:incoming>fLoop</bpmn:incoming>
+      <bpmn:incoming>fBack</bpmn:incoming>
+      <bpmn:outgoing>fToXor</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fToXor" name="fToXor" sourceRef="loopTask" targetRef="xorLoop" />
+    <bpmn:exclusiveGateway id="xorLoop" name="xorLoop">
+      <bpmn:incoming>fToXor</bpmn:incoming>
+      <bpmn:outgoing>fBack</bpmn:outgoing>
+      <bpmn:outgoing>fExit</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="fBack" name="fBack" sourceRef="xorLoop" targetRef="loopTask">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= again = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="fExit" name="fExit" sourceRef="xorLoop" targetRef="loopEnd">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= again = false</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:endEvent id="loopEnd" name="loopEnd">
+      <bpmn:incoming>fExit</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:boundaryEvent id="tmrLoop" name="tmrLoop" attachedToRef="loopTask" cancelActivity="true">
+      <bpmn:outgoing>fBnd</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="tmrLoopDef">
+        <bpmn:timeDuration>PT100H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fBnd" name="fBnd" sourceRef="tmrLoop" targetRef="join" />
+
+    <bpmn:userTask id="taskFlag" name="taskFlag">
+      <bpmn:incoming>fFlag</bpmn:incoming>
+      <bpmn:outgoing>fFlagJoin</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fFlagJoin" name="fFlagJoin" sourceRef="taskFlag" targetRef="join" />
+
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>fFlagJoin</bpmn:incoming>
+      <bpmn:incoming>fBnd</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="join" targetRef="taskAfter" />
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

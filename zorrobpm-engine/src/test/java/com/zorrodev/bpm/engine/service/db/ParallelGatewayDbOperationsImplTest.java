@@ -61,6 +61,27 @@ class ParallelGatewayDbOperationsImplTest {
     }
 
     @Test
+    void clearParallelGatewayArrivalsInJoins_deletesOnlyListedJoins() {
+        UUID pi = UUID.randomUUID();
+        db.clearParallelGatewayArrivalsInJoins(pi, List.of("j1", "j2"));
+        verify(parallelGatewayRepository).deleteArrivalsByProcessInstanceIdAndGatewayElementIds(pi, List.of("j1", "j2"));
+    }
+
+    @Test
+    void clearParallelGatewayArrivalsInJoins_emptyCollection_noQuery() {
+        UUID pi = UUID.randomUUID();
+        db.clearParallelGatewayArrivalsInJoins(pi, List.of());
+        verify(parallelGatewayRepository, never()).deleteArrivalsByProcessInstanceIdAndGatewayElementIds(any(), any());
+    }
+
+    @Test
+    void clearAllParallelGatewayArrivals_deletes() {
+        UUID pi = UUID.randomUUID();
+        db.clearAllParallelGatewayArrivals(pi);
+        verify(parallelGatewayRepository).deleteArrivalsByProcessInstanceId(pi);
+    }
+
+    @Test
     void recordInclusiveExpected_savesMarker() {
         UUID pi = UUID.randomUUID();
         db.recordInclusiveExpected(pi, "g", 3);

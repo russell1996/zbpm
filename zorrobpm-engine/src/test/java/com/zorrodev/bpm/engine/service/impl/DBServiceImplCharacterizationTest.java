@@ -613,6 +613,20 @@ class DBServiceImplCharacterizationTest {
     }
 
     @Test
+    void clearParallelGatewayArrivalsInJoins_delegates() {
+        UUID pi = UUID.randomUUID();
+        dbService.clearParallelGatewayArrivalsInJoins(pi, List.of("j1"));
+        verify(parallelGatewayDbOperations).clearParallelGatewayArrivalsInJoins(pi, List.of("j1"));
+    }
+
+    @Test
+    void clearAllParallelGatewayArrivals_delegates() {
+        UUID pi = UUID.randomUUID();
+        dbService.clearAllParallelGatewayArrivals(pi);
+        verify(parallelGatewayDbOperations).clearAllParallelGatewayArrivals(pi);
+    }
+
+    @Test
     void recordInclusiveExpected_delegates() {
         UUID pi = UUID.randomUUID();
         dbService.recordInclusiveExpected(pi, "g", 3);

@@ -90,8 +90,14 @@ class DeactivationWakeupCoverageTest {
     /**
      * Число мест деактивации на этом дереве. ЛЮБОЕ его изменение валит тест: новое место
      * обязано быть либо разобрано (перепроверка в его ветке), либо внесено в белый список.
+     *
+     * <p>WO-C8-38: было 112; стало 115 — три новых сайта в
+     * {@code EventTrigger.cancelForInterruptingEsp} (scope-confined отмена вложенного ESP:
+     * cancelActivity внутри scope, cancelActivity строки scope-контейнера, child-instance
+     * cancel — все разобраны выше причинами R10N). Старый сайт целого инстанса
+     * (triggerEventSubprocess[if (ext.isInterrupting())]) ушёл вместе с веткой.
      */
-    private static final int EXPECTED_SITE_COUNT = 112;
+    private static final int EXPECTED_SITE_COUNT = 115;
 
     /** site key -> причина, почему перепроверка здесь не нужна. Непустая — проверяется тестом. */
     private static final Map<String, String> WHITELIST = new LinkedHashMap<>();
@@ -133,6 +139,13 @@ class DeactivationWakeupCoverageTest {
         "прерывающий event-subprocess ЗАМЕЩАЕТ основной поток по BPMN: его запуск гасит "
         + "activity всего инстанса и доводит инстанс до конца. Просыпать тут join = пускать "
         + "хвост отменённого scope (контрпример раунда 4) ";
+    private static final String R10N =
+        "WO-C8-38 (C38-3): вложенный прерывающий event-subprocess гасит свой РОДИТЕЛЬСКИЙ "
+        + "scope (scope-confinement), а не весь инстанс — и в той же ветке чистит "
+        + "arrived-строки join'ов ВНУТРИ этого scope (clearParallelGatewayArrivalsInJoins). "
+        + "Просыпать join отменённого scope нельзя (тот же контрпример раунда 4, что R10); "
+        + "соседние join'ы ВНЕ scope этим путём не задеты (их строки не чистятся), а их "
+        + "перепроверка — на деактивациях их собственных доставщиков, как раньше ";
     private static final String R11 =
         "scope-контейнер границы: гасятся activity СВОЕГО scope и его ДОЧЕРНИЕ ИНСТАНСЫ (call "
         + "activity). Родительский инстанс этим не тронут — его припаркованные join-ы не теряют "
@@ -243,7 +256,24 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("EndEventHandler.java#handle[]|dbService.cancelActivity(scopeActivityId)", R09);
         WHITELIST.put("EndEventHandler.java#handle[if (token == null || token.getScopeActivityId() == null) {]|dbService.cancelActiveActivities(ctx.processInstanceId())", R09);
         // ── прерывающий event-subprocess ЗАМЕЩАЕТ основной поток по BPMN: его запуск…
-        WHITELIST.put("EventTrigger.java#triggerEventSubprocess[if (ext.isInterrupting()) {]|dbService.cancelActiveActivities(processInstanceId)", R10);
+        // (старый ключ triggerEventSubprocess[if (ext.isInterrupting())] мёртв: ветка
+        // разъехалась на метод cancelForInterruptingEsp ниже — stale-запись удалена,
+        // обе новые ветки разобраны с причинами R10/R10N).
+        // ── WO-C8-38 (C38-2): чистка arrived-строк отменённого scope ────────────────
+        // fireBoundary гасит scope-контейнер границы (cancelScopeContainer выше), а
+        // arrived-строки join'ов ВНУТРИ него умирают в той же ветке — вызов
+        // clearScopeJoinArrivals стоит прямо за cancelScopeContainer. Это НЕ
+        // деактивация (clear-методы сканер не считает сайтами — в DEACTIVATION_CALL
+        // их нет), поэтому сайт здесь один: cancelScopeContainer-ветка, а резюма в
+        // ней нет по контрпримеру раунда 4 (R08/R10 — воскрешать join отменённого
+        // scope нельзя). Отдельной записи не нужно: сайт cancelScopeContainer уже
+        // разобран ниже через R11; чистка — в той же ветке (branchHasResume=false,
+        // но whitelist держит R11, и stale-проверка это подтверждает).
+        // ── WO-C8-38 (C38-3): вложенный прерывающий ESP — scope-confined отмена ──────
+        WHITELIST.put("EventTrigger.java#cancelForInterruptingEsp[if (nestedScope == null) {]|dbService.cancelActiveActivities(processInstanceId)", R10);
+        WHITELIST.put("EventTrigger.java#cancelForInterruptingEsp[if (inside) {]|dbService.cancelActivity(a.getId())", R10N);
+        WHITELIST.put("EventTrigger.java#cancelForInterruptingEsp[|| scope.getStatus() == ActivityStatus.IN_PROGRESS)) {]|dbService.cancelActivity(scopeActivityId)", R10N);
+        WHITELIST.put("EventTrigger.java#cancelForInterruptingEsp[for (UUID childInstanceId : dbService.findRunningChildInstanceIds(scopeActivityId)) {]|dbService.cancelActiveActivities(childInstanceId)", R10N);
         // ── scope-контейнер границы: гасятся activity СВОЕГО scope и его ДОЧЕРНИЕ ИН…
         WHITELIST.put("EventTrigger.java#cancelScopeContainer[for (Activity active : inScope) {]|dbService.cancelActivity(active.getId())", R11);
         WHITELIST.put("EventTrigger.java#cancelScopeContainer[]|dbService.cancelActivity(hostActivityId)", R11);
