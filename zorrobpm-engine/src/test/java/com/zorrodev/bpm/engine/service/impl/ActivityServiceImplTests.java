@@ -110,7 +110,8 @@ public class ActivityServiceImplTests {
             dbService, bpmnService, scriptService, flowNavigator, elementSupport,
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.repository.TimerJobRepository.class),
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.CancelingPhaseService.class),
-            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler.class));
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler.class),
+            new com.zorrodev.bpm.engine.handler.ScopeContainment());
         try {
             var etField = ActivityServiceImpl.class.getDeclaredField("eventTrigger");
             etField.setAccessible(true);

@@ -351,6 +351,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     // container's own <bpmn:extensionElements> (same unmarshalled source string, no
                     // second parser, narrow child-only match — nested elements keep their own mappings).
                     attachSubProcessIoMapping(element, bpmn, subProcess.getId());
+                    element.setParentContainerElementId(null); // WO-C8-38: process-level element, no lexical scope
                     pd.addElement(element);
                 }
             }
@@ -362,6 +363,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     BpmnElementModel element = toSubProcessElement(transaction, bpmn, pd, registry, messageNames, messageKeys);
                     element.setProcessDefinition(pd);
                     attachSubProcessIoMapping(element, bpmn, transaction.getId());
+                    element.setParentContainerElementId(null); // WO-C8-38: process-level element, no lexical scope
                     pd.addElement(element);
                 }
             }
@@ -372,6 +374,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 for (BpmnAdHocSubProcessModel adHoc : process.getAdHocSubProcesses()) {
                     BpmnElementModel element = toAdHocSubProcessElement(adHoc, bpmn, pd, registry, messageNames, messageKeys);
                     element.setProcessDefinition(pd);
+                    element.setParentContainerElementId(null); // WO-C8-38: process-level element, no lexical scope
                     pd.addElement(element);
                 }
             }
@@ -602,6 +605,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                         ext.setTriggerTimer(timer);
                     }
                 }
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
                 ext.setStartEventId(child.getId());
             }
@@ -612,6 +616,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 child.setProcessDefinition(pd);
                 attachEventDefinition(child, end.getErrorEventDefinition(), end.getSignalEventDefinition(),
                     end.getEscalationEventDefinition(), null, null, end.getCompensateEventDefinition(), registry);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -942,6 +947,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 child.setProcessDefinition(pd);
                 attachEventDefinition(child, end.getErrorEventDefinition(), end.getSignalEventDefinition(),
                     end.getEscalationEventDefinition(), null, null, end.getCompensateEventDefinition(), registry);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1051,6 +1057,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnServiceTaskModel serviceTask : sub.getServiceTasks()) {
                 BpmnElementModel child = toElementModel(serviceTask);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1058,6 +1065,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnScriptTaskModel scriptTask : sub.getScriptTasks()) {
                 BpmnElementModel child = toElementModel(scriptTask);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1065,6 +1073,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnUserTaskModel userTask : sub.getUserTasks()) {
                 BpmnElementModel child = toElementModel(userTask);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1072,6 +1081,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnManualTaskModel manualTask : sub.getManualTasks()) {
                 BpmnElementModel child = toElementModel(manualTask);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1080,6 +1090,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnTaskModel task : sub.getTasks()) {
                 BpmnElementModel child = toElementModel(task);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1087,6 +1098,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnExclusiveGatewayModel gateway : sub.getExclusiveGateways()) {
                 BpmnElementModel child = toElementModel(gateway);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1094,6 +1106,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnParallelGatewayModel gateway : sub.getParallelGateways()) {
                 BpmnElementModel child = toElementModel(gateway);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1106,6 +1119,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 child.setProcessDefinition(pd);
                 attachEventDefinition(child, null, catchEvent.getSignalEventDefinition(), null,
                     catchEvent.getConditionalEventDefinition(), catchEvent.getLinkEventDefinition(), null, registry);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1116,6 +1130,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 attachEventDefinition(child, null, throwEvent.getSignalEventDefinition(),
                     throwEvent.getEscalationEventDefinition(), null, throwEvent.getLinkEventDefinition(),
                     throwEvent.getCompensateEventDefinition(), registry);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1123,6 +1138,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnBusinessRuleTaskModel businessRuleTask : sub.getBusinessRuleTasks()) {
                 BpmnElementModel child = toElementModel(businessRuleTask);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1130,6 +1146,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnSendTaskModel sendTask : sub.getSendTasks()) {
                 BpmnElementModel child = toElementModel(sendTask, messageNames);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1137,6 +1154,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnReceiveTaskModel receiveTask : sub.getReceiveTasks()) {
                 BpmnElementModel child = toElementModel(receiveTask, messageNames, messageKeys);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1156,6 +1174,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 // WO-C8-25: вложенные шлюзы — тем же хуком, что верхний уровень.
                 attachElementStartListeners(child, inclusiveGateway.getExtensionElements());
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1170,6 +1189,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 // WO-C8-25: вложенные шлюзы — тем же хуком, что верхний уровень.
                 attachElementStartListeners(child, eventGateway.getExtensionElements());
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1179,6 +1199,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnCallActivityModel callActivity : sub.getCallActivities()) {
                 BpmnElementModel child = toElementModel(callActivity);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1187,6 +1208,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 BpmnElementModel child = toSubProcessElement(nested, rawBpmn, pd, registry, messageNames, messageKeys);
                 child.setProcessDefinition(pd);
                 attachSubProcessIoMapping(child, rawBpmn, nested.getId());
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1195,6 +1217,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 BpmnElementModel child = toSubProcessElement(transaction, rawBpmn, pd, registry, messageNames, messageKeys);
                 child.setProcessDefinition(pd);
                 attachSubProcessIoMapping(child, rawBpmn, transaction.getId());
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1202,6 +1225,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             for (BpmnAdHocSubProcessModel nested : sub.getAdHocSubProcesses()) {
                 BpmnElementModel child = toAdHocSubProcessElement(nested, rawBpmn, pd, registry, messageNames, messageKeys);
                 child.setProcessDefinition(pd);
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }
@@ -1228,6 +1252,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     msg.setCorrelationKeyExpression(messageKeys.get(ref));
                     child.getExtensions().setMessageEventExtension(msg);
                 }
+                child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }
         }

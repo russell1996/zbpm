@@ -474,6 +474,20 @@ public interface DBService {
     void clearParallelGatewayArrivals(UUID processInstanceId, String gatewayElementId);
 
     /**
+     * WO-C8-38 (C38-2): scope-confined arrival cleanup — arrival rows of the given joins
+     * of one instance (e.g. joins lexically inside a cancelled scope, see
+     * {@code ScopeContainment}). Empty collection = no-op.
+     */
+    void clearParallelGatewayArrivalsInJoins(UUID processInstanceId, java.util.Collection<String> gatewayElementIds);
+
+    /**
+     * WO-C8-38 (C38-2): whole-instance arrival cleanup — arrival rows of the instance
+     * (its joins will never fire: interrupting ESP replaced the flow, operator
+     * cancelled the instance). MI/ad-hoc marker rows are excluded.
+     */
+    void clearAllParallelGatewayArrivals(UUID processInstanceId);
+
+    /**
      * Records, for an inclusive-gateway join, how many branches its split activated (the number of
      * arrivals the join must wait for). Stored as a marker row alongside the arrival rows.
      *

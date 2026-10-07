@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c838_fanout" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c838-fanout-rollback" name="test-c838-fanout-rollback" isExecutable="true">
+    <!-- WO-C8-38 (C38-4): kill между фазами фанаута = откат всей транзакции.
+         isplit -> { taskA -> join ; taskB -> join } (обе ветви pass-through, без
+         wait-state — классический двухфазный фанаут C8-35: фаза 1 пишет arrived-
+         строки обеих ветвей, фаза 2 запускает цели). Тест убивает транзакцию
+         между фазами (бросает RuntimeException из мок-обработчика taskA — фаза 2
+         падает ДО completeActivity сплита) и проверяет: arrived-строк НЕТ (откат),
+         join НЕ припаркован, повторный прогон той же волны штатно завершает join
+         РОВНО ОДИН РАЗ. Реконсилер не нужен: strand через рестарт недостижим в
+         текущей TX-архитектуре (все фазы фанаута — одна транзакция классового
+         @Transactional CompletionService; планировщики — каждый fire целиком в
+         своём REQUIRES_NEW; incident-путь strand'а — см. скан путей в отчёте). -->
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="isplit" />
+    <bpmn:inclusiveGateway id="isplit" name="isplit">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fB</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="isplit" targetRef="taskA" />
+    <bpmn:sequenceFlow id="fB" name="fB" sourceRef="isplit" targetRef="taskB" />
+    <bpmn:userTask id="taskA" name="taskA">
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:outgoing>fAJoin</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fAJoin" name="fAJoin" sourceRef="taskA" targetRef="join" />
+    <bpmn:userTask id="taskB" name="taskB">
+      <bpmn:incoming>fB</bpmn:incoming>
+      <bpmn:outgoing>fBJoin</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fBJoin" name="fBJoin" sourceRef="taskB" targetRef="join" />
+    <bpmn:inclusiveGateway id="join" name="join">
+      <bpmn:incoming>fAJoin</bpmn:incoming>
+      <bpmn:incoming>fBJoin</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+    </bpmn:inclusiveGateway>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="join" targetRef="taskAfter" />
+    <bpmn:userTask id="taskAfter" name="taskAfter">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fEnd" name="fEnd" sourceRef="taskAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

@@ -52,6 +52,21 @@ public class ParallelGatewayDbOperationsImpl implements ParallelGatewayDbOperati
     }
 
     @Override
+    public void clearParallelGatewayArrivalsInJoins(UUID processInstanceId,
+            java.util.Collection<String> gatewayElementIds) {
+        if (gatewayElementIds == null || gatewayElementIds.isEmpty()) {
+            return;
+        }
+        parallelGatewayRepository.deleteArrivalsByProcessInstanceIdAndGatewayElementIds(
+            processInstanceId, gatewayElementIds);
+    }
+
+    @Override
+    public void clearAllParallelGatewayArrivals(UUID processInstanceId) {
+        parallelGatewayRepository.deleteArrivalsByProcessInstanceId(processInstanceId);
+    }
+
+    @Override
     public void recordInclusiveExpected(UUID processInstanceId, String gatewayElementId, int expectedCount) {
         ParallelGatewayEntity entity = new ParallelGatewayEntity();
         entity.setId(UUID.randomUUID());
