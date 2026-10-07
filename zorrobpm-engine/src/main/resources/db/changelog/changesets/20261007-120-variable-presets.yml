@@ -1,0 +1,241 @@
+databaseChangeLog:
+  - logicalFilePath: 20261007-120
+  - changeSet:
+      id: 20261007-120
+      author: zorrodev
+      dbms: postgresql
+      comment: >-
+        WO-VT-1: хранилище шаблонов переменных (presets). Шаблон = именованный набор
+        ProcessVariable[], привязанный к месту применения (process_definition_key,
+        target_kind, target_ref) — «завести на каждый кубик», фронт подставляет значения
+        в уже существующие эндпоинты, движок не меняется.
+        variables — jsonb (массив {name,type,value}); серверных JSON-запросов нет, доступ
+        только по (key, kind, ref)-индексу, jsonb здесь — типизация и гарантия валидности
+        на PG. H2-вариант changeset — тот же состав с variables text (прецедент
+        20260719-063: jsonb в H2-DDL не существует; entity маппит оба варианта через
+        @JdbcTypeCode(JSON) на String).
+        Уникальность по ТЗ — (owner, key, kind, coalesce(ref,''), name): expression-индекс
+        с COALESCE в H2 не портируется без расхождения семантики (P-17), поэтому
+        нормализация NULL→'' делается В СЕРВИСЕ на записи (START пишет ''), чтение отдаёт
+        null обратно — а индекс здесь обычный UNIQUE по пяти колонкам, одинаковый на
+        обеих СУБД. NULL в колонке легален по DDL, но живой код его не пишет.
+        targetKind/targetRef/processDefinitionKey после создания immutable (смена
+        привязки = новый шаблон), иначе уникальность расползалась бы через PUT.
+        Только expand (новая таблица), rollback — dropTable (индексы/CHECK/COMMENT
+        умирают вместе с ней, WO-OPS-15).
+      changes:
+        - createTable:
+            tableName: variable_presets
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: process_definition_key
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: target_kind
+                  type: varchar(32)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: target_ref
+                  type: varchar(255)
+              - column:
+                  name: name
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: description
+                  type: text
+              - column:
+                  name: variables
+                  type: jsonb
+                  constraints:
+                    nullable: false
+              - column:
+                  name: owner_user_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: visibility
+                  type: varchar(16)
+                  defaultValue: PRIVATE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+              - column:
+                  name: updated_at
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+              - column:
+                  name: version
+                  type: int
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+        - addUniqueConstraint:
+            tableName: variable_presets
+            columnNames: owner_user_id, process_definition_key, target_kind, target_ref, name
+            constraintName: uq_variable_presets__owner_scope_name
+        - createIndex:
+            tableName: variable_presets
+            indexName: idx_variable_presets__lookup
+            columns:
+              - column:
+                  name: process_definition_key
+              - column:
+                  name: target_kind
+              - column:
+                  name: target_ref
+        - sql:
+            sql: >-
+              ALTER TABLE variable_presets ADD CONSTRAINT ck_variable_presets__target_kind
+              CHECK (target_kind IN ('START','USER_TASK','SERVICE_TASK','MESSAGE','INCIDENT','DMN','ADHOC_JOB'))
+        - sql:
+            sql: >-
+              ALTER TABLE variable_presets ADD CONSTRAINT ck_variable_presets__visibility
+              CHECK (visibility IN ('PRIVATE','PROCESS'))
+        - sql:
+            sql: >-
+              COMMENT ON TABLE variable_presets IS 'Шаблоны переменных (WO-VT-1): именованные наборы ProcessVariable[] для подстановки с фронта, привязка (ключ процесса, вид операции, элемент)';
+              COMMENT ON COLUMN variable_presets.id IS 'PK шаблона';
+              COMMENT ON COLUMN variable_presets.process_definition_key IS 'Ключ процесса (привязка к ключу, не к версии — шаблон живёт для всех версий)';
+              COMMENT ON COLUMN variable_presets.target_kind IS 'Место применения: START|USER_TASK|SERVICE_TASK|MESSAGE|INCIDENT|DMN|ADHOC_JOB (CHECK, immutable после создания)';
+              COMMENT ON COLUMN variable_presets.target_ref IS 'Привязка внутри места: bpmnElementId / имя сообщения / decisionId; пусто для START (сервис пишет пустую строку вместо NULL — см. комментарий changeset)';
+              COMMENT ON COLUMN variable_presets.name IS 'Имя шаблона, уникально в пределах (владелец, привязка)';
+              COMMENT ON COLUMN variable_presets.description IS 'Описание шаблона (опционально)';
+              COMMENT ON COLUMN variable_presets.variables IS 'Набор переменных: JSON-массив {name,type,value} (jsonb на PG, text на H2)';
+              COMMENT ON COLUMN variable_presets.owner_user_id IS 'Владелец шаблона (создатель; менять/удалять — он, админ процесса или SUPER_ADMIN)';
+              COMMENT ON COLUMN variable_presets.visibility IS 'PRIVATE — только владелец; PROCESS — плюс участники процесса (CHECK)';
+              COMMENT ON COLUMN variable_presets.created_at IS 'Момент создания';
+              COMMENT ON COLUMN variable_presets.updated_at IS 'Момент последнего изменения';
+              COMMENT ON COLUMN variable_presets.version IS 'Оптимистичная блокировка: PUT требует совпадения, конфликт — 409 PRESET_CONFLICT';
+              COMMENT ON INDEX idx_variable_presets__lookup IS 'Выборка шаблонов места применения (key, kind, ref) для списка и фильтра видимости';
+      rollback:
+        - dropTable:
+            tableName: variable_presets
+  - changeSet:
+      id: 20261007-120-h2
+      author: zorrodev
+      dbms: h2
+      comment: >-
+        WO-VT-1 (H2-зеркало changeset 20261007-120): тот же состав, variables — text
+        (jsonb в H2-DDL не существует, прецедент 20260719-063). UNIQUE — те же пять
+        колонок (NULL→'' нормализует сервис, расхождения с PG нет). CHECK через
+        sql, как в 20261006-118 (addCheckConstraint в репозитории не используется).
+      changes:
+        - createTable:
+            tableName: variable_presets
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: process_definition_key
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: target_kind
+                  type: varchar(32)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: target_ref
+                  type: varchar(255)
+              - column:
+                  name: name
+                  type: varchar(255)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: description
+                  type: text
+              - column:
+                  name: variables
+                  type: text
+                  constraints:
+                    nullable: false
+              - column:
+                  name: owner_user_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: visibility
+                  type: varchar(16)
+                  defaultValue: PRIVATE
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+              - column:
+                  name: updated_at
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+              - column:
+                  name: version
+                  type: int
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+        - addUniqueConstraint:
+            tableName: variable_presets
+            columnNames: owner_user_id, process_definition_key, target_kind, target_ref, name
+            constraintName: uq_variable_presets__owner_scope_name
+        - createIndex:
+            tableName: variable_presets
+            indexName: idx_variable_presets__lookup
+            columns:
+              - column:
+                  name: process_definition_key
+              - column:
+                  name: target_kind
+              - column:
+                  name: target_ref
+        - sql:
+            sql: >-
+              ALTER TABLE variable_presets ADD CONSTRAINT ck_variable_presets__target_kind
+              CHECK (target_kind IN ('START','USER_TASK','SERVICE_TASK','MESSAGE','INCIDENT','DMN','ADHOC_JOB'))
+        - sql:
+            sql: >-
+              ALTER TABLE variable_presets ADD CONSTRAINT ck_variable_presets__visibility
+              CHECK (visibility IN ('PRIVATE','PROCESS'))
+        - sql:
+            sql: >-
+              COMMENT ON TABLE variable_presets IS 'Шаблоны переменных (WO-VT-1): именованные наборы ProcessVariable[] для подстановки с фронта, привязка (ключ процесса, вид операции, элемент)';
+              COMMENT ON COLUMN variable_presets.id IS 'PK шаблона';
+              COMMENT ON COLUMN variable_presets.process_definition_key IS 'Ключ процесса (привязка к ключу, не к версии — шаблон живёт для всех версий)';
+              COMMENT ON COLUMN variable_presets.target_kind IS 'Место применения: START|USER_TASK|SERVICE_TASK|MESSAGE|INCIDENT|DMN|ADHOC_JOB (CHECK, immutable после создания)';
+              COMMENT ON COLUMN variable_presets.target_ref IS 'Привязка внутри места: bpmnElementId / имя сообщения / decisionId; пусто для START (сервис пишет пустую строку вместо NULL — см. комментарий changeset)';
+              COMMENT ON COLUMN variable_presets.name IS 'Имя шаблона, уникально в пределах (владелец, привязка)';
+              COMMENT ON COLUMN variable_presets.description IS 'Описание шаблона (опционально)';
+              COMMENT ON COLUMN variable_presets.variables IS 'Набор переменных: JSON-массив {name,type,value} (jsonb на PG, text на H2)';
+              COMMENT ON COLUMN variable_presets.owner_user_id IS 'Владелец шаблона (создатель; менять/удалять — он, админ процесса или SUPER_ADMIN)';
+              COMMENT ON COLUMN variable_presets.visibility IS 'PRIVATE — только владелец; PROCESS — плюс участники процесса (CHECK)';
+              COMMENT ON COLUMN variable_presets.created_at IS 'Момент создания';
+              COMMENT ON COLUMN variable_presets.updated_at IS 'Момент последнего изменения';
+              COMMENT ON COLUMN variable_presets.version IS 'Оптимистичная блокировка: PUT требует совпадения, конфликт — 409 PRESET_CONFLICT';
+      rollback:
+        - dropTable:
+            tableName: variable_presets
