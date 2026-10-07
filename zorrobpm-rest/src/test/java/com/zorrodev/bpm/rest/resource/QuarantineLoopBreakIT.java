@@ -34,7 +34,7 @@ import static org.awaitility.Awaitility.await;
  *
  * <p>Ожидаемое поведение: уведомление о карантине, которое само не
  * доставлено, дропается с учётом (WARN + метрика
- * {@code domain.event.unroutable{type="outbox.quarantined"}}) и НЕ
+ * {@code zbpm.domain.event.unroutable{type="outbox.quarantined"}}) и НЕ
  * карантинится рекурсивно — счётчик карантина стабилен.
  *
  * <p>На master КРАСНЫЙ (карантин растёт каскадом). Запуск: свой брокер +
@@ -102,9 +102,9 @@ class QuarantineLoopBreakIT {
 
         // Учёт дропа: метрика незамаршрутизируемых уведомлений выросла.
         double dropped = meterRegistry
-            .find("domain.event.unroutable").tag("type", "outbox.quarantined")
+            .find("zbpm.domain.event.unroutable").tag("type", "outbox.quarantined")
             .counter() == null ? 0.0 : meterRegistry
-            .find("domain.event.unroutable").tag("type", "outbox.quarantined")
+            .find("zbpm.domain.event.unroutable").tag("type", "outbox.quarantined")
             .counter().count();
         assertThat(dropped)
             .as("дроп незамаршрутизируемого уведомления учтён метрикой")
