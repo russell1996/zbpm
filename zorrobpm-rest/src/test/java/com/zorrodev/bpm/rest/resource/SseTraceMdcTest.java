@@ -55,7 +55,9 @@ class SseTraceMdcTest {
             resolver, null, new tools.jackson.databind.ObjectMapper(), null, null);
         logAppender = new ListAppender<>();
         logAppender.start();
-        logger = (Logger) LoggerFactory.getLogger(SseEventStreamService.class);
+        // WO-AUDIT-9 шаг 5b: строка "SSE dispatch:" теперь пишется логгером
+        // SseCursorSequencer (рассылка переехала туда построчно, текст тот же).
+        logger = (Logger) LoggerFactory.getLogger(SseCursorSequencer.class);
         logger.addAppender(logAppender);
         logger.setLevel(Level.ALL);
         MDC.clear();
