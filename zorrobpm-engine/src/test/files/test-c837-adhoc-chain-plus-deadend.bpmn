@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-37 (раунд 2, БЛОКИРУЮЩАЯ №1): корень с живой цепочкой (taskA→taskA2)
+      плюс корень-тупик (taskB). Финиш тупика при 2/2 arrivals НЕ должен закрывать
+      скоуп, пока цепочка жива: quiescence смотрит поддерево скоупа, а не тишину
+      на входящем токене. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c837adhoccd" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c837-adhoc-chain-plus-deadend" name="c837-adhoc-chain-plus-deadend" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="adhoc" />
+
+    <bpmn:adHocSubProcess id="adhoc" name="adhoc">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:adHoc activeElementsCollection="=[&quot;taskA&quot;, &quot;taskB&quot;]" />
+      </bpmn:extensionElements>
+      <bpmn:userTask id="taskA" name="taskA">
+        <bpmn:outgoing>fA1</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fA1" name="fA1" sourceRef="taskA" targetRef="taskA2" />
+      <bpmn:userTask id="taskA2" name="taskA2">
+        <bpmn:incoming>fA1</bpmn:incoming>
+      </bpmn:userTask>
+      <bpmn:userTask id="taskB" name="taskB" />
+    </bpmn:adHocSubProcess>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="adhoc" targetRef="afterAdhoc" />
+    <bpmn:userTask id="afterAdhoc" name="afterAdhoc">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fAfter2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fAfter2" name="fAfter2" sourceRef="afterAdhoc" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fAfter2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
