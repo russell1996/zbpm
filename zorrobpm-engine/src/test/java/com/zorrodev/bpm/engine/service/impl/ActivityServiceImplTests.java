@@ -222,7 +222,7 @@ public class ActivityServiceImplTests {
         registerHandler(BpmnElementType.INCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler(dbService, flowNav, scriptService, elementSupport));
         registerHandler(BpmnElementType.EVENT_BASED_GATEWAY, new com.zorrodev.bpm.engine.handler.EventBasedGatewayHandler(dbService, flowNav));
         registerHandler(BpmnElementType.INTERMEDIATE_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.WaitStateHandler(dbService));
-        registerHandler(BpmnElementType.MESSAGE_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.MessageCatchHandler(dbService, activityService));
+        registerHandler(BpmnElementType.MESSAGE_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.MessageCatchHandler(dbService, activityService, boundaryScheduler));
         registerHandler(BpmnElementType.TIMER_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.TimerCatchHandler(dbService, elementSupport, incidentService));
         registerHandler(BpmnElementType.SIGNAL_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.SignalCatchHandler(dbService));
         registerHandler(BpmnElementType.CONDITIONAL_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.ConditionalCatchHandler(dbService, flowNav, scriptService));
@@ -238,7 +238,7 @@ public class ActivityServiceImplTests {
         registerHandler(BpmnElementType.START_EVENT, new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.StartEvent(dbService, flowNav));
         registerHandler(BpmnElementType.SCRIPT_TASK, new com.zorrodev.bpm.engine.handler.SyncTaskHandler.ScriptTask(dbService, scriptService, elementSupport, flowNav, activityService));
         registerHandler(BpmnElementType.BUSINESS_RULE_TASK, new com.zorrodev.bpm.engine.handler.SyncTaskHandler.BusinessRuleTask(dbService, scriptService, dmnService, elementSupport, flowNav, boundaryScheduler));
-        registerHandler(BpmnElementType.END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.EndEvent(dbService, activityService));
+        registerHandler(BpmnElementType.END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.EndEvent(dbService, flowNav));
         registerHandler(BpmnElementType.TERMINATE_END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.TerminateEndEvent(dbService, flowNav, elementSupport));
         registerHandler(BpmnElementType.ERROR_END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.ErrorEndEvent(dbService, activityService));
         registerHandler(BpmnElementType.ESCALATION_END_EVENT, new com.zorrodev.bpm.engine.handler.EndEventHandler.EscalationEndEvent(dbService, activityService));

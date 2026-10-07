@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-37 (C37-1): a plain end event inside an ad-hoc scope is a chain-end
+     arrival, not a scope exit — the join owns completion (counter + quiescence).
+     A single activated root flowing into an inner end must finish the scope
+     exactly once and continue past the container; it must NOT complete the
+     whole instance from inside the scope. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c837adhoce" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c837-adhoc-inner-end" name="c837-adhoc-inner-end" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="adhoc" />
+
+    <bpmn:adHocSubProcess id="adhoc" name="adhoc">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>fAfter</bpmn:outgoing>
+      <bpmn:extensionElements>
+        <zeebe:adHoc activeElementsCollection="=[&quot;taskA&quot;]" />
+      </bpmn:extensionElements>
+      <bpmn:userTask id="taskA" name="taskA">
+        <bpmn:outgoing>fA1</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fA1" name="fA1" sourceRef="taskA" targetRef="innerEnd" />
+      <bpmn:endEvent id="innerEnd" name="innerEnd">
+        <bpmn:incoming>fA1</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:adHocSubProcess>
+    <bpmn:sequenceFlow id="fAfter" name="fAfter" sourceRef="adhoc" targetRef="afterAdhoc" />
+    <bpmn:userTask id="afterAdhoc" name="afterAdhoc">
+      <bpmn:incoming>fAfter</bpmn:incoming>
+      <bpmn:outgoing>fAfter2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fAfter2" name="fAfter2" sourceRef="afterAdhoc" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fAfter2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

@@ -138,8 +138,29 @@ public class FlowNavigator {
         // equivalent to a fresh query (cancelled rows must disappear from later views).
         List<Activity> active = dbService.getActiveActivities(processInstanceId);
         Set<UUID> cancelled = new HashSet<>();
+        // WO-C8-37 (C37-1): scopes are found by scope-token identity, not by sharing
+        // the arrival token. A live scope row owns exactly one scope token
+        // (dbService.createToken(incoming, scopeActivityId) at entry — its
+        // scopeActivityId points back at the scope row). The arrival belongs to
+        // the scope when walking up from the arrival token meets that scope token
+        // (non-interrupting boundary branches fork child tokens inside the scope,
+        // the walk covers them). The walk uses only the existing findToken reads —
+        // no new repository surface. Foreign scopes on the same incoming token are
+        // never touched.
+        Set<UUID> scopeIdsOnArrival = new HashSet<>();
+        UUID cursor = tokenId;
+        while (cursor != null) {
+            com.zorrodev.bpm.engine.dto.Token cursorToken = dbService.findToken(cursor).orElse(null);
+            if (cursorToken == null) {
+                break;
+            }
+            if (cursorToken.getScopeActivityId() != null) {
+                scopeIdsOnArrival.add(cursorToken.getScopeActivityId());
+            }
+            cursor = cursorToken.getParentId();
+        }
         List<Activity> scopes = active.stream()
-            .filter(a -> tokenId.equals(a.getToken()) && a.getType() == BpmnElementType.AD_HOC_SUB_PROCESS)
+            .filter(a -> a.getType() == BpmnElementType.AD_HOC_SUB_PROCESS && scopeIdsOnArrival.contains(a.getId()))
             .toList();
         if (scopes.isEmpty()) {
             return ArrivalOutcome.CONTINUE;
@@ -172,7 +193,7 @@ public class FlowNavigator {
                     // Chain end of some activated root (or an unrelated dead end on this token):
                     // the chain settled — evaluate even without an arrival of its own.
                     if (evaluateScopeDone(processInstanceId, bpmn, scope, state, active, cancelled)) {
-                        finishAdHocScope0(processInstanceId, tokenId, bpmn, scope,
+                        finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope,
                             state == null ? null : AdHocJoin.joinKey(scope.getId(), state.batchUuid()), executor, null,
                             active, cancelled);
                         outcome = ArrivalOutcome.SCOPE_FINISHED;
@@ -188,7 +209,8 @@ public class FlowNavigator {
                 // only an early completionCondition (whose cancel semantics covers the
                 // not-yet-created downstream: the scope takes over, the chain never runs).
                 if (adHocConditionMet(processInstanceId, bpmn, scope)) {
-                    finishAdHocScope0(processInstanceId, tokenId, bpmn, scope, key, executor, null, active, cancelled);
+                    finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope, key,
+                        executor, null, active, cancelled);
                     outcome = ArrivalOutcome.SCOPE_FINISHED;
                 } else {
                     log.info("{}/{}: Ad-hoc subprocess {} root {} done, chain continues",
@@ -197,7 +219,8 @@ public class FlowNavigator {
                 continue;
             }
             if (evaluateScopeDone(processInstanceId, bpmn, scope, state, active, cancelled)) {
-                finishAdHocScope0(processInstanceId, tokenId, bpmn, scope, key, executor, null, active, cancelled);
+                finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope, key,
+                    executor, null, active, cancelled);
                 outcome = ArrivalOutcome.SCOPE_FINISHED;
             } else {
                 Integer expected = dbService.getInclusiveExpected(processInstanceId, key);
@@ -207,6 +230,31 @@ public class FlowNavigator {
             }
         }
         return outcome;
+    }
+
+    /**
+     * WO-C8-37 (C37-1): the token a finished ad-hoc scope continues on — the scope
+     * row's INCOMING token. Entry keeps the scope row on the incoming token and
+     * creates the scope token as its CHILD (createToken(incoming, scopeActivity)).
+     * {@code scope.getToken()} may be either shape (the row's own token, or the
+     * scope token when a fixture moved it): walk up until the token whose
+     * scopeActivityId is this scope — its PARENT is the incoming branch. Falls
+     * back to the arrival token when the chain is unreadable (defensive only).
+     */
+    private UUID resumeTokenForScope(Activity scope, UUID arrivalTokenId) {
+        UUID cursor = scope.getToken();
+        while (cursor != null) {
+            com.zorrodev.bpm.engine.dto.Token cursorToken =
+                dbService.findToken(cursor).orElse(null);
+            if (cursorToken == null) {
+                break;
+            }
+            if (scope.getId() != null && scope.getId().equals(cursorToken.getScopeActivityId())) {
+                return cursorToken.getParentId() == null ? arrivalTokenId : cursorToken.getParentId();
+            }
+            cursor = cursorToken.getParentId();
+        }
+        return scope.getToken() == null ? arrivalTokenId : scope.getToken();
     }
 
     /**
@@ -229,14 +277,28 @@ public class FlowNavigator {
         if (expected == null || arrived < expected) {
             return false;
         }
-        // Quiescence: nothing unfinished left on the shared token besides ad-hoc containers
-        // (the completing element itself is already COMPLETED — its tail ran before this
-        // hook). Evaluated ONLY here, never on a middle: a middle's own downstream is not
-        // created yet at hook time, so "quiet" would lie for it.
-        return active.stream()
+        // Quiescence: nothing unfinished left INSIDE the scope subtree besides
+        // ad-hoc containers themselves (the completing element itself is already
+        // COMPLETED — its tail ran before this hook). Evaluated ONLY here, never
+        // on a middle: a middle's own downstream is not created yet at hook time,
+        // so "quiet" would lie for it.
+        // WO-C8-37 (раунд 2, БЛОКИРУЮЩАЯ №1): scope membership is read off the
+        // token parent chain (ElementSupport.enclosingScopeChain — the same walk
+        // the finish tail uses for mates), NOT off token equality with
+        // scope.getToken(). scope.getToken() is the INCOMING token; since C37-1
+        // inner elements live on the scope token (its child), token equality
+        // went blind: the scope finished early and cancelled live inner tasks.
+        // The chain walk additionally covers non-interrupting-boundary child
+        // tokens and nested ad-hoc subtrees (their rows stay AD_HOC-excluded,
+        // their live inner activities still block) — a plain scope-token
+        // equality would still miss both. Same construction as the mates filter
+        // below, so quiescence and cancel-confinement can never disagree on
+        // what "inside the scope" means.
+        List<Activity> live = active.stream()
             .filter(a -> !cancelled.contains(a.getId()))
-            .noneMatch(a -> scope.getToken() != null && scope.getToken().equals(a.getToken())
-                && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS);
+            .toList();
+        return elementSupport.filterActivitiesInScope(processInstanceId, live, scope.getId()).stream()
+            .noneMatch(a -> a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS);
     }
 
     /**
@@ -305,7 +367,10 @@ public class FlowNavigator {
      */
     public void finishAdHocScope(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
             Activity scope, String key, TokenExecutor executor, Boolean cancelRemainingOverride) {
-        finishAdHocScope0(processInstanceId, tokenId, bpmn, scope, key, executor,
+        // WO-C8-37 (C37-1): same incoming-token resume as the arrival path — see
+        // resumeTokenForScope. The worker path has no arrival token at hand, only
+        // the scope row, so it resolves the incoming token itself.
+        finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope, key, executor,
             cancelRemainingOverride, null, new HashSet<>());
     }
 
@@ -334,11 +399,25 @@ public class FlowNavigator {
             // finishes must not wipe its outer scope — only the token-mate elements go).
             // Approximation, documented in the WO-C8-32 report: an outer scope's unfinished
             // non-container siblings share this token and are cancelled as well.
+            // WO-C8-37 (C37-1): mates are the activities on the SCOPE token
+            // (scope.getToken()) — inner elements live there now, not on the arrival
+            // token. A nested ad-hoc finishing inside an outer scope cancels only its
+            // own subtree; the outer scope's own inner elements on the outer scope
+            // token are untouched.
             List<Activity> active = activeSnapshot != null
                 ? activeSnapshot : dbService.getActiveActivities(processInstanceId);
-            List<Activity> mates = active.stream()
+            // WO-C8-37 (C37-1): mates are the activities INSIDE the scope —
+            // enclosingScopeChain contains the scope (scope token or its
+            // descendants), wherever the arrival token landed. The old
+            // token-equality check died with the scope token: inner elements live
+            // on the scope token while scope.getToken() is the incoming token.
+            // Fresh read every time (NOT the traversal snapshot): the snapshot
+            // predates worker-driven activations/completions that run between the
+            // arrival snapshot and this tail (job-worker finish path).
+            List<Activity> mates = elementSupport.filterActivitiesInScope(
+                    processInstanceId, dbService.getActiveActivities(processInstanceId), scope.getId()).stream()
                 .filter(a -> !cancelled.contains(a.getId())
-                    && tokenId.equals(a.getToken()) && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS)
+                    && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS)
                 .toList();
             for (Activity mate : mates) {
                 dbService.cancelActivity(mate.getId());
@@ -442,6 +521,36 @@ public class FlowNavigator {
             UUID subProcessActivityId = endToken.getScopeActivityId();
             Activity subProcessActivity = dbService.getActivity(subProcessActivityId);
             BpmnElementModel subProcessElement = bpmn.getElement(subProcessActivity.getBpmnElementId());
+            // WO-C8-37 (C37-1): ad-hoc containers finished by their own join
+            // machinery handle their continuation THERE (finishAdHocScope0, on the
+            // incoming token). finishBranch must not repeat it — whichever path
+            // finished the ad-hoc scope already continued past the container
+            // (live repro: the join finishes the scope on the incoming token,
+            // then the end event on the scope token re-enters here and spawns a
+            // duplicate post-scope flow on the WRONG token — the instance then
+            // never completes because the branch counter bookkeeping diverges).
+            // Other scope containers keep the historical embedded-subprocess exit
+            // below. AD_HOC scope tokens henceforth die with their scope: the one
+            // path that legitimately arrives here while the ad-hoc scope is still
+            // live is terminate (EndEventHandler routes it past the join), and it
+            // needs the same close-and-continue tail as an embedded subprocess.
+            if (subProcessElement != null
+                && subProcessElement.getType() == BpmnElementType.AD_HOC_SUB_PROCESS
+                && (subProcessActivity.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.COMPLETED
+                    || subProcessActivity.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.CANCELLED)) {
+                log.info("{}/{}: finishBranch on token of already-{} ad-hoc scope {} — completed via the join path, branch consumed",
+                    processInstanceId, tokenId, subProcessActivity.getStatus(), subProcessActivity.getBpmnElementId());
+                // Consume the branch WITHOUT touching the branch counter: the scope
+                // token never holds a fork counter (C37-1 proof: decrementing it
+                // returns -1 and completes the instance early — live repro
+                // two-tasks/output tests), and the token row cannot be deleted
+                // (fk_activities__token: history rows still reference it). The
+                // join's incoming-token continuation already carries the branch;
+                // a bare return is the consumption. See the TERMINAL-ROW
+                // INVARIANT in DBService (activities keep their token forever) —
+                // never deleteToken a token with activity history.
+                return;
+            }
             // WO-DIFF-1 п.1: promote the container's output mappings to root BEFORE
             // completing it (output sources evaluate against the still-live sub scope
             // via ElementSupport's enclosing-chain reads), then drop the closed scope's
