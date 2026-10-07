@@ -175,14 +175,18 @@ public class FanoutMidwayKillRollbackIntegrationTests {
         }
 
         // Откат виден по разнице: волна 1 (штатный старт pi) прошла целиком;
-        // kill-волна не оставила НИ ОДНОГО инстанса сверх pi: ни arrived-строк,
-        // ни припаркованного join'а, ни сплит-активности.
-        List<UUID> survivors = activityRepository.findAll().stream()
-            .map(ActivityEntity::getProcessInstanceId).distinct()
-            .filter(id -> !id.equals(pi)).toList();
-        assertThat(survivors)
-            .as("the killed wave left no surviving instance — the whole wave rolled back")
-            .isEmpty();
+        // kill-волна не оставила НИ ОДНОГО инстанса ЭТОГО ОПРЕДЕЛЕНИЯ сверх pi:
+        // ни arrived-строк, ни припаркованного join'а, ни сплит-активности.
+        // (Фильтр — по definitionId: в общей тестовой БД живут инстансы других
+        // определений/тестов, их трогать нельзя.)
+        java.util.Set<UUID> ownInstances = activityRepository.findAll().stream()
+            .filter(a -> defId.equals(dbService.getProcessInstance(a.getProcessInstanceId())
+                .getProcessDefinitionId()))
+            .map(ActivityEntity::getProcessInstanceId)
+            .collect(java.util.stream.Collectors.toSet());
+        assertThat(ownInstances)
+            .as("the killed wave left no surviving instance of this definition — the whole wave rolled back")
+            .containsExactly(pi);
 
         // Волна 3 — штатный повтор убитой волны (новый старт того же определения):
         // завершается целиком, join — ровно один раз, ветвь перезапускается штатно,
