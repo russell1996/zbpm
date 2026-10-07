@@ -34,7 +34,7 @@ class EndEventHandlerTest {
 
     @BeforeEach
     void setUp() {
-        endEvent = new EndEventHandler.EndEvent(dbService, activityService);
+        endEvent = new EndEventHandler.EndEvent(dbService, flowNavigator);
         terminateEndEvent = new EndEventHandler.TerminateEndEvent(dbService, flowNavigator, elementSupport);
         errorEndEvent = new EndEventHandler.ErrorEndEvent(dbService, activityService);
         escalationEndEvent = new EndEventHandler.EscalationEndEvent(dbService, activityService);
@@ -51,13 +51,83 @@ class EndEventHandlerTest {
         BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
 
         when(dbService.createActivity(eq(piId), eq(tokenId), eq(el))).thenReturn(activityId);
+        // WO-C8-37 (C37-1): plain token (no scope) — straight to the historical
+        // finishBranch path, the join hook is not consulted.
+        com.zorrodev.bpm.engine.dto.Token token = mock(com.zorrodev.bpm.engine.dto.Token.class);
+        when(token.getScopeActivityId()).thenReturn(null);
+        when(dbService.findToken(eq(tokenId))).thenReturn(Optional.of(token));
 
         ExecutionCtx ctx = new ExecutionCtx(piId, tokenId, null, null);
         endEvent.handle(ctx, bpmn, el);
 
         verify(dbService).createActivity(piId, tokenId, el);
         verify(dbService).completeActivity(activityId);
-        verify(activityService).finishBranch(piId, tokenId, bpmn);
+        verify(flowNavigator, never()).handleAdHocArrival(any(), any(), any(), any(), any());
+        verify(flowNavigator).finishBranch(piId, tokenId, bpmn, null);
+    }
+
+    @Test
+    void endEvent_insideLiveAdhocScope_isJoinArrival() {
+        UUID piId = UUID.randomUUID();
+        UUID scopeTokenId = UUID.randomUUID();
+        UUID scopeActivityId = UUID.randomUUID();
+        UUID activityId = UUID.randomUUID();
+        BpmnElementModel el = new BpmnElementModel();
+        el.setId("innerEnd");
+        el.setType(BpmnElementType.END_EVENT);
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+
+        when(dbService.createActivity(eq(piId), eq(scopeTokenId), eq(el))).thenReturn(activityId);
+        com.zorrodev.bpm.engine.dto.Token token = mock(com.zorrodev.bpm.engine.dto.Token.class);
+        when(token.getScopeActivityId()).thenReturn(scopeActivityId);
+        when(dbService.findToken(eq(scopeTokenId))).thenReturn(Optional.of(token));
+        com.zorrodev.bpm.engine.dto.Activity scope = mock(com.zorrodev.bpm.engine.dto.Activity.class);
+        when(scope.getType()).thenReturn(BpmnElementType.AD_HOC_SUB_PROCESS);
+        when(scope.getStatus()).thenReturn(com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS);
+        when(dbService.getActivity(eq(scopeActivityId))).thenReturn(scope);
+        // WO-C8-37 (C37-1): the join consumes the branch here — finishBranch must
+        // NOT run (that would repeat the scope continuation); a live scope whose
+        // join does NOT finish parks silently (return before finishBranch too).
+        when(flowNavigator.handleAdHocArrival(eq(piId), eq(scopeTokenId), eq(bpmn), eq(el), isNull()))
+            .thenReturn(com.zorrodev.bpm.engine.handler.ArrivalOutcome.SCOPE_FINISHED);
+
+        ExecutionCtx ctx = new ExecutionCtx(piId, scopeTokenId, null, null);
+        endEvent.handle(ctx, bpmn, el);
+
+        verify(flowNavigator).handleAdHocArrival(piId, scopeTokenId, bpmn, el, null);
+        verify(flowNavigator, never()).finishBranch(any(), any(), any(), any());
+    }
+
+    @Test
+    void endEvent_insideLiveAdhocScope_joinNotFinished_parksSilently() {
+        UUID piId = UUID.randomUUID();
+        UUID scopeTokenId = UUID.randomUUID();
+        UUID scopeActivityId = UUID.randomUUID();
+        UUID activityId = UUID.randomUUID();
+        BpmnElementModel el = new BpmnElementModel();
+        el.setId("innerEnd");
+        el.setType(BpmnElementType.END_EVENT);
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+
+        when(dbService.createActivity(eq(piId), eq(scopeTokenId), eq(el))).thenReturn(activityId);
+        com.zorrodev.bpm.engine.dto.Token token = mock(com.zorrodev.bpm.engine.dto.Token.class);
+        when(token.getScopeActivityId()).thenReturn(scopeActivityId);
+        when(dbService.findToken(eq(scopeTokenId))).thenReturn(Optional.of(token));
+        com.zorrodev.bpm.engine.dto.Activity scope = mock(com.zorrodev.bpm.engine.dto.Activity.class);
+        when(scope.getType()).thenReturn(BpmnElementType.AD_HOC_SUB_PROCESS);
+        when(scope.getStatus()).thenReturn(com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS);
+        when(dbService.getActivity(eq(scopeActivityId))).thenReturn(scope);
+        // WO-C8-37 (C37-1): join not finished (counter/quiescence say wait) — the
+        // inner chain parks; finishBranch must NOT run on the scope token (that
+        // would mis-close the live scope off the join's control).
+        when(flowNavigator.handleAdHocArrival(eq(piId), eq(scopeTokenId), eq(bpmn), eq(el), isNull()))
+            .thenReturn(com.zorrodev.bpm.engine.handler.ArrivalOutcome.CONTINUE);
+
+        ExecutionCtx ctx = new ExecutionCtx(piId, scopeTokenId, null, null);
+        endEvent.handle(ctx, bpmn, el);
+
+        verify(flowNavigator).handleAdHocArrival(piId, scopeTokenId, bpmn, el, null);
+        verify(flowNavigator, never()).finishBranch(any(), any(), any(), any());
     }
 
     @Test

@@ -71,6 +71,20 @@ public class AdHocSubProcessHandler implements ElementHandler, TypedElementHandl
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
         log.info("{}/{}: Entering {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
 
+        // WO-C8-37 (C37-1): the ad-hoc container owns a scope token, exactly like
+        // SubProcessHandler (same createToken call shape). Every inner element is
+        // dispatched on the child scope token, so ElementSupport.enclosingScopeChain
+        // confines the subtree and EventTrigger.cancelScopeContainer kills exactly
+        // the scope (the CR-05 defect: without it an interrupting boundary orphaned
+        // inner work — it could not kill "everything on the token" without hitting
+        // a fork sibling — and terminate killed the whole instance).
+        // The scope ROW stays on the incoming token (unchanged): join/boundary/
+        // worker identity all read scope.getToken(), whose findToken().parent IS
+        // the incoming token — resumeTokenForScope needs no special case.
+        com.zorrodev.bpm.engine.dto.Token scopeToken = dbService.createToken(tokenId, activityId);
+        ExecutionCtx scopeCtx = new ExecutionCtx(processInstanceId, scopeToken.getId(),
+            ctx.executor(), ctx.executionContext());
+
         // WO-C8-34 (CR-04): boundaries attached to the ad-hoc container are armed
         // on entry, like task hosts. Covers both internal and job-worker modes
         // (registration happens before the mode split).
@@ -124,7 +138,7 @@ public class AdHocSubProcessHandler implements ElementHandler, TypedElementHandl
         List<ActivationRequest> requests = activated.stream()
             .map(id -> new ActivationRequest(id, List.of()))
             .toList();
-        activateInnerElements(ctx, bpmn, bpmnElement, activityId, requests, true);
+        activateInnerElements(scopeCtx, bpmn, bpmnElement, activityId, requests, true);
         log.info("{}/{}: Ad-hoc subprocess {} activated {} element(s) batch={}", processInstanceId, tokenId, bpmnElement.getId(), activated.size(), batchUuid);
     }
 
@@ -229,10 +243,51 @@ public class AdHocSubProcessHandler implements ElementHandler, TypedElementHandl
             dbService.recordInclusiveExpected(processInstanceId, AdHocJoin.joinKey(scopeActivityId, batch), requests.size());
         }
         for (ActivationRequest req : requests) {
-            ctx.executor().execute(processInstanceId, tokenId, bpmn, bpmn.getElement(req.elementId()));
-            bindElementVariables(processInstanceId, tokenId, scopeElement.getId(), req);
+            // WO-C8-37 (C37-1): inner elements run on the SCOPE token (child of the
+            // incoming token, carrying scopeActivityId) — never on ctx.tokenId().
+            // Callers pass whatever token they hold (incoming at entry, scope token
+            // from the worker path); the dispatch token is resolved here, once.
+            UUID dispatchToken = scopeTokenOf(ctx, scopeActivityId);
+            ctx.executor().execute(processInstanceId, dispatchToken,
+                bpmn, bpmn.getElement(req.elementId()));
+            bindElementVariables(processInstanceId, dispatchToken, scopeElement.getId(), req);
         }
         return true;
+    }
+
+    /**
+     * WO-C8-37 (C37-1): the scope token for {@code scopeActivityId} — single
+     * resolution point for inner-element dispatch. Prefers the token that
+     * already carries this scope (its scopeActivityId points back at the scope
+     * row — the scope token created at entry); creates it when absent (defensive:
+     * entry always creates it, job-mode entry included).
+     */
+    private UUID scopeTokenOf(ExecutionCtx ctx, UUID scopeActivityId) {
+        UUID processInstanceId = ctx.processInstanceId();
+        com.zorrodev.bpm.engine.dto.Token arrival =
+            dbService.findToken(ctx.tokenId()).orElse(null);
+        if (arrival != null && scopeActivityId.equals(arrival.getScopeActivityId())) {
+            return arrival.getId();
+        }
+        // Walk up: a non-interrupting boundary branch inside the scope forks child
+        // tokens — the scope token is an ancestor of the arrival token.
+        UUID cursor = arrival == null ? null : arrival.getParentId();
+        while (cursor != null) {
+            com.zorrodev.bpm.engine.dto.Token cursorToken =
+                dbService.findToken(cursor).orElse(null);
+            if (cursorToken == null) {
+                break;
+            }
+            if (scopeActivityId.equals(cursorToken.getScopeActivityId())) {
+                return cursorToken.getId();
+            }
+            cursor = cursorToken.getParentId();
+        }
+        com.zorrodev.bpm.engine.dto.Token scopeToken =
+            dbService.createToken(ctx.tokenId(), scopeActivityId);
+        log.warn("{}/{}: Ad-hoc subprocess {} had no scope token — created {} late",
+            processInstanceId, ctx.tokenId(), scopeActivityId, scopeToken.getId());
+        return scopeToken.getId();
     }
 
     /**
