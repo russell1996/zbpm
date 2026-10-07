@@ -86,9 +86,11 @@ public class RuntimeServiceImpl implements RuntimeService {
     @Override
     public IdDTO completeServiceTask(UUID id, List<ProcessVariable> variables, String dispatchPhase,
             Integer dispatchIndex) {
-        activityService.completeServiceTask(id, variables, dispatchPhase, dispatchIndex);
+        // WO-AUDIT-8 (A-NEW4-15): TRUE = поглощённый повтор → alreadyCompleted.
+        boolean replay = activityService.completeServiceTask(id, variables, dispatchPhase, dispatchIndex);
         IdDTO result = new IdDTO();
         result.setId(id);
+        result.setAlreadyCompleted(replay ? Boolean.TRUE : null);
         return result;
     }
 
@@ -146,9 +148,11 @@ public class RuntimeServiceImpl implements RuntimeService {
 
     @Override
     public IdDTO completeUserTask(UUID id, List<ProcessVariable> variables) {
-        activityService.completeUserTask(id, variables);
+        // WO-AUDIT-8 (A-NEW4-15): TRUE = поглощённый повтор → alreadyCompleted.
+        boolean replay = activityService.completeUserTask(id, variables);
         IdDTO result = new IdDTO();
         result.setId(id);
+        result.setAlreadyCompleted(replay ? Boolean.TRUE : null);
         return result;
     }
 

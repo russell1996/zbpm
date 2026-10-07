@@ -96,6 +96,15 @@ public class BpmMetrics {
      */
     private final Counter legacyUnphasedCompletion;
 
+    // --- Completion replay (WO-AUDIT-8, A-NEW4-15) ---
+    // Повторный complete — тихий 2xx-успех без следа. Один meter, серия на вид
+    // задачи (kind=user_task/service_task): оператор видит долю повторов
+    // (at-least-once дубликаты брокера vs реальные двойные клики).
+    private final Map<String, Counter> completionReplayByKind;
+
+    /** Виды задач для {@code zbpm.completion.replay}. Неизвестные — не считаются. */
+    static final List<String> COMPLETION_REPLAY_KINDS = List.of("user_task", "service_task");
+
     // --- SSE bridge (WO-REL-56, part B) ---
     private final Counter sseForeignSequenceDropped;
 
@@ -231,6 +240,20 @@ public class BpmMetrics {
         }
         this.activityTransitionIgnoredByReason = Map.copyOf(ignoredByReason);
 
+        // WO-AUDIT-8 (A-NEW4-15): повторные complete — наблюдаемые, а не тихие.
+        // Та же форма, что activityTransitionIgnoredByReason выше: один meter,
+        // серия на kind. Реестр — тот же домен этого класса (Micrometer →
+        // Prometheus), отдельный бин под два счётчика — распил ради распила.
+        Map<String, Counter> replayByKind = new LinkedHashMap<>();
+        for (String kind : COMPLETION_REPLAY_KINDS) {
+            replayByKind.put(kind, Counter.builder("zbpm.completion.replay")
+                .description("Duplicate task completions absorbed by the idempotent guard "
+                    + "(2xx + alreadyCompleted=true, no state change). One series per task kind.")
+                .tag("kind", kind)
+                .register(registry));
+        }
+        this.completionReplayByKind = Map.copyOf(replayByKind);
+
         // WO-REL-56 (part B): foreign sequence dropped, visible to the
         // operator instead of silently skipped (pre-REL-55 behavior was a
         // bare warn; REL-55 dispatched it with a foreign-domain SSE id).
@@ -306,6 +329,19 @@ public class BpmMetrics {
      */
     public void activityTransitionIgnored(String reason) {
         Counter counter = activityTransitionIgnoredByReason.get(reason);
+        if (counter != null) {
+            counter.increment();
+        }
+    }
+
+    // --- Completion replay (WO-AUDIT-8, A-NEW4-15) ---
+    /**
+     * Повторный complete задачи вида {@code kind} ({@code user_task} /
+     * {@code service_task}): guard поглотил дубликат, состояние не менялось,
+     * ответ — 2xx + {@code alreadyCompleted=true}.
+     */
+    public void completionReplayTotal(String kind) {
+        Counter counter = completionReplayByKind.get(kind);
         if (counter != null) {
             counter.increment();
         }

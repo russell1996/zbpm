@@ -219,14 +219,14 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     }
 
     @Override
-    public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables) {
-        completeServiceTask(serviceTaskId, variables, null, null);
+    public boolean completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables) {
+        return completeServiceTask(serviceTaskId, variables, null, null);
     }
 
     @Override
-    public void completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables, String dispatchPhase,
+    public boolean completeServiceTask(UUID serviceTaskId, List<ProcessVariable> variables, String dispatchPhase,
             Integer dispatchIndex) {
-        completionService.completeServiceTask(serviceTaskId, variables, dispatchPhase, dispatchIndex, this);
+        return completionService.completeServiceTask(serviceTaskId, variables, dispatchPhase, dispatchIndex, this);
     }
 
     @Override
@@ -244,8 +244,8 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
     }
 
     @Override
-    public void completeUserTask(UUID userTaskId, List<ProcessVariable> variables) {
-        completionService.completeUserTask(userTaskId, variables, this);
+    public boolean completeUserTask(UUID userTaskId, List<ProcessVariable> variables) {
+        return completionService.completeUserTask(userTaskId, variables, this);
     }
 
     @Override
