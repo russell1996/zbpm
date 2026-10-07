@@ -36,6 +36,12 @@ class ErrorEscalationThrowerTest {
     private FlowNavigator flowNavigator;
     @Mock
     private EventTrigger eventTrigger;
+    // WO-C8-38 (C38-2): новые зависимости конструктора — моки, иначе scope-walk
+    // упадёт NPE на scopeContainment (чистка arrived-строк отменённого scope).
+    @Mock
+    private ScopeContainment scopeContainment;
+    @Mock
+    private InclusiveGatewayHandler inclusiveGatewayHandler;
 
     @InjectMocks
     private ErrorEscalationThrower errorEscalationThrower;
