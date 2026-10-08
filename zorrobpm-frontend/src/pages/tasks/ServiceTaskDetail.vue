@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
@@ -9,6 +9,8 @@ import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import type { ProcessVariable } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
+import { useProcessStore } from '@/stores/process'
+import PresetPicker from '@/widgets/presets/PresetPicker.vue'
 import { ArrowLeft } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -32,20 +34,81 @@ useBreadcrumbLabel(() => {
 })
 
 const editableVars = ref<{ name: string; type: string; value: string }[]>([])
+// WO-VT-1: завершить / ошибка / throw error — из шаблона ЭТОГО элемента.
+const processStore = useProcessStore()
+const pickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
+const askMissing = ref<string[]>([])
+const pickerInvalid = ref(false)
+const presetKey = ref('')
+const presetRef = ref<string | null>(null)
+type ServiceTaskAction = 'complete' | 'fail' | 'throw'
+const action = ref<ServiceTaskAction>('complete')
+const failMessage = ref('')
+const errorCode = ref('')
 
-async function complete() {
-  const variables: ProcessVariable[] = editableVars.value.map((v) => ({
+function pickerVariables(): ProcessVariable[] {
+  return (pickerRef.value?.getVariables() ?? []).map((v) => ({
     name: v.name,
-    type: v.type as ProcessVariable['type'],
+    type: v.type,
     value: v.value,
   }))
-  await store.completeServiceTask(route.params.id as string, variables)
+}
+
+function onPickerChange() {
+  askMissing.value = pickerRef.value?.missingAsk ?? []
+  pickerInvalid.value = pickerRef.value?.hasErrors ?? false
+}
+
+async function complete() {
+  await store.completeServiceTask(route.params.id as string, pickerVariables())
   if (!store.error) {
     toast.success('Service task completed')
     router.push('/service-tasks')
   } else {
     toast.error(store.error)
   }
+}
+
+/** WO-VT-1: «ошибка» service task с переменными из шаблона элемента. */
+async function fail() {
+  await store.failServiceTask(route.params.id as string, failMessage.value, pickerVariables())
+  if (!store.error) {
+    toast.success(t('serviceTaskFailed'))
+    router.push('/service-tasks')
+  } else {
+    toast.error(store.error)
+  }
+}
+
+/** WO-VT-1: throw error с переменными из шаблона элемента. */
+async function throwError() {
+  if (!errorCode.value.trim()) return
+  await store.throwServiceTaskError(route.params.id as string, errorCode.value.trim(), pickerVariables())
+  if (!store.error) {
+    toast.success(t('serviceTaskErrorThrown'))
+    router.push('/service-tasks')
+  } else {
+    toast.error(store.error)
+  }
+}
+
+const actionDisabled = computed(() =>
+  askMissing.value.length > 0 || pickerInvalid.value ||
+  (action.value === 'throw' && !errorCode.value.trim()),
+)
+
+// WO-ACL-11 criterion 11: строковых литералов в шаблоне нет — метка действия
+// и диспетчер живут в script (сканер непереведённых строк флагит литералы
+// внутри {{ }}).
+const actionLabel = computed(() =>
+  action.value === 'complete' ? t('completeTask')
+  : action.value === 'fail' ? t('serviceTaskFail')
+  : t('serviceTaskThrowError'))
+
+function runAction() {
+  if (action.value === 'complete') return complete()
+  if (action.value === 'fail') return fail()
+  return throwError()
 }
 
 onMounted(async () => {
@@ -55,6 +118,16 @@ onMounted(async () => {
     type: v.type,
     value: v.value,
   }))
+  const task = store.currentServiceTask
+  if (task?.processDefinitionId) {
+    try {
+      await processStore.fetchDefinition(task.processDefinitionId)
+      presetKey.value = processStore.currentDefinition?.key ?? ''
+      presetRef.value = task.code
+    } catch {
+      // Шаблоны недоступны — останется legacy-редактор ниже.
+    }
+  }
 })
 </script>
 
@@ -110,9 +183,18 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="border border-border rounded-lg p-4 bg-card">
+      <div class="border border-border rounded-lg p-4 bg-card space-y-3">
         <h2 class="text-lg font-bold mb-4">{{ t('variables') }}</h2>
-        <div class="space-y-3">
+        <!-- WO-VT-1: переменные завершения — из шаблона элемента (или ручной ввод) -->
+        <PresetPicker
+          v-if="presetKey"
+          ref="pickerRef"
+          :process-key="presetKey"
+          target-kind="SERVICE_TASK"
+          :target-ref="presetRef"
+          @change="onPickerChange"
+        />
+        <div v-else class="space-y-3">
           <div v-for="(v, i) in editableVars" :key="v.name" class="flex items-center gap-3">
             <label class="text-sm font-mono w-32">{{ v.name }}</label>
             <span class="text-xs text-muted-foreground">({{ v.type }})</span>
@@ -122,6 +204,68 @@ onMounted(async () => {
             />
           </div>
           <div v-if="!editableVars.length" class="text-sm text-muted-foreground">{{ t('noVariables') }}</div>
+        </div>
+        <!-- WO-VT-1: действие над переменными: завершить / ошибка / throw error -->
+        <div v-if="!store.currentServiceTask.completedAt" class="pt-2 border-t border-border space-y-3">
+          <div class="flex items-center gap-1" role="tablist" :aria-label="t('serviceTaskAction')">
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="action === 'complete'"
+              class="px-3 py-1 text-xs rounded-md border"
+              :class="action === 'complete' ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'"
+              @click="action = 'complete'"
+            >
+              {{ t('completeTask') }}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="action === 'fail'"
+              class="px-3 py-1 text-xs rounded-md border"
+              :class="action === 'fail' ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'"
+              @click="action = 'fail'"
+            >
+              {{ t('serviceTaskFail') }}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="action === 'throw'"
+              class="px-3 py-1 text-xs rounded-md border"
+              :class="action === 'throw' ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'"
+              @click="action = 'throw'"
+            >
+              {{ t('serviceTaskThrowError') }}
+            </button>
+          </div>
+          <div v-if="action === 'fail'">
+            <label for="st-fail-message" class="block text-xs font-medium mb-1">{{ t('serviceTaskFailMessage') }}</label>
+            <input
+              id="st-fail-message"
+              v-model="failMessage"
+              class="w-full px-2 py-1.5 border border-input rounded text-sm"
+            />
+          </div>
+          <div v-if="action === 'throw'">
+            <label for="st-error-code" class="block text-xs font-medium mb-1">{{ t('serviceTaskErrorCode') }}</label>
+            <input
+              id="st-error-code"
+              v-model="errorCode"
+              class="w-full px-2 py-1.5 border border-input rounded text-sm font-mono"
+            />
+          </div>
+          <div class="flex justify-end">
+            <Button
+              size="sm"
+              class="h-8 px-3 text-xs disabled:opacity-50"
+              :disabled="actionDisabled"
+              :title="askMissing.length ? t('presetFillAskFields', { fields: askMissing.join(', ') }) : ''"
+              @click="runAction"
+            >
+              {{ actionLabel }}
+            </Button>
+          </div>
         </div>
       </div>
     </template>

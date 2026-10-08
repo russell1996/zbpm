@@ -139,6 +139,35 @@ export const useTaskStore = defineStore('task', () => {
     }
   }
 
+  // WO-VT-1 (фронт): «ошибка» и throw error service task из шаблона элемента.
+  async function failServiceTask(id: string, message: string, variables: ProcessVariable[]) {
+    loading.value = true
+    error.value = null
+    try {
+      await taskService.failServiceTask(id, message, variables)
+      currentServiceTask.value = null
+      currentTaskVariables.value = []
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to fail service task'
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function throwServiceTaskError(id: string, errorCode: string, variables: ProcessVariable[]) {
+    loading.value = true
+    error.value = null
+    try {
+      await taskService.throwServiceTaskError(id, errorCode, variables)
+      currentServiceTask.value = null
+      currentTaskVariables.value = []
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to throw service task error'
+    } finally {
+      loading.value = false
+    }
+  }
+
   function clearCurrent() {
     currentTask.value = null
     currentServiceTask.value = null
@@ -172,6 +201,8 @@ export const useTaskStore = defineStore('task', () => {
     fetchServiceTasks,
     fetchServiceTask,
     completeServiceTask,
+    failServiceTask,
+    throwServiceTaskError,
     clearCurrent,
     handleEvent,
   }

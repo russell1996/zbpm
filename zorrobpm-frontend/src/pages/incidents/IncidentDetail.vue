@@ -9,6 +9,8 @@ import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import type { ProcessVariable } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
+import { useProcessStore } from '@/stores/process'
+import PresetPicker from '@/widgets/presets/PresetPicker.vue'
 import { ArrowLeft } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -34,55 +36,48 @@ function goToInstance() {
 }
 
 const showResolveModal = ref(false)
-const resolveVars = ref<{ name: string; type: string; value: string }[]>([])
-const newVarName = ref('')
-const newVarType = ref('STRING')
-const newVarValue = ref('')
-const jsonError = ref('')
+// WO-VT-1: resolve из шаблона (targetRef = bpmnElementId инцидента).
+const processStore = useProcessStore()
+const pickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
+const askMissing = ref<string[]>([])
+const pickerInvalid = ref(false)
+const presetKey = ref('')
 
-function addVariable() {
-  jsonError.value = ''
-  if (newVarName.value) {
-    if (newVarType.value === 'JSON') {
-      try {
-        JSON.parse(newVarValue.value)
-      } catch {
-        jsonError.value = t('invalidJson')
-        return
-      }
-    }
-    resolveVars.value.push({ name: newVarName.value, type: newVarType.value, value: newVarValue.value })
-    newVarName.value = ''
-    newVarValue.value = ''
-  }
-}
-
-function removeVariable(index: number) {
-  resolveVars.value.splice(index, 1)
+function onPickerChange() {
+  askMissing.value = pickerRef.value?.missingAsk ?? []
+  pickerInvalid.value = pickerRef.value?.hasErrors ?? false
 }
 
 async function resolve() {
-  if (jsonError.value) return
-  if (newVarName.value) addVariable()
-  if (jsonError.value) return
-  const variables: ProcessVariable[] = resolveVars.value.map((v) => ({
+  if (!pickerRef.value || askMissing.value.length || pickerInvalid.value) return
+  const variables: ProcessVariable[] = pickerRef.value.getVariables().map((v) => ({
     name: v.name,
-    type: v.type as ProcessVariable['type'],
+    type: v.type,
     value: v.value,
   }))
   await store.resolveIncident(route.params.id as string, variables)
   if (!store.error) {
     toast.success(t('incidentResolved'))
     showResolveModal.value = false
-    resolveVars.value = []
+    askMissing.value = []
     router.push('/incidents')
   } else {
     toast.error(store.error)
   }
 }
 
-onMounted(() => {
-  store.fetchIncident(route.params.id as string)
+onMounted(async () => {
+  await store.fetchIncident(route.params.id as string)
+  // WO-VT-1: ключ процесса для шаблонов — через инстанс инцидента.
+  const iid = store.currentIncident?.processInstanceId
+  if (iid) {
+    try {
+      await processStore.fetchInstance(iid)
+      presetKey.value = processStore.currentInstance?.processKey ?? ''
+    } catch {
+      // Шаблоны недоступны — в модалке останется ручной ввод пикера.
+    }
+  }
 })
 </script>
 
@@ -169,32 +164,25 @@ onMounted(() => {
       <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
         <h2 class="text-lg font-bold">{{ t('resolveIncident') }}</h2>
         <p class="text-sm text-muted-foreground">{{ t('resolveIncidentHint') }}</p>
-        <div class="space-y-3">
-          <div v-for="(v, i) in resolveVars" :key="i" class="flex items-center gap-2 text-sm">
-            <span class="font-mono">{{ v.name }}</span>
-            <span class="text-muted-foreground">({{ v.type }})</span>
-            <span>= {{ v.value }}</span>
-            <button class="text-red-500 hover:underline ml-auto" @click="removeVariable(i)">{{ t('remove') }}</button>
-          </div>
-          <div class="flex items-center gap-2">
-            <input v-model="newVarName" :placeholder="t('name')" class="px-2 py-1 border border-input rounded text-sm w-24" />
-            <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
-              <option>STRING</option>
-              <option>UUID</option>
-              <option>LONG</option>
-              <option>DOUBLE</option>
-              <option>BOOLEAN</option>
-              <option>JSON</option>
-            </select>
-            <input v-if="newVarType !== 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="px-2 py-1 border border-input rounded text-sm flex-1" />
-            <button class="text-sm text-primary hover:underline" @click="addVariable">{{ t('add') }}</button>
-          </div>
-          <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" :placeholder="t('jsonPlaceholder')" class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
-          <p v-if="jsonError" class="text-xs text-red-500">{{ jsonError }}</p>
-        </div>
+        <!-- WO-VT-1: переменные resolve — ручной ввод или шаблон элемента -->
+        <PresetPicker
+          v-if="presetKey"
+          ref="pickerRef"
+          :process-key="presetKey"
+          target-kind="INCIDENT"
+          :target-ref="store.currentIncident?.bpmnElementId ?? null"
+          @change="onPickerChange"
+        />
         <div class="flex justify-end gap-2 pt-2">
           <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showResolveModal = false">{{ t('cancel') }}</button>
-          <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="resolve">{{ t('resolve') }}</button>
+          <button
+            class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
+            :disabled="!presetKey || askMissing.length > 0 || pickerInvalid"
+            :title="askMissing.length ? t('presetFillAskFields', { fields: askMissing.join(', ') }) : ''"
+            @click="resolve"
+          >
+            {{ t('resolve') }}
+          </button>
         </div>
       </div>
     </div>

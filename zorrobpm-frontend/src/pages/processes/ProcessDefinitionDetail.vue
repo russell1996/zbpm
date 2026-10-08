@@ -12,11 +12,13 @@ import * as processService from '@/services/processService'
 import { listMembers, changeMemberRole, removeMember, type Member } from '@/services/adminService'
 import { useAuthStore } from '@/stores/auth'
 import { errorMessage } from '@/shared/lib/utils'
-import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
+import type { BpmnNode, BpmnFlow } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import IoMappingTable from '@/widgets/shared/IoMappingTable.vue'
 import TabsBar from '@/widgets/shared/TabsBar.vue'
 import MemberAddDialog from '@/widgets/processes/MemberAddDialog.vue'
+import ElementPresetsPanel from '@/widgets/presets/ElementPresetsPanel.vue'
+import { elementToPresetTarget } from '@/shared/lib/presetVariables'
 import { ArrowLeft, Download, Calendar } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -126,17 +128,17 @@ const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
 const activeTab = ref('model')
 const showStartModal = ref(false)
-const startVars = ref<{ name: string; type: string; value: string }[]>([])
-const newVarName = ref('')
-const newVarType = ref('STRING')
-const newVarValue = ref('')
-const jsonError = ref('')
+// WO-VT-1: старт из шаблона — переменные отдаёт PresetPicker в модалке.
+const startPickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
+const askMissing = ref<string[]>([])
+const pickerInvalid = ref(false)
 
 // --- WO-ACL-11 criteria 20-22: ONE upload component, two ways to open it ---
 // The card opens ProcessDeploySection BOUND to this process (target shown,
 // mode "new version", foreign keys rejected). The old inline showVersionModal
 // is gone — it was a second implementation of the same action (WO-ACL-10 defect).
 import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
+import PresetPicker from '@/widgets/presets/PresetPicker.vue'
 
 const showDeployDialog = ref(false)
 
@@ -190,6 +192,13 @@ const selectedNodeHasMappings = computed(() => {
   return hasMappingsList(p['inputMappings']) || hasMappingsList(p['outputMappings'])
 })
 
+// WO-VT-1: панель «Шаблоны для этого элемента» под свойствами узла.
+// targetKind/ref — из типа элемента (startEvent → START без ref, userTask /
+// serviceTask → USER_TASK / SERVICE_TASK с ref = id). Остальные элементы
+// шаблонов с диаграммы не имеют — их виды создаются из своих страниц.
+const elementPresetTarget = computed(() =>
+  selectedNode.value ? elementToPresetTarget(selectedNode.value) : null)
+
 // WO-ENG-15: structure-tab tree — flattened nodes with depth for indent;
 // boundary events ride one level under their host.
 interface TreeRow {
@@ -217,42 +226,18 @@ const selectedFlow = computed<BpmnFlow | null>(() =>
 // every element that carries BPMN <documentation>, surfaced as "requirements"
 const requirements = computed(() => allNodes.value.filter((n) => n.documentation))
 
-function addVariable() {
-  jsonError.value = ''
-  if (newVarName.value) {
-    if (newVarType.value === 'JSON') {
-      try {
-        JSON.parse(newVarValue.value)
-      } catch {
-        jsonError.value = 'Invalid JSON'
-        return
-      }
-    }
-    startVars.value.push({ name: newVarName.value, type: newVarType.value, value: newVarValue.value })
-    newVarName.value = ''
-    newVarValue.value = ''
-  }
-}
-
-function removeVariable(index: number) {
-  startVars.value.splice(index, 1)
-}
-
 async function startProcess() {
-  if (jsonError.value) return
-  if (newVarName.value) addVariable()
-  if (jsonError.value) return
   const id = await store.startInstance({
     processDefinitionId: route.params.id as string,
-    variables: startVars.value.map((v) => ({
+    variables: (startPickerRef.value?.getVariables() ?? []).map((v) => ({
       name: v.name,
-      type: v.type as ProcessVariable['type'],
+      type: v.type,
       value: v.value,
     })),
   })
   if (id) {
     showStartModal.value = false
-    startVars.value = []
+    askMissing.value = []
     router.push('/processes/instances')
   }
 }
@@ -419,6 +404,13 @@ async function downloadBpmn() {
                   <p class="text-xs whitespace-pre-wrap break-words">{{ selectedNode.documentation }}</p>
                 </div>
                 <div v-if="!selectedNodeProps.length && !selectedNodeHasMappings && !selectedNode.documentation" class="pt-2 border-t border-border text-xs text-muted-foreground">{{ t('noConfiguration') }}</div>
+                <ElementPresetsPanel
+                  v-if="elementPresetTarget && store.currentDefinition"
+                  :process-key="store.currentDefinition.key"
+                  :target-kind="elementPresetTarget.kind"
+                  :target-ref="elementPresetTarget.ref"
+                  :element-name="selectedNode.name"
+                />
               </template>
 
               <!-- sequence flow -->
@@ -717,48 +709,34 @@ async function downloadBpmn() {
 
     </template>
 
-    <div
-      v-if="showStartModal"
-      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-      @click.self="showStartModal = false"
-    >
-      <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
-        <h2 class="text-lg font-bold">{{ t('startProcessInstance') }}</h2>
-        <div class="space-y-3">
-          <div v-for="(v, i) in startVars" :key="i" class="flex items-center gap-2 text-sm">
-            <span class="font-mono">{{ v.name }}</span>
-            <span class="text-muted-foreground">({{ v.type }})</span>
-            <span>= {{ v.value }}</span>
-            <button class="text-red-500 hover:underline ml-auto" @click="removeVariable(i)">{{ t('remove') }}</button>
+      <div
+        v-if="showStartModal"
+        class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+        @click.self="showStartModal = false"
+      >
+        <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
+          <h2 class="text-lg font-bold">{{ t('startProcessInstance') }}</h2>
+          <!-- WO-VT-1: запуск из шаблона — тот же PresetPicker, что в StartForm -->
+          <PresetPicker
+            v-if="store.currentDefinition"
+            ref="startPickerRef"
+            :process-key="store.currentDefinition.key"
+            target-kind="START"
+            @change="askMissing = startPickerRef?.missingAsk ?? []; pickerInvalid = startPickerRef?.hasErrors ?? false"
+          />
+          <div class="flex justify-end gap-2 pt-2">
+            <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showStartModal = false">{{ t('cancel') }}</button>
+            <button
+              class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
+              :disabled="askMissing.length > 0 || pickerInvalid"
+              :title="askMissing.length ? t('presetFillAskFields', { fields: askMissing.join(', ') }) : ''"
+              @click="startProcess"
+            >
+              {{ t('startProcess') }}
+            </button>
           </div>
-          <div class="grid grid-cols-[6rem_5.5rem_1fr] gap-2">
-            <input v-model="newVarName" :placeholder="t('name')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
-            <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
-              <option>STRING</option>
-              <option>UUID</option>
-              <option>LONG</option>
-              <option>DOUBLE</option>
-              <option>BOOLEAN</option>
-              <option>JSON</option>
-            </select>
-            <input v-if="newVarType !== 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
-          </div>
-          <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" :placeholder="t('jsonPlaceholder')" class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
-          <p v-if="jsonError" class="text-xs text-red-500">{{ jsonError }}</p>
-          <button
-            class="w-full px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
-            :disabled="!newVarName"
-            @click="addVariable"
-          >
-            + {{ t('addVariable') }}
-          </button>
-        </div>
-        <div class="flex justify-end gap-2 pt-2">
-          <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showStartModal = false">{{ t('cancel') }}</button>
-          <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="startProcess">{{ t('startProcess') }}</button>
         </div>
       </div>
-    </div>
 
     <!-- WO-ACL-11 criteria 20-22: ONE upload component — the card opens the shared
       ProcessDeploySection BOUND to this process. All ACL-10 behavior (parse key

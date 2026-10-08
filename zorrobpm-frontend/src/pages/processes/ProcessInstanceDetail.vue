@@ -21,6 +21,10 @@ import CopyableId from '@/widgets/shared/CopyableId.vue'
 import IoMappingTable from '@/widgets/shared/IoMappingTable.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import TabsBar from '@/widgets/shared/TabsBar.vue'
+import PresetPicker from '@/widgets/presets/PresetPicker.vue'
+import InstanceMessagePanel from '@/widgets/presets/InstanceMessagePanel.vue'
+import InstanceSnapshotPanel from '@/widgets/presets/InstanceSnapshotPanel.vue'
+import PresetManagerPanel from '@/widgets/presets/PresetManagerPanel.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { buildDiagnosticJson } from '@/shared/lib/diagnostic'
@@ -46,7 +50,7 @@ useBreadcrumbLabel(() => {
   return name ? `${name} · ${pi.id.slice(0, 8)}` : pi.id.slice(0, 8)
 })
 
-const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents' | 'history' | 'subprocesses'>('bpmn')
+const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents' | 'history' | 'subprocesses' | 'presets'>('bpmn')
 
 // WO-ACL-14 criteria 1-3: ONE tab component (TabsBar) — the local tab strip is gone.
 // WO-UI-17 F24: no `as const` — TabsBar takes a mutable TabItem[]; the literal
@@ -59,6 +63,7 @@ const instanceTabs = computed(() => [
   { id: 'incidents', label: t('incidentsTab') },
   { id: 'history', label: t('history') },
   { id: 'subprocesses', label: t('subprocesses') },
+  { id: 'presets', label: t('presetTabTitle') },
 ])
 
 // TabsBar emits `string`, but only ever one of our own tab ids — narrow it
@@ -185,20 +190,18 @@ function openElementDialog(elementId: string) {
 function startElementDialogComplete(taskId: string, type: 'user' | 'service') {
   completingTaskId.value = taskId
   completingTaskType.value = type
-  completeVars.value = []
-  newVarName.value = ''
-  newVarValue.value = ''
-  jsonError.value = ''
+  completeAskMissing.value = []
+  completePickerInvalid.value = false
+  completePresetRef.value = dialogSelectedElement.value
   elementDialogView.value = 'form'
 }
 
 function startElementDialogResolve(incidentId: string) {
   completingTaskId.value = incidentId
   completingTaskType.value = 'resolve'
-  completeVars.value = []
-  newVarName.value = ''
-  newVarValue.value = ''
-  jsonError.value = ''
+  completeAskMissing.value = []
+  completePickerInvalid.value = false
+  completePresetRef.value = dialogSelectedElement.value
   elementDialogView.value = 'form'
 }
 
@@ -215,59 +218,54 @@ function cancelElementDialogForm() {
 const showCompleteModal = ref(false)
 const completingTaskId = ref('')
 const completingTaskType = ref<'user' | 'service' | 'resolve'>('user')
-const completeVars = ref<{ name: string; type: string; value: string }[]>([])
-const newVarName = ref('')
-const newVarType = ref('STRING')
-const newVarValue = ref('')
-const jsonError = ref('')
+// WO-VT-1: complete/resolve из шаблона элемента — переменные отдаёт
+// PresetPicker (ref = bpmnElementId завершаемой задачи / инцидента).
+const completePickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
+const completeAskMissing = ref<string[]>([])
+const completePickerInvalid = ref(false)
+const completePresetRef = ref<string | null>(null)
 
-function addVariable() {
-  jsonError.value = ''
-  if (newVarName.value) {
-    if (newVarType.value === 'JSON') {
-      try {
-        JSON.parse(newVarValue.value)
-      } catch {
-        jsonError.value = 'Invalid JSON'
-        return
-      }
-    }
-    completeVars.value.push({ name: newVarName.value, type: newVarType.value, value: newVarValue.value })
-    newVarName.value = ''
-    newVarValue.value = ''
-  }
+function onCompletePickerChange() {
+  completeAskMissing.value = completePickerRef.value?.missingAsk ?? []
+  completePickerInvalid.value = completePickerRef.value?.hasErrors ?? false
 }
 
-function removeVariable(index: number) {
-  completeVars.value.splice(index, 1)
+/** targetKind пикера по типу завершаемого (resolve → INCIDENT). */
+function completePickerKind(): 'USER_TASK' | 'SERVICE_TASK' | 'INCIDENT' {
+  return completingTaskType.value === 'resolve'
+    ? 'INCIDENT'
+    : completingTaskType.value === 'service'
+      ? 'SERVICE_TASK'
+      : 'USER_TASK'
 }
 
 function openCompleteModal(taskId: string, type: 'user' | 'service') {
   completingTaskId.value = taskId
   completingTaskType.value = type
-  completeVars.value = []
-  newVarName.value = ''
-  newVarValue.value = ''
+  completeAskMissing.value = []
+  completePickerInvalid.value = false
+  completePresetRef.value =
+    (type === 'service'
+      ? taskStore.serviceTasks?.data.find((tk) => tk.id === taskId)?.code
+      : taskStore.userTasks?.data.find((tk) => tk.id === taskId)?.code) ?? null
   showCompleteModal.value = true
 }
 
 function openResolveModal(incidentId: string) {
   completingTaskId.value = incidentId
   completingTaskType.value = 'resolve'
-  completeVars.value = []
-  newVarName.value = ''
-  newVarValue.value = ''
+  completeAskMissing.value = []
+  completePickerInvalid.value = false
+  completePresetRef.value =
+    incidentStore.incidents?.data.find((inc) => inc.id === incidentId)?.bpmnElementId ?? null
   showCompleteModal.value = true
 }
 
 async function confirmComplete() {
-  if (jsonError.value) return
-  // flush a variable that was typed but not yet "added" — otherwise it would be silently dropped
-  if (newVarName.value) addVariable()
-  if (jsonError.value) return
-  const variables: ProcessVariable[] = completeVars.value.map((v) => ({
+  if (!completePickerRef.value || completeAskMissing.value.length || completePickerInvalid.value) return
+  const variables: ProcessVariable[] = completePickerRef.value.getVariables().map((v) => ({
     name: v.name,
-    type: v.type as ProcessVariable['type'],
+    type: v.type,
     value: v.value,
   }))
   let error: string | null
@@ -946,6 +944,19 @@ watch(activeTab, onTabChange)
             </tbody>
           </table>
         </div>
+
+        <!-- WO-VT-1 (фронт, VT-4): шаблоны инстанса — сообщение, снимок, менеджер -->
+        <div v-if="activeTab === 'presets' && processStore.currentInstance" class="space-y-4">
+          <InstanceMessagePanel
+            :process-key="processStore.currentInstance.processKey ?? ''"
+            :process-instance-id="processStore.currentInstance.id"
+          />
+          <InstanceSnapshotPanel
+            :process-key="processStore.currentInstance.processKey ?? ''"
+            :instance-variables="processStore.currentVariables"
+          />
+          <PresetManagerPanel :process-key="processStore.currentInstance.processKey ?? ''" />
+        </div>
       </template>
     </template>
 
@@ -956,38 +967,23 @@ watch(activeTab, onTabChange)
     >
       <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
         <h2 class="text-lg font-bold">{{ completingTaskType === 'resolve' ? t('resolveIncidentTitle') : t('completeTask') }}</h2>
-        <div class="space-y-3">
-          <div v-for="(v, i) in completeVars" :key="i" class="flex items-center gap-2 text-sm">
-            <span class="font-mono">{{ v.name }}</span>
-            <span class="text-muted-foreground">({{ v.type }})</span>
-            <span>= {{ v.value }}</span>
-            <button class="text-red-500 hover:underline ml-auto" @click="removeVariable(i)">{{ t('remove') }}</button>
-          </div>
-          <div class="grid grid-cols-[6rem_5.5rem_1fr] gap-2">
-            <input v-model="newVarName" :placeholder="t('name')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
-            <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
-              <option>STRING</option>
-              <option>UUID</option>
-              <option>LONG</option>
-              <option>DOUBLE</option>
-              <option>BOOLEAN</option>
-              <option>JSON</option>
-            </select>
-            <input v-if="newVarType !== 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
-          </div>
-          <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
-          <p v-if="jsonError" class="text-xs text-red-500">{{ jsonError }}</p>
-          <button
-            class="w-full px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
-            :disabled="!newVarName"
-            @click="addVariable"
-          >
-            + {{ t('addVariable') }}
-          </button>
-        </div>
+        <!-- WO-VT-1: переменные завершения — ручной ввод или шаблон элемента -->
+        <PresetPicker
+          v-if="processStore.currentInstance?.processKey"
+          ref="completePickerRef"
+          :process-key="processStore.currentInstance.processKey"
+          :target-kind="completePickerKind()"
+          :target-ref="completePresetRef"
+          @change="onCompletePickerChange"
+        />
         <div class="flex justify-end gap-2 pt-2">
           <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showCompleteModal = false">{{ t('cancelAction') }}</button>
-          <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="confirmComplete">
+          <button
+            class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
+            :disabled="completeAskMissing.length > 0 || completePickerInvalid"
+            :title="completeAskMissing.length ? t('presetFillAskFields', { fields: completeAskMissing.join(', ') }) : ''"
+            @click="confirmComplete"
+          >
             {{ completingTaskType === 'resolve' ? t('resolveAction') : t('confirm') }}
           </button>
         </div>
@@ -1139,38 +1135,23 @@ watch(activeTab, onTabChange)
         <!-- Form view: variable editor for complete / resolve -->
         <template v-if="elementDialogView === 'form'">
           <h2 class="text-lg font-bold">{{ completingTaskType === 'resolve' ? t('resolveIncidentTitle') : t('completeTask') }}</h2>
-          <div class="space-y-3">
-            <div v-for="(v, i) in completeVars" :key="i" class="flex items-center gap-2 text-sm">
-              <span class="font-mono">{{ v.name }}</span>
-              <span class="text-muted-foreground">({{ v.type }})</span>
-              <span>= {{ v.value }}</span>
-              <button class="text-red-500 hover:underline ml-auto" @click="removeVariable(i)">{{ t('remove') }}</button>
-            </div>
-            <div class="grid grid-cols-[6rem_5.5rem_1fr] gap-2">
-              <input v-model="newVarName" :placeholder="t('name')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
-              <select v-model="newVarType" class="px-2 py-1 border border-input rounded text-sm">
-                <option>STRING</option>
-                <option>UUID</option>
-                <option>LONG</option>
-                <option>DOUBLE</option>
-                <option>BOOLEAN</option>
-                <option>JSON</option>
-              </select>
-              <input v-if="newVarType !== 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="px-2 py-1 border border-input rounded text-sm" @keyup.enter="addVariable" />
-            </div>
-            <textarea v-if="newVarType === 'JSON'" v-model="newVarValue" :placeholder="t('value')" class="w-full px-2 py-1 border border-input rounded text-sm font-mono" rows="3"></textarea>
-            <p v-if="jsonError" class="text-xs text-red-500">{{ jsonError }}</p>
-            <button
-              class="w-full px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
-              :disabled="!newVarName"
-              @click="addVariable"
-            >
-              + {{ t('addVariable') }}
-            </button>
-          </div>
+          <!-- WO-VT-1: тот же PresetPicker, что в showCompleteModal выше -->
+          <PresetPicker
+            v-if="processStore.currentInstance?.processKey"
+            ref="completePickerRef"
+            :process-key="processStore.currentInstance.processKey"
+            :target-kind="completePickerKind()"
+            :target-ref="completePresetRef"
+            @change="onCompletePickerChange"
+          />
           <div class="flex justify-end gap-2 pt-2">
             <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="cancelElementDialogForm">{{ t('cancelAction') }}</button>
-            <button class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90" @click="confirmComplete">
+            <button
+              class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
+              :disabled="completeAskMissing.length > 0 || completePickerInvalid"
+              :title="completeAskMissing.length ? t('presetFillAskFields', { fields: completeAskMissing.join(', ') }) : ''"
+              @click="confirmComplete"
+            >
               {{ completingTaskType === 'resolve' ? t('resolveAction') : t('confirm') }}
             </button>
           </div>

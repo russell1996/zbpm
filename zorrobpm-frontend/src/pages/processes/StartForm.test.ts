@@ -35,7 +35,11 @@ const i18n = createI18n({
   messages: { en: {
     loading: 'Loading...', form: 'Form', externalForm: 'External Form',
     startProcess: 'Start Process',
-    noStartFormConfigured: 'No start form configured. Process will start with default settings.',
+    presetManualMode: 'Manual input', presetTemplateMode: 'From template',
+    presetTableMode: 'Table', presetRawMode: 'Raw JSON',
+    presetVarName: 'Name', presetVarType: 'Type', presetVarValue: 'Value',
+    presetAddVariable: 'Add variable', presetNoVariables: 'No variables',
+    presetFillAskFields: 'Fill: {fields}',
   }},
 })
 
@@ -90,7 +94,7 @@ describe('StartForm', () => {
     expect(startProcessInstance).toHaveBeenCalled()
   })
 
-  it('criterion3: none type shows start button without form', async () => {
+  it('criterion3: none type shows the preset picker (manual/template) without form', async () => {
     vi.mocked(getStartForm).mockResolvedValue({ type: 'none' })
 
     const wrapper = mount(StartForm, {
@@ -99,8 +103,9 @@ describe('StartForm', () => {
     await flushPromises()
 
     expect(wrapper.find('.form-js-container').exists()).toBe(false)
-    // WO-ACL-11 criterion 11/12: the hint goes through t() now (test i18n en)
-    expect(wrapper.text()).toContain('No start form configured. Process will start with default settings.')
+    // WO-VT-1: вместо хинта noStartFormConfigured — выбор «Ручной ввод | Из шаблона».
+    expect(wrapper.text()).toContain('Manual input')
+    expect(wrapper.text()).toContain('From template')
   })
 
   it('criterion4: external shows URL link', async () => {

@@ -8,6 +8,8 @@ import { dataToVariables } from '@/shared/lib/formMapping'
 import type { ProcessVariable } from '@/types/api'
 import * as instanceService from '@/services/instanceService'
 import FormRenderer from '@/widgets/forms/FormRenderer.vue'
+import PresetPicker from '@/widgets/presets/PresetPicker.vue'
+import type { PresetVariable } from '@/types/presets'
 
 const route = useRoute()
 const router = useRouter()
@@ -20,8 +22,17 @@ const submitting = ref(false)
 const error = ref<string | null>(null)
 const formRef = ref<InstanceType<typeof FormRenderer> | null>(null)
 const formErrors = ref<Record<string, string> | null>(null)
+// WO-VT-1: выбор «Ручной ввод | Из шаблона» для процессов без form-js.
+const pickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
+const askMissing = ref<string[]>([])
+const pickerInvalid = ref(false)
 
 const processKey = route.params.key as string
+
+function onPickerChange() {
+  askMissing.value = pickerRef.value?.missingAsk ?? []
+  pickerInvalid.value = pickerRef.value?.hasErrors ?? false
+}
 
 async function startProcess() {
   submitting.value = true
@@ -47,6 +58,15 @@ async function startProcess() {
         return
       }
       variables = dataToVariables(data)
+    } else if (formResponse.value?.type !== 'embedded' && pickerRef.value) {
+      // WO-VT-1: без form-js переменные берёт PresetPicker (ручной ввод или
+      // шаблон с развёрнутыми плейсхолдерами); пустые «спросить» блокируют
+      // кнопку (askMissing), сюда такие не доходят.
+      variables = pickerRef.value.getVariables().map((v) => ({
+        name: v.name,
+        type: v.type,
+        value: v.value,
+      }))
     }
 
     const id = await instanceService.startProcessInstance({
@@ -108,15 +128,22 @@ onMounted(async () => {
         </a>
       </div>
 
-      <!-- No form — just a start button -->
-      <div v-else class="border border-border rounded-lg p-4 bg-card">
-        <p class="text-sm text-muted-foreground mb-4">{{ t('noStartFormConfigured') }}</p>
+      <!-- No form — WO-VT-1: ручной ввод или шаблон вместо пустого старта -->
+      <div v-else class="border border-border rounded-lg p-4 bg-card space-y-3">
+        <h2 class="text-lg font-bold">{{ t('variables') }}</h2>
+        <PresetPicker
+          ref="pickerRef"
+          :process-key="processKey"
+          target-kind="START"
+          @change="onPickerChange"
+        />
       </div>
 
       <div class="flex justify-end">
         <button
           class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm disabled:opacity-50"
-          :disabled="submitting"
+          :disabled="submitting || askMissing.length > 0 || pickerInvalid"
+          :title="askMissing.length ? t('presetFillAskFields', { fields: askMissing.join(', ') }) : ''"
           @click="startProcess"
         >
           {{ submitting ? t('loading') : t('startProcess') }}

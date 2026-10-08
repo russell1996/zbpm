@@ -1,0 +1,158 @@
+// @vitest-environment jsdom
+/**
+ * WO-VT-1 (фронт, §1-бис п.2-бис): PresetEditorDialog — создание, правка с
+ * version, конфликт 409 с перезагрузкой, дублирование, удаление с
+ * подтверждением, избранное.
+ */
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+import PresetEditorDialog from './PresetEditorDialog.vue'
+
+const mockCreate = vi.hoisted(() => vi.fn())
+const mockUpdate = vi.hoisted(() => vi.fn())
+const mockDelete = vi.hoisted(() => vi.fn())
+const mockGet = vi.hoisted(() => vi.fn())
+const mockHistory = vi.hoisted(() => vi.fn())
+const mockFavorite = vi.hoisted(() => vi.fn())
+const mockVisibility = vi.hoisted(() => vi.fn())
+vi.mock('@/services/presetService', () => ({
+  createPreset: mockCreate,
+  updatePreset: mockUpdate,
+  deletePreset: mockDelete,
+  getPreset: mockGet,
+  getPresetHistory: mockHistory,
+  setPresetFavorite: mockFavorite,
+  changePresetVisibility: mockVisibility,
+  isPresetConflict: (e: unknown) => (e as { conflict?: boolean })?.conflict === true,
+  presetErrorCode: (e: unknown) => (e as { code?: string })?.code ?? null,
+}))
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (k: string) => k }),
+}))
+const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
+vi.mock('@/composables/useToast', () => ({ useToast: () => mockToast }))
+
+const PRESET = {
+  id: 'p1',
+  processDefinitionKey: 'k',
+  targetKind: 'START',
+  targetRef: null,
+  name: 'base',
+  description: '',
+  variables: [{ name: 'n', type: 'LONG', value: '1' }],
+  ownerUserId: 'u1',
+  visibility: 'PRIVATE',
+  favorite: false,
+  createdAt: '2026-01-01',
+  updatedAt: '2026-01-01',
+  version: 3,
+}
+
+describe('PresetEditorDialog', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockGet.mockResolvedValue({ ...PRESET })
+    mockCreate.mockResolvedValue({ ...PRESET, id: 'p2' })
+    mockUpdate.mockResolvedValue({ ...PRESET, version: 4 })
+    mockDelete.mockResolvedValue(undefined)
+    mockVisibility.mockImplementation(async (_id: string, v: string) => ({ ...PRESET, visibility: v, version: 4 }))
+  })
+
+  it('create: name + variables flow into createPreset, saved emitted', async () => {
+    const w = mount(PresetEditorDialog, {
+      props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null },
+    })
+    await w.find('#preset-name').setValue('case-a')
+    const addBtn = w.findAll('button').find((b) => b.text().includes('presetAddVariable'))!
+    await addBtn.trigger('click')
+    await w.find('input[id^="pv-name-"]').setValue('n')
+    await w.find('select[id^="pv-type-"]').setValue('LONG')
+    await w.find('input[id^="pv-value-"]').setValue('7')
+    const saveBtn = w.findAll('button').find((b) => b.text().trim() === 'save')!
+    await saveBtn.trigger('click')
+    await flushPromises()
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        processDefinitionKey: 'k',
+        targetKind: 'START',
+        name: 'case-a',
+        variables: [{ name: 'n', type: 'LONG', value: '7' }],
+      }),
+    )
+    expect(w.emitted('saved')).toBeTruthy()
+  })
+
+  it('edit: loads the preset and PUTs with version', async () => {
+    const w = mount(PresetEditorDialog, {
+      props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
+    })
+    await flushPromises()
+    expect(mockGet).toHaveBeenCalledWith('p1')
+    expect((w.find('#preset-name').element as HTMLInputElement).value).toBe('base')
+    const saveBtn = w.findAll('button').find((b) => b.text().trim() === 'save')!
+    await saveBtn.trigger('click')
+    await flushPromises()
+    expect(mockUpdate).toHaveBeenCalledWith('p1', expect.objectContaining({ version: 3 }))
+  })
+
+  it('409 with PRESET_CONFLICT shows the conflict banner and reload recovers', async () => {
+    mockUpdate.mockRejectedValueOnce({ conflict: true, code: 'PRESET_CONFLICT' })
+    const w = mount(PresetEditorDialog, {
+      props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
+    })
+    await flushPromises()
+    await w.findAll('button').find((b) => b.text().trim() === 'save')!.trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('presetVersionConflict')
+    // перезагрузка актуальной версии скрывает баннер
+    await w.findAll('button').find((b) => b.text().includes('presetReloadLatest'))!.trigger('click')
+    await flushPromises()
+    expect(mockGet).toHaveBeenCalledTimes(2)
+    expect(w.text()).not.toContain('presetVersionConflict')
+  })
+
+  it('duplicate: prefilled copy name, saved via create (POST)', async () => {
+    const w = mount(PresetEditorDialog, {
+      props: {
+        open: true, processKey: 'k', targetKind: 'USER_TASK', targetRef: 't1',
+        presetId: 'p1', duplicateName: 'Copy of base',
+      },
+    })
+    await flushPromises()
+    expect((w.find('#preset-name').element as HTMLInputElement).value).toBe('Copy of base')
+    await w.findAll('button').find((b) => b.text().trim() === 'save')!.trigger('click')
+    await flushPromises()
+    expect(mockCreate).toHaveBeenCalled()
+    expect(mockUpdate).not.toHaveBeenCalled()
+  })
+
+  it('delete needs two clicks, then emits deleted', async () => {
+    const w = mount(PresetEditorDialog, {
+      props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
+    })
+    await flushPromises()
+    const delBtn = w.findAll('button').find((b) => b.text().includes('presetDelete'))!
+    await delBtn.trigger('click')
+    expect(mockDelete).not.toHaveBeenCalled()
+    await w.findAll('button').find((b) => b.text().includes('presetConfirmDelete'))!.trigger('click')
+    await flushPromises()
+    expect(mockDelete).toHaveBeenCalledWith('p1')
+    expect(w.emitted('deleted')).toBeTruthy()
+  })
+
+  it('history view loads entries and shows before/after', async () => {
+    mockHistory.mockResolvedValue([
+      { id: 'h1', action: 'UPDATE', actorUserId: 'u1', at: '2026-01-02',
+        variablesBefore: [{ name: 'n', type: 'LONG', value: '1' }],
+        variablesAfter: [{ name: 'n', type: 'LONG', value: '2' }] },
+    ])
+    const w = mount(PresetEditorDialog, {
+      props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
+    })
+    await flushPromises()
+    await w.findAll('button').find((b) => b.text().includes('presetHistory'))!.trigger('click')
+    await flushPromises()
+    expect(mockHistory).toHaveBeenCalledWith('p1')
+    expect(w.text()).toContain('UPDATE')
+  })
+})

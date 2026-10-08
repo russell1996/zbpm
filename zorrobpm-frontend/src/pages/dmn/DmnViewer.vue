@@ -2,6 +2,9 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { getDecision, evaluateDecision, inferVariable, type DmnDecision } from '@/services/dmnService'
+import { getProcessDefinitions } from '@/services/processService'
+import PresetPicker from '@/widgets/presets/PresetPicker.vue'
+import type { PresetVariable } from '@/types/presets'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
@@ -25,6 +28,29 @@ useBreadcrumbLabel(() => decision.value?.name ?? null)
 const testInputs = ref<Record<string, string>>({})
 const testResult = ref<Record<string, unknown> | null>(null)
 
+// WO-VT-1: evaluate из шаблона. DMN-страница не привязана к процессу, а
+// шаблон требует processDefinitionKey — ключ выбирается в модалке
+// (список определений), ref = decisionId.
+const pickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
+const askMissing = ref<string[]>([])
+const pickerInvalid = ref(false)
+const presetProcessKey = ref('')
+const processKeys = ref<string[]>([])
+
+function onPickerChange() {
+  askMissing.value = pickerRef.value?.missingAsk ?? []
+  pickerInvalid.value = pickerRef.value?.hasErrors ?? false
+}
+
+async function loadProcessKeys() {
+  try {
+    const page = await getProcessDefinitions({ pageIndex: 0, pageSize: 100, latestVersionOnly: true })
+    processKeys.value = [...new Set((page.data ?? []).map((d) => d.key))]
+  } catch {
+    processKeys.value = []
+  }
+}
+
 onMounted(async () => {
   loading.value = true
   try {
@@ -34,6 +60,7 @@ onMounted(async () => {
         testInputs.value[input.expression] = ''
       }
     }
+    await loadProcessKeys()
   } catch {
     toast.error(t('loadError'))
   } finally {
@@ -47,9 +74,18 @@ async function runTest() {
   testError.value = null
   testResult.value = null
   try {
-    const variables = decision.value.inputs
-      .filter((input) => (testInputs.value[input.expression] ?? '') !== '')
-      .map((input) => inferVariable(input.expression, testInputs.value[input.expression]))
+    // WO-VT-1: при выбранном ключе процесса переменные берёт PresetPicker
+    // (ручной ввод или шаблон с развёрнутыми плейсхолдерами), иначе —
+    // прежние inputs модалки.
+    const variables = presetProcessKey.value && pickerRef.value
+      ? pickerRef.value.getVariables().map((v: PresetVariable) => ({
+          name: v.name,
+          type: v.type,
+          value: v.value,
+        }))
+      : decision.value.inputs
+          .filter((input) => (testInputs.value[input.expression] ?? '') !== '')
+          .map((input) => inferVariable(input.expression, testInputs.value[input.expression]))
     testResult.value = await evaluateDecision(decision.value.id, variables)
   } catch (e: unknown) {
     testError.value = (e as { response?: { data?: { message?: string } } })?.response?.data?.message || t('evaluationFailed')
@@ -110,7 +146,27 @@ async function runTest() {
       >
         <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
           <h2 class="text-lg font-bold">{{ t('testDecision') }}</h2>
-          <div class="space-y-3">
+          <!-- WO-VT-1: evaluate из шаблона (ключ процесса — для привязки шаблона) -->
+          <div v-if="processKeys.length">
+            <label for="dmn-preset-key" class="block text-xs font-medium mb-1">{{ t('presetProcessKey') }}</label>
+            <select
+              id="dmn-preset-key"
+              v-model="presetProcessKey"
+              class="w-full px-2 py-1.5 border border-input rounded text-sm"
+            >
+              <option value="">{{ t('presetNoProcessKey') }}</option>
+              <option v-for="k in processKeys" :key="k" :value="k">{{ k }}</option>
+            </select>
+          </div>
+          <PresetPicker
+            v-if="presetProcessKey && decision"
+            ref="pickerRef"
+            :process-key="presetProcessKey"
+            target-kind="DMN"
+            :target-ref="decision.id"
+            @change="onPickerChange"
+          />
+          <div v-else class="space-y-3">
             <div v-for="input in decision.inputs" :key="input.id">
               <label class="block text-sm font-medium mb-1">{{ input.label }} ({{ input.expression }})</label>
               <input
@@ -121,7 +177,8 @@ async function runTest() {
           </div>
           <button
             class="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm disabled:opacity-50"
-            :disabled="evaluating"
+            :disabled="evaluating || askMissing.length > 0 || pickerInvalid"
+            :title="askMissing.length ? t('presetFillAskFields', { fields: askMissing.join(', ') }) : ''"
             @click="runTest"
           >
             {{ evaluating ? t('evaluating') : t('evaluate') }}

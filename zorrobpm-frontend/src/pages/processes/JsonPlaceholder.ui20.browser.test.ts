@@ -3,9 +3,16 @@
  * modal of the REAL ProcessDefinitionDetail page renders the textarea with
  * the placeholder and logs no console errors, in a real Chromium.
  *
+ * WO-VT-1 NOTE: the modal's inline variable rows were replaced by the shared
+ * PresetPicker (VariablesEditor) — the user path below drives the NEW editor
+ * ("+ Add variable" → type select → JSON), asserting the same intent:
+ * the JSON textarea renders with the compiled placeholder and the vue-i18n
+ * compiler stays silent. The old path (first <select> = type select,
+ * textarea placeholder = t('jsonPlaceholder')) no longer exists.
+ *
  * Mount pattern (real page + real vue-i18n + mocked services) is copied from
  * visual-geometry.browser.test.ts (mountPdd): the page itself, its template
- * binding `:placeholder="t('jsonPlaceholder')"` and the vue-i18n compiler
+ * binding `:placeholder="t('presetJsonPlaceholder')"` and the vue-i18n compiler
  * are all real — only the backend services are stubbed. vue-i18n is
  * deliberately NOT mocked: a t()-stub could never throw, so the check would
  * pass on any locale data (the P-54 class of false-green tests).
@@ -176,9 +183,9 @@ function until(cond: () => boolean, timeout = 8000): Promise<void> {
 }
 
 const expectedPlaceholder: Record<string, string> = {
-  en: 'e.g. ["u1","u2"] or {"key":"val"}',
-  ru: 'напр. ["u1","u2"] или {"key":"val"}',
-  kz: 'мыс. ["u1","u2"] немесе {"key":"val"}',
+  en: '{"name": "createdEmployeeId", "type": "LONG", "value": "42"}',
+  ru: '{"name": "createdEmployeeId", "type": "LONG", "value": "42"}',
+  kz: '{"name": "createdEmployeeId", "type": "LONG", "value": "42"}',
 }
 
 describe('WO-UI-20 criterion 3: JSON variable type renders in a real browser', () => {
@@ -213,13 +220,21 @@ describe('WO-UI-20 criterion 3: JSON variable type renders in a real browser', (
       await flushPromises()
 
       // Choose the JSON variable type — this is the step that crashed.
-      const typeSelect = wrapper.find('select')
-      expect(typeSelect.exists(), 'variable type <select> renders').toBe(true)
+      // WO-VT-1: the modal now shows PresetPicker — add a row first, then
+      // pick the type in the row's own type select.
+      const addBtn = wrapper
+        .findAll('button')
+        .find((b) => b.text().includes(i18n.global.t('presetAddVariable') as unknown as string))
+      expect(addBtn, '"+ Add variable" renders in the picker').toBeTruthy()
+      await addBtn!.trigger('click')
+      await flushPromises()
+      const typeSelect = wrapper.find('select[id^="pv-type-"]')
+      expect(typeSelect.exists(), 'row variable type <select> renders').toBe(true)
       await typeSelect.setValue('JSON')
       await flushPromises()
-      await until(() => wrapper.find('textarea').exists())
+      await until(() => wrapper.find('textarea[id^="pv-value-"]').exists())
 
-      const area = wrapper.find('textarea')
+      const area = wrapper.find('textarea[id^="pv-value-"]')
       expect(area.exists()).toBe(true)
       expect(area.attributes('placeholder')).toBe(expectedPlaceholder[locale])
 
