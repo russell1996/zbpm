@@ -1,0 +1,231 @@
+databaseChangeLog:
+  - logicalFilePath: 20261007-121
+  - changeSet:
+      id: 20261007-121
+      author: zorrodev
+      dbms: postgresql
+      comment: >-
+        WO-VT-1 п.6-бис (VT-4 влит): избранное и история шаблонов переменных.
+        variable_preset_favorites — (user_id, preset_id) с каскадным удалением
+        за шаблоном (FK ON DELETE CASCADE — избранное мёртвого шаблона не живёт).
+        variable_preset_history — снапшоты переменных на CREATE/UPDATE (до/после
+        как JSON; только значения шаблона, без токенов/секретов — их в шаблонах
+        нет по «Не делать» WO). DELETE в историю-таблицу НЕ пишется сознательно:
+        строка истории каскадно умирает вместе с шаблоном, поэтому удаление
+        фиксируется аудит-логом (PRESET_DELETE уже пишет сервис) — эндпоинт
+        истории удалённого шаблона всё равно 404 по §5 WO. Расширять схему
+        аудита ради payload было бы инвазивнее (таблица без снапшотов).
+        variables_before/after — jsonb на PG (text на H2, прецедент 063/120).
+        Только expand (две новые таблицы), rollback — dropTable.
+      changes:
+        - createTable:
+            tableName: variable_preset_favorites
+            columns:
+              - column:
+                  name: user_id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: preset_id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+                  # FK — отдельным sql ниже (ON DELETE CASCADE); inline references
+                  # каскада не даёт, а второй FK на тех же колонках блокировал бы его.
+              - column:
+                  name: created_at
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+        - createTable:
+            tableName: variable_preset_history
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: preset_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+                  # FK — отдельным sql ниже (ON DELETE CASCADE), см. выше.
+              - column:
+                  name: action
+                  type: varchar(16)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: actor_user_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: at
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+              - column:
+                  name: variables_before
+                  type: jsonb
+              - column:
+                  name: variables_after
+                  type: jsonb
+        - createIndex:
+            tableName: variable_preset_favorites
+            indexName: idx_preset_favorites__preset
+            columns:
+              - column:
+                  name: preset_id
+        - createIndex:
+            tableName: variable_preset_history
+            indexName: idx_preset_history__preset_at
+            columns:
+              - column:
+                  name: preset_id
+              - column:
+                  name: at
+        - sql:
+            sql: >-
+              ALTER TABLE variable_preset_history ADD CONSTRAINT ck_preset_history__action
+              CHECK (action IN ('CREATE','UPDATE'))
+        - sql:
+            sql: >-
+              ALTER TABLE variable_preset_favorites ADD CONSTRAINT fk_preset_favorites__preset_cascade
+              FOREIGN KEY (preset_id) REFERENCES variable_presets(id) ON DELETE CASCADE;
+              ALTER TABLE variable_preset_history ADD CONSTRAINT fk_preset_history__preset_cascade
+              FOREIGN KEY (preset_id) REFERENCES variable_presets(id) ON DELETE CASCADE
+        - sql:
+            sql: >-
+              COMMENT ON TABLE variable_preset_favorites IS 'Избранные шаблоны переменных (WO-VT-1 п.6-бис): пользователь отметил шаблон; каскад за шаблоном';
+              COMMENT ON COLUMN variable_preset_favorites.user_id IS 'Кто отметил (для service-ключей — ownerUserId)';
+              COMMENT ON COLUMN variable_preset_favorites.preset_id IS 'Шаблон (FK → variable_presets ON DELETE CASCADE)';
+              COMMENT ON COLUMN variable_preset_favorites.created_at IS 'Момент отметки';
+              COMMENT ON TABLE variable_preset_history IS 'История правок шаблона (WO-VT-1 п.6-бис): CREATE/UPDATE со снапшотами переменных; DELETE — в аудит-логе';
+              COMMENT ON COLUMN variable_preset_history.id IS 'PK записи истории';
+              COMMENT ON COLUMN variable_preset_history.preset_id IS 'Шаблон (FK → variable_presets ON DELETE CASCADE)';
+              COMMENT ON COLUMN variable_preset_history.action IS 'CREATE|UPDATE (CHECK; DELETE фиксирует аудит-лог)';
+              COMMENT ON COLUMN variable_preset_history.actor_user_id IS 'Кто правил';
+              COMMENT ON COLUMN variable_preset_history.at IS 'Когда правил';
+              COMMENT ON COLUMN variable_preset_history.variables_before IS 'Снапшот переменных до (JSON-массив; null у CREATE)';
+              COMMENT ON COLUMN variable_preset_history.variables_after IS 'Снапшот переменных после (JSON-массив)';
+      rollback:
+        - dropTable:
+            tableName: variable_preset_history
+        - dropTable:
+            tableName: variable_preset_favorites
+  - changeSet:
+      id: 20261007-121-h2
+      author: zorrodev
+      dbms: h2
+      comment: >-
+        WO-VT-1 п.6-бис (H2-зеркало changeset 20261007-121): тот же состав,
+        variables_before/after — text (jsonb в H2-DDL не существует, прецедент
+        20260719-063 и 20261007-120). FK-каскад и CHECK — тем же текстом.
+      changes:
+        - createTable:
+            tableName: variable_preset_favorites
+            columns:
+              - column:
+                  name: user_id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: preset_id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+                  # FK — отдельным sql ниже (ON DELETE CASCADE); inline references
+                  # каскада не даёт, а второй FK на тех же колонках блокировал бы его.
+              - column:
+                  name: created_at
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+        - createTable:
+            tableName: variable_preset_history
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  constraints:
+                    primaryKey: true
+                    nullable: false
+              - column:
+                  name: preset_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+                  # FK — отдельным sql ниже (ON DELETE CASCADE), см. выше.
+              - column:
+                  name: action
+                  type: varchar(16)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: actor_user_id
+                  type: uuid
+                  constraints:
+                    nullable: false
+              - column:
+                  name: at
+                  type: timestamptz
+                  constraints:
+                    nullable: false
+              - column:
+                  name: variables_before
+                  type: text
+              - column:
+                  name: variables_after
+                  type: text
+        - createIndex:
+            tableName: variable_preset_favorites
+            indexName: idx_preset_favorites__preset
+            columns:
+              - column:
+                  name: preset_id
+        - createIndex:
+            tableName: variable_preset_history
+            indexName: idx_preset_history__preset_at
+            columns:
+              - column:
+                  name: preset_id
+              - column:
+                  name: at
+        - sql:
+            sql: >-
+              ALTER TABLE variable_preset_history ADD CONSTRAINT ck_preset_history__action
+              CHECK (action IN ('CREATE','UPDATE'))
+        - sql:
+            sql: >-
+              ALTER TABLE variable_preset_favorites ADD CONSTRAINT fk_preset_favorites__preset_cascade
+              FOREIGN KEY (preset_id) REFERENCES variable_presets(id) ON DELETE CASCADE;
+              ALTER TABLE variable_preset_history ADD CONSTRAINT fk_preset_history__preset_cascade
+              FOREIGN KEY (preset_id) REFERENCES variable_presets(id) ON DELETE CASCADE
+        - sql:
+            sql: >-
+              COMMENT ON TABLE variable_preset_favorites IS 'Избранные шаблоны переменных (WO-VT-1 п.6-бис): пользователь отметил шаблон; каскад за шаблоном';
+              COMMENT ON COLUMN variable_preset_favorites.user_id IS 'Кто отметил (для service-ключей — ownerUserId)';
+              COMMENT ON COLUMN variable_preset_favorites.preset_id IS 'Шаблон (FK → variable_presets ON DELETE CASCADE)';
+              COMMENT ON COLUMN variable_preset_favorites.created_at IS 'Момент отметки';
+              COMMENT ON TABLE variable_preset_history IS 'История правок шаблона (WO-VT-1 п.6-бис): CREATE/UPDATE со снапшотами переменных; DELETE — в аудит-логе';
+              COMMENT ON COLUMN variable_preset_history.id IS 'PK записи истории';
+              COMMENT ON COLUMN variable_preset_history.preset_id IS 'Шаблон (FK → variable_presets ON DELETE CASCADE)';
+              COMMENT ON COLUMN variable_preset_history.action IS 'CREATE|UPDATE (CHECK; DELETE фиксирует аудит-лог)';
+              COMMENT ON COLUMN variable_preset_history.actor_user_id IS 'Кто правил';
+              COMMENT ON COLUMN variable_preset_history.at IS 'Когда правил';
+              COMMENT ON COLUMN variable_preset_history.variables_before IS 'Снапшот переменных до (JSON-массив; null у CREATE)';
+              COMMENT ON COLUMN variable_preset_history.variables_after IS 'Снапшот переменных после (JSON-массив)';
+      rollback:
+        - dropTable:
+            tableName: variable_preset_history
+        - dropTable:
+            tableName: variable_preset_favorites

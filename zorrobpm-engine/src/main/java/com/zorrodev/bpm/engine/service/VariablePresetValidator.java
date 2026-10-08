@@ -228,6 +228,46 @@ public final class VariablePresetValidator {
         }
     }
 
+    /**
+     * Читает РАНЕЕ ПРОВЕРЕННЫЙ снапшот (колонка {@code variables} шаблона или
+     * истории) обратно в список. Бизнес-правила не перепроверяются (их прошла
+     * запись), но структура — строго: битый снапшот означает повреждение данных,
+     * а не «пустой шаблон», поэтому молча не глотается.
+     */
+    public static List<ProcessVariable> parseStored(String json) {
+        JsonNode root;
+        try {
+            root = MAPPER.readTree(json);
+        } catch (Exception e) {
+            throw new IllegalStateException("Stored preset variables are not JSON: " + shortCause(e));
+        }
+        if (root == null || !root.isArray()) {
+            throw new IllegalStateException("Stored preset variables must be a JSON array");
+        }
+        List<ProcessVariable> out = new ArrayList<>(root.size());
+        for (JsonNode node : root) {
+            if (!node.isObject()) {
+                throw new IllegalStateException("Stored preset variable must be an object");
+            }
+            ProcessVariable v = new ProcessVariable();
+            v.setName(textOrNull(node.get("name")));
+            JsonNode typeNode = node.get("type");
+            if (typeNode != null && typeNode.isTextual()) {
+                try {
+                    v.setType(ProcessVariableType.valueOf(typeNode.asText()));
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalStateException("Stored preset variable has unknown type");
+                }
+            }
+            v.setValue(textOrNull(node.get("value")));
+            JsonNode allowNode = node.get("allowEmptyString");
+            v.setAllowEmptyString(allowNode != null && allowNode.isBoolean() && allowNode.asBoolean()
+                ? Boolean.TRUE : null);
+            out.add(v);
+        }
+        return out;
+    }
+
     private static String textOrNull(JsonNode node) {
         return node != null && node.isTextual() ? node.asText() : null;
     }
