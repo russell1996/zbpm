@@ -618,11 +618,30 @@ class SseRel47WriterProtocolTest {
     // ---- HOLD-test harness ----
 
     private static Object clientObject(SseEventStreamService svc, String clientId) throws Exception {
-        var f = SseEventStreamService.class.getDeclaredField("clients");
-        f.setAccessible(true);
+        return sessionById(svc, clientId);
+    }
+
+    private static java.util.Collection<Object> sessionSnapshot(SseEventStreamService svc) throws Exception {
+        // WO-AUDIT-9 шаг 3: реестр сессий переехал в SseSessionRegistry —
+        // тот же snapshot-обход, что раньше по полю "clients" сервиса.
+        var rf = SseEventStreamService.class.getDeclaredField("sessionRegistry");
+        rf.setAccessible(true);
+        Object registry = rf.get(svc);
+        var m = registry.getClass().getMethod("snapshot");
         @SuppressWarnings("unchecked")
-        Map<String, Object> clients = (Map<String, Object>) f.get(svc);
-        return clients.get(clientId);
+        java.util.Collection<Object> sessions = (java.util.Collection<Object>) m.invoke(registry);
+        return sessions;
+    }
+
+    private static Object sessionById(SseEventStreamService svc, String clientId) throws Exception {
+        for (Object writer : sessionSnapshot(svc)) {
+            var idm = writer.getClass().getMethod("clientId");
+            idm.setAccessible(true);
+            if (clientId.equals(idm.invoke(writer))) {
+                return writer;
+            }
+        }
+        return null;
     }
 
     /** Reflective enqueue on a detached writer (builds a real SseEventBuilder like the service does). */
@@ -690,11 +709,7 @@ class SseRel47WriterProtocolTest {
     // ---- white-box probes (queue/pool internals for the boundedness asserts) ----
 
     private static int queuedSize(SseEventStreamService svc, String clientId) throws Exception {
-        var clientsField = SseEventStreamService.class.getDeclaredField("clients");
-        clientsField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> clients = (Map<String, Object>) clientsField.get(svc);
-        Object client = clients.get(clientId);
+        Object client = sessionById(svc, clientId);
         assertThat(client).as("client must still be registered").isNotNull();
         var queueField = client.getClass().getDeclaredField("queue");
         queueField.setAccessible(true);
@@ -702,11 +717,7 @@ class SseRel47WriterProtocolTest {
     }
 
     private static long droppedOverflow(SseEventStreamService svc, String clientId) throws Exception {
-        var clientsField = SseEventStreamService.class.getDeclaredField("clients");
-        clientsField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> clients = (Map<String, Object>) clientsField.get(svc);
-        Object client = clients.get(clientId);
+        Object client = sessionById(svc, clientId);
         assertThat(client).as("client must still be registered").isNotNull();
         var droppedField = client.getClass().getDeclaredField("droppedOverflow");
         droppedField.setAccessible(true);
@@ -714,11 +725,7 @@ class SseRel47WriterProtocolTest {
     }
 
     private static Integer queuedSizeOrNull(SseEventStreamService svc, String clientId) throws Exception {
-        var clientsField = SseEventStreamService.class.getDeclaredField("clients");
-        clientsField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> clients = (Map<String, Object>) clientsField.get(svc);
-        Object client = clients.get(clientId);
+        Object client = sessionById(svc, clientId);
         if (client == null) {
             // WO-REL-52: closed by the overflow policy — map entry removed
             // by failClient → removeClientState. Null = closed, not missing.
@@ -730,11 +737,7 @@ class SseRel47WriterProtocolTest {
     }
 
     private static Long droppedOverflowOrNull(SseEventStreamService svc, String clientId) throws Exception {
-        var clientsField = SseEventStreamService.class.getDeclaredField("clients");
-        clientsField.setAccessible(true);
-        @SuppressWarnings("unchecked")
-        Map<String, Object> clients = (Map<String, Object>) clientsField.get(svc);
-        Object client = clients.get(clientId);
+        Object client = sessionById(svc, clientId);
         if (client == null) {
             // WO-REL-52: same as above — closed, not missing.
             return null;

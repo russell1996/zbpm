@@ -297,11 +297,17 @@ class SseRevocationIT {
             // 30s cache holds the OLD view, so evict it to simulate TTL
             // expiry deterministically (no 30s sleep in tests).
             processMemberRepository.deleteById(new ProcessMemberId(processId, user));
-            var cacheField = SseEventStreamService.class.getDeclaredField("rightsCache");
+            // WO-AUDIT-9 шаг 4: кэш переоценки прав переехал в SseAuthzGate
+            // (поле authzGate сервиса) — та же детерминированная инвалидация
+            // вместо 30s-сна (смысл теста не менялся).
+            var gateField = SseEventStreamService.class.getDeclaredField("authzGate");
+            gateField.setAccessible(true);
+            Object gate = gateField.get(sseEventStreamService);
+            var cacheField = gate.getClass().getDeclaredField("rightsCache");
             cacheField.setAccessible(true);
             @SuppressWarnings("unchecked")
             com.github.benmanes.caffeine.cache.Cache<?, ?> cache =
-                (com.github.benmanes.caffeine.cache.Cache<?, ?>) cacheField.get(sseEventStreamService);
+                (com.github.benmanes.caffeine.cache.Cache<?, ?>) cacheField.get(gate);
             cache.invalidateAll();
 
             // WO-OPS-14 (verifier HOLD #1): tracked-listener регистрируется ДО

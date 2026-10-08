@@ -105,10 +105,21 @@ class SseRetryLaneConfigTest {
     }
 
     @Test
-    void retryLane_sizeApplied_queueDepthMeterUpdated() throws Exception {
+    void retryLaneSize_appliedToLivePool_andQueueDepthMeterUpdated() throws Exception {
+        // E-A8-3 (оформительская находка красной команды r1): имя — по ассерту.
         // Вторая половина критерия №2: размер применяется к живому пулу и
         // глубина очереди видна в метрике — обе через настоящий retryLane().
-        SseEventStreamService svc = service();
+        // BpmMetrics реальный (иначе ветка gauge-сеттера не исполняется).
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry registry =
+            new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        com.zorrodev.bpm.engine.metrics.BpmMetrics metrics =
+            new com.zorrodev.bpm.engine.metrics.BpmMetrics(registry);
+        lenient().when(eventQueryService.resolveFeedPositionBySequence(anyLong()))
+            .thenAnswer(inv -> java.util.Optional.of(inv.getArgument(0)));
+        SseEventStreamService svc = new SseEventStreamService(eventQueryService,
+            eventAuthzResolver, null, new tools.jackson.databind.ObjectMapper(), null, null,
+            metrics, new com.zorrodev.bpm.engine.event.SseLiveCursorTracker());
+        services.add(svc);
         ReflectionTestUtils.setField(svc, "retryLaneSize", 2);
         java.util.concurrent.ScheduledExecutorService lane =
             (java.util.concurrent.ScheduledExecutorService)
@@ -117,6 +128,12 @@ class SseRetryLaneConfigTest {
         assertThat(((java.util.concurrent.ScheduledThreadPoolExecutor) lane).getCorePoolSize())
             .as("размер lane применяется к живому пулу")
             .isEqualTo(2);
+        assertThat(registry.find("zbpm.sse.retry.queue").gauge())
+            .as("глубина очереди retry-lane видна в метрике")
+            .isNotNull();
+        assertThat(registry.find("zbpm.sse.retry.queue").gauge().value())
+            .as("очередь свежего lane пуста")
+            .isEqualTo(0.0);
     }
 
     // ------------------------------------------------- связка compose → env → бин (V11)
