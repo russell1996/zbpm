@@ -17,8 +17,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * WO-VT-1 п.6: при {@code zorrobpm.ui.variable-presets.enabled=false} весь
- * REST {@code /presets/**} отдаёт 404 — даже SUPER_ADMIN (флаг первее
- * аутентификации, см. {@code PresetResource.requireEnabled}).
+ * REST {@code /presets/**} отдаёт 404 аутентифицированным — даже SUPER_ADMIN
+ * (флаг первее сервисной логики, см. {@code PresetResource.requireEnabled}).
+ *
+ * <p>Аноним — 401, а НЕ 404 (раунд 2, Б-4): JwtAuthFilter стоит раньше
+ * контроллера и отвечает отказом до проверки флага. Прежняя формулировка
+ * «404 для всех, включая анонимов» была ложной — этот класс теперь пинает
+ * оба факта.
  */
 @ActiveProfiles("test")
 @SpringBootTest(
@@ -42,6 +47,17 @@ class PresetFlagDisabledIT {
                         .content("{\"processDefinitionKey\":\"x\"}")
                         .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void flagOff_anonymousGets401_not404() throws Exception {
+        // Б-4: аноним не доходит до флага — JwtAuthFilter раньше контроллера.
+        mockMvc.perform(get("/presets?key=x"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/presets")
+                        .content("{\"processDefinitionKey\":\"x\"}")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isUnauthorized());
     }
 
     private String login(String username, String password) throws Exception {

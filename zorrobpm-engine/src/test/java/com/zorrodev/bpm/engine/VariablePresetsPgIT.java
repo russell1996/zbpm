@@ -24,7 +24,6 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -91,26 +90,49 @@ class VariablePresetsPgIT extends PostgresIT {
         }
     }
 
+    /**
+     * WO-VT-1 раунд 2 (Б-3): позиция changeset'а по его id в
+     * {@code databasechangelog} полного прогона — а не «последние N».
+     * Допущение «наши два — последние» (ниже) разошлось, как только в мастер
+     * встали 120/121 после 119, и уронило чужой IN-3-класс в полном
+     * {@code ci/run-pg-tests.sh}. Id — константы, инъекции нет.
+     */
+    private int orderOf(String changeSetId) throws Exception {
+        try (Connection c = open(); Statement s = c.createStatement();
+             ResultSet rs = s.executeQuery("SELECT orderexecuted FROM " + SCHEMA
+                 + ".databasechangelog WHERE id = '" + changeSetId + "'")) {
+            assertThat(rs.next()).as("changeset %s записан в databasechangelog", changeSetId).isTrue();
+            int order = rs.getInt(1);
+            assertThat(rs.next()).as("changeset %s записан ровно один раз", changeSetId).isFalse();
+            return order;
+        }
+    }
+
+    /**
+     * WO-VT-1 раунд 2 (Б-3): останавливает мастер-чанжлог ровно ПЕРЕД
+     * changeset'ом с данным id. Полный прогон → позиция по id → чистая схема →
+     * прогон до позиции-1. Хрупкое «первые N-2» больше нигде не используется.
+     */
+    private void runMasterUpToBefore(String changeSetId) throws Exception {
+        runMaster();
+        int stopAt = orderOf(changeSetId) - 1;
+        createOwnSchema();
+        runMasterUpTo(stopAt);
+    }
+
     private void rollbackLast(int count) throws Exception {
         try (Connection c = open()) {
             liquibaseOn(c).rollback(count, new Contexts(), new LabelExpression());
         }
     }
 
+    // ==================== helpers ====================
+
     private int recordedChangeSets() throws Exception {
         try (Connection c = open(); Statement s = c.createStatement();
              ResultSet rs = s.executeQuery("SELECT count(*) FROM " + SCHEMA + ".databasechangelog")) {
             rs.next();
             return rs.getInt(1);
-        }
-    }
-
-    private List<String> lastRecordedIds(int n) throws Exception {
-        try (Connection c = open(); Statement s = c.createStatement();
-             ResultSet rs = s.executeQuery("SELECT id FROM " + SCHEMA + ".databasechangelog ORDER BY orderexecuted DESC LIMIT " + n)) {
-            java.util.ArrayList<String> ids = new java.util.ArrayList<>();
-            while (rs.next()) ids.add(rs.getString(1));
-            return ids;
         }
     }
 
@@ -181,13 +203,14 @@ class VariablePresetsPgIT extends PostgresIT {
 
     @Test
     void stopBeforeOurs_tablesAbsent_thenArriveWithMaster() throws Exception {
-        int total = fullRunAndCount();
-        assertThat(lastRecordedIds(2))
-            .as("наши два changeset'а — последние в мастере (иначе счёт ниже неверен)")
-            .containsExactly("20261007-121", "20261007-120");
+        // Б-3: наши позиции — по id, а не «последние два» (следующая миграция
+        // этот тест не роняет: 120 идёт раньше 121, остальное неважно).
+        runMaster();
+        assertThat(orderOf("20261007-120"))
+            .as("120 записан раньше 121")
+            .isLessThan(orderOf("20261007-121"));
 
-        createOwnSchema();
-        runMasterUpTo(total - 2);
+        runMasterUpToBefore("20261007-120");
 
         assertThat(tableExists("user_task_candidates")).as("остановились ПОСЛЕ 118").isTrue();
         assertThat(tableExists("variable_presets"))
@@ -203,14 +226,22 @@ class VariablePresetsPgIT extends PostgresIT {
 
     @Test
     void rollbackLastTwo_dropsOurs_keepsNeighbours() throws Exception {
-        int total = fullRunAndCount();
-        assertThat(lastRecordedIds(2)).containsExactly("20261007-121", "20261007-120");
+        runMaster();
+        assertThat(orderOf("20261007-120"))
+            .as("120 записан раньше 121")
+            .isLessThan(orderOf("20261007-121"));
+
+        // Откатываем от вершины до 120 ВКЛЮЧИТЕЛЬНО — сколько бы миграций ни
+        // встало после нас (своя схема, чужого не трогаем); затем накат обратно.
+        int tip = recordedChangeSets();
+        int backToOurs = tip - orderOf("20261007-120") + 1;
+        assertThat(backToOurs).as("120 входит в откат").isPositive();
 
         createOwnSchema();
         runMaster();
         assertThat(tableExists("variable_presets")).isTrue();
 
-        rollbackLast(2);
+        rollbackLast(backToOurs);
         assertThat(tableExists("variable_presets")).as("откат убрал 120").isFalse();
         assertThat(tableExists("variable_preset_favorites")).as("откат убрал 121").isFalse();
         assertThat(tableExists("user_task_candidates")).as("соседний 118 жив").isTrue();
@@ -279,11 +310,6 @@ class VariablePresetsPgIT extends PostgresIT {
     }
 
     // ==================== helpers ====================
-
-    private int fullRunAndCount() throws Exception {
-        runMaster();
-        return recordedChangeSets();
-    }
 
     private void insertPresetRaw(UUID id, UUID owner, String key, String kind, String ref, String name) {
         // P-17: голая строка в jsonb не биндится (PG: Can't infer) — явный каст.
