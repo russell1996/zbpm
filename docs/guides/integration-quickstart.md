@@ -75,6 +75,22 @@ externalReference="…"/>`. Поэтому реальные C8-модели ид
 completion со статусом `FAILED`, а ретраи/инцидент ведёт движок (семантика `fail`/retries — в инцидентах,
 `GET /incidents`).
 
+> **Права per-system воркера (WO-INT-10):** брокер-аккаунт воркера (`POST /admin/users/{id}/rabbitmq-password`,
+> права — производная членства в процессах) получает ровно:
+>
+> | Право | Regex | Что даёт |
+> |---|---|---|
+> | `write` | `^zorrobpm\.completions$` | публикация completion/poison/delay через exchange `zorrobpm.completions` (ключ = имя очереди; биндинги объявляет движок) |
+> | `read` | job-очереди + их DLQ + `zorrobpm.completion.poison` | consume своих очередей, чтение припаркованного |
+> | `configure` | job-очереди + DLQ | declare своих очередей |
+>
+> Write-права на `amq.default` у воркера НЕТ и быть не должно: брокер проверяет write против имени
+> exchange, а не routing key — такое право открыло бы запись в любую очередь (доказано живым прогоном).
+> Отказ публикации по правам (403) виден сразу: отдельный ERROR в логе воркера + счётчик
+> (`accessDeniedCount`), результат — в poison (или вход ждёт с backoff, если парковаться некуда).
+> Остаточный риск: воркер технически может опубликовать completion ЧУЖОГО процесса (общий exchange) —
+> закрывается только stamping'ом фаз C8-36 (по умолчанию выключен — flag-day за владельцем).
+
 **B) REST-поллинг** (любой язык): `GET /service-tasks?job=<type>&state=CREATED` → `POST /service-tasks/{id}/complete`
 (успех, с переменными) или `/fail` (`{message, retries?}` — исчерпанные retries поднимают инцидент).
 

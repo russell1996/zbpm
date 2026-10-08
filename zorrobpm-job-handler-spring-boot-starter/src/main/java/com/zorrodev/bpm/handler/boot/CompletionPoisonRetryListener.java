@@ -95,6 +95,12 @@ public class CompletionPoisonRetryListener implements MessageListener {
     private final AtomicLong retryReparkedCount = new AtomicLong(0);
     private final AtomicLong retryMalformedCount = new AtomicLong(0);
     private final AtomicLong unroutableCount = new AtomicLong(0);
+    /**
+     * WO-INT-10 (Q3): сколько повторов из poison отказано брокером по правам
+     * (403/access_refused). Повтор с теми же правами даст тот же 403 —
+     * копия возвращается в delay-цикл штатно, но misconfig виден счётчиком.
+     */
+    private final AtomicLong accessDeniedCount = new AtomicLong(0);
 
     public CompletionPoisonRetryListener(RabbitTemplate rabbitTemplate,
             ObjectMapper objectMapper, String completeQueueName) {
@@ -155,6 +161,11 @@ public class CompletionPoisonRetryListener implements MessageListener {
         return unroutableCount.get();
     }
 
+    /** WO-INT-10 (Q3): сколько повторов отказано брокером по правам. */
+    public long accessDeniedCountForTest() {
+        return accessDeniedCount.get();
+    }
+
     @Override
     public void onMessage(Message message) {
         final ServiceTaskCompleteData data;
@@ -177,12 +188,23 @@ public class CompletionPoisonRetryListener implements MessageListener {
         }
         int attempts = headerAsInt(message, HDR_ATTEMPTS);
         try {
-            ConfirmedCompletionSender.sendAndConfirm(rabbitTemplate, completeQueueName, data,
+            // WO-INT-10: через completion-exchange, ключ — имя очереди
+            // completion'ов (identity-биндинг движка), не default exchange.
+            ConfirmedCompletionSender.sendAndConfirm(rabbitTemplate,
+                CompletionTopology.COMPLETION_EXCHANGE, completeQueueName, data,
                 null, null, confirmTimeoutMs,
                 ensurePublisherConfirms
                     && ConfirmedCompletionSender.confirmsAvailable(rabbitTemplate),
                 unroutableCount);
         } catch (RuntimeException sendFailure) {
+            if (sendFailure instanceof CompletionPublishDeniedException denied) {
+                long n = accessDeniedCount.incrementAndGet();
+                log.error("Poisoned completion {} retry DENIED by broker "
+                        + "(access denied total={}): {} — worker permissions "
+                        + "misconfigured; copy returns to the delay cycle, "
+                        + "fix permissions to drain poison",
+                    data.getCompletionId(), n, denied.getMessage());
+            }
             reparkForLater(data, attempts + 1, sendFailure);
             return;
         }
@@ -196,6 +218,7 @@ public class CompletionPoisonRetryListener implements MessageListener {
      * Маршрут всё ещё бит: копия уходит в delay-очередь с TTL следующей ступени
      * шкалы и возвращается сюда через DLX. Poison-вход при этом ACK'ается —
      * сообщение НЕ крутится горячо на этом потоке и НЕ теряется.
+     * WO-INT-10: через completion-exchange, ключ — имя delay-очереди.
      */
     private void reparkForLater(ServiceTaskCompleteData data, int nextAttempts,
             RuntimeException sendFailure) {
@@ -204,7 +227,8 @@ public class CompletionPoisonRetryListener implements MessageListener {
             + (sendFailure.getMessage() != null
                 ? ": " + truncate(sendFailure.getMessage(), 500) : "");
         try {
-            ConfirmedCompletionSender.sendAndConfirm(rabbitTemplate, RETRY_DELAY_QUEUE, data,
+            ConfirmedCompletionSender.sendAndConfirm(rabbitTemplate,
+                CompletionTopology.COMPLETION_EXCHANGE, RETRY_DELAY_QUEUE, data,
                 Map.of(HDR_ATTEMPTS, nextAttempts, HDR_REASON, reason),
                 String.valueOf(delayMs), confirmTimeoutMs,
                 ensurePublisherConfirms

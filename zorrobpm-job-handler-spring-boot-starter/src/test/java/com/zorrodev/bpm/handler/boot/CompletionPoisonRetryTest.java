@@ -83,7 +83,7 @@ class CompletionPoisonRetryTest {
     /** Маршрут починен: отправка в очередь completion'ов проходит. */
     private void routeIsFixed() {
         doAnswer(inv -> null).when(rabbitTemplate)
-            .convertAndSend(anyString(), (Object) any(),
+            .convertAndSend(anyString(), anyString(), (Object) any(),
                 any(org.springframework.amqp.core.MessagePostProcessor.class),
                 any(CorrelationData.class));
     }
@@ -92,7 +92,7 @@ class CompletionPoisonRetryTest {
     private void routeStillBroken() {
         doAnswer(inv -> {
             throw new AmqpException("NO_ROUTE");
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
     }
@@ -108,7 +108,8 @@ class CompletionPoisonRetryTest {
         assertThat(retryListener.retryDeliveredCountForTest()).isEqualTo(1L);
 
         ArgumentCaptor<Object> bodyCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(rabbitTemplate).convertAndSend(eq(COMPLETE_QUEUE), bodyCaptor.capture(),
+        verify(rabbitTemplate).convertAndSend(eq(CompletionTopology.COMPLETION_EXCHANGE),
+            eq(COMPLETE_QUEUE), bodyCaptor.capture(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
         assertThat(bodyCaptor.getValue()).isInstanceOf(ServiceTaskCompleteData.class);
@@ -125,12 +126,13 @@ class CompletionPoisonRetryTest {
     void brokenRoute_retryReparksToDelayWithTtlAndAcksPoisonInput() throws Exception {
         // Основная очередь бита, delay-очередь жива.
         doAnswer(inv -> {
-            String routingKey = inv.getArgument(0);
+            // WO-INT-10: аргумент 0 — exchange, аргумент 1 — routing key.
+            String routingKey = inv.getArgument(1);
             if (COMPLETE_QUEUE.equals(routingKey)) {
                 throw new AmqpException("NO_ROUTE");
             }
             return null;
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
         ServiceTaskCompleteData parked = parkedResult();
@@ -144,6 +146,7 @@ class CompletionPoisonRetryTest {
         ArgumentCaptor<org.springframework.amqp.core.MessagePostProcessor> mppCaptor =
             ArgumentCaptor.forClass(org.springframework.amqp.core.MessagePostProcessor.class);
         verify(rabbitTemplate).convertAndSend(
+            eq(CompletionTopology.COMPLETION_EXCHANGE),
             eq(CompletionPoisonRetryListener.RETRY_DELAY_QUEUE), any(Object.class),
             mppCaptor.capture(), any(CorrelationData.class));
 
@@ -203,7 +206,7 @@ class CompletionPoisonRetryTest {
         retryListener.onMessage(garbage);
 
         assertThat(retryListener.retryMalformedCountForTest()).isEqualTo(1L);
-        verify(rabbitTemplate, never()).convertAndSend(anyString(), (Object) any(),
+        verify(rabbitTemplate, never()).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
     }
@@ -219,7 +222,8 @@ class CompletionPoisonRetryTest {
             .as("без стабильного id движок не дедуплицирует — доставка рискует "
                 + "двойным эффектом, поэтому терминальный дроп со счётчиком")
             .isEqualTo(1L);
-        verify(rabbitTemplate, never()).convertAndSend(eq(COMPLETE_QUEUE), (Object) any(),
+        verify(rabbitTemplate, never()).convertAndSend(eq(CompletionTopology.COMPLETION_EXCHANGE),
+            eq(COMPLETE_QUEUE), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
     }

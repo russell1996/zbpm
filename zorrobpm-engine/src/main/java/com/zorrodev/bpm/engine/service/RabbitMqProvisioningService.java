@@ -233,22 +233,30 @@ public class RabbitMqProvisioningService {
     }
 
     /**
-     * Схема permissions (vhost {@code /}), решение CTO по V10-c + verifier HOLD #2.
+     * Схема permissions (vhost {@code /}), решение CTO по V10-c + verifier HOLD #2
+     * + WO-INT-10 (exchange-модель публикации).
      * configure покрывает declare очередей + DLQ; exchange
      * {@code zorrobpm.jobs.dlx} + биндинги объявляет сам app под
      * admin-аккаунтом (declare идемпотентен) — воркеру свои не нужны.
-     * write — job-очереди + {@code zorrobpm.complete-service-task}
-     * (воркер публикует completion'ы через default exchange —
-     * {@code JobCompletionListener.convertAndSend(completeQueueName, …)}),
+     * write — ТОЛЬКО exchange {@code zorrobpm.completions} (воркер публикует
+     * completion'ы/poison/delay через него identity-ключами — см.
+     * {@code CompletionTopology} в стартере; биндинги объявляет движок) —
      * но ТОЛЬКО при непустом членстве: юзер с нулём процессов получает
      * deny-all целиком (иначе любой provisioned юзер без процессов мог бы
      * ковать completion'ы чужих service-task'ов — consumer
      * {@code ServiceTaskListener.on(ServiceTaskCompleteData)} не делает
-     * auth-проверки, канал общий). Остаточный риск: член процесса A может
-     * ковать completion'ы процесса B (общий канал, identity отправителя
-     * брокер листенеру не передаёт) — архитектурное ограничение модели,
-     * follow-up (per-process completion-скasing или server-side ownership-check).
-     * read — consume + passive-declare + basicGet на job-очередях и их DLQ.
+     * auth-проверки, канал общий).
+     * write на {@code amq.default} НЕ выдаётся никогда и никому: write-право
+     * брокер проверяет против имени exchange, а не routing key — право на
+     * default exchange открыло бы запись в ЛЮБУЮ очередь (доказано живым
+     * прогоном WO-INT-10: поддельное сообщение в чужую job-очередь доставлено).
+     * Остаточный риск: член процесса A может ковать completion'ы процесса B
+     * (общий канал, identity отправителя брокер листенеру не передаёт) —
+     * архитектурное ограничение модели, follow-up (per-process
+     * completion-scoping или server-side ownership-check; stamping C8-36
+     * выключен по умолчанию — flag-day за владельцем, см. WO-INT-10).
+     * read — consume + passive-declare + basicGet на job-очередях, их DLQ и
+     * poison-очереди (воркер забирает припаркованное любым живым воркером).
      * Теги нового юзера — пустые (не management, не administrator).
      */
     static Permissions permissionsFor(Set<String> jobTypes) {
@@ -270,10 +278,22 @@ public class RabbitMqProvisioningService {
         // пустое членство: deny-all по построению (verifier HOLD #2).
         String jobsAndDlq = "^zorrobpm\\.jobs\\.(" + jobAlt + ")(\\.dlq)?$";
         String jobsOnly = "^zorrobpm\\.jobs\\.(" + jobAlt + ")$";
+        // WO-INT-10: write — только completion-exchange (публикация через него,
+        // ключ — имя очереди; биндинги — за движком). Имена очередей в write
+        // БЕССМЫСЛЕННЫ: брокер матчит write против имени exchange, а не ключа —
+        // право на имя очереди никогда не открывало публикацию (это и был 403
+        // на каждый completion), а право на amq.default открывало бы всё.
         String write = hasJobs
-            ? "(" + jobsOnly + ")|(^zorrobpm\\.complete-service-task$)"
+            ? "^zorrobpm\\.completions$"
             : jobsOnly;
-        return new Permissions(jobsAndDlq, write, jobsAndDlq);
+        // read — job-очереди + DLQ + poison (воркер consume'ит припаркованное).
+        // Имя poison-очереди — зеркало константы стартера
+        // CompletionPoisonRetryListener.POISON_QUEUE (стартер не зависит от
+        // engine; расхождение ловит пин-тест).
+        String read = hasJobs
+            ? "(" + jobsAndDlq + ")|(^zorrobpm\\.completion\\.poison$)"
+            : jobsAndDlq;
+        return new Permissions(jobsAndDlq, write, read);
     }
 
     /** Пароль — 40 символов [A-Za-z0-9] через SecureRandom (240 бит). */

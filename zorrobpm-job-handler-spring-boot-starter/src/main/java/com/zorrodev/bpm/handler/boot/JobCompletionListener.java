@@ -54,7 +54,12 @@ public class JobCompletionListener implements MessageListener {
      * Имя очереди completion'ов. В проде — {@code zorrobpm.complete-service-task} (см.
      * {@code RabbitConfiguration.COMPLETE_QUEUE}); в тесте — своя очередь, чтобы не
      * спорить с чужими durable-флагами shared-брокера (406 PRECONDITION_FAILED).
-     * Проводка та же: send → очередь → чтение независимым наблюдателем.
+     * Проводка та же: send → exchange → очередь → чтение независимым наблюдателем.
+     *
+     * <p>WO-INT-10: публикация идёт через {@code CompletionTopology.COMPLETION_EXCHANGE}
+     * с routing key = имя очереди (identity-биндинги объявляет движок) — НЕ через
+     * default exchange (брокер проверяет write-право против {@code amq.default},
+     * и такое право воркеру давать нельзя).
      */
     public static final String COMPLETE_QUEUE = "zorrobpm.complete-service-task";
 
@@ -201,6 +206,19 @@ public class JobCompletionListener implements MessageListener {
     /** Счётчик горячих переотправок — оператор должен видеть и сам факт, и темп. */
     private final java.util.concurrent.atomic.AtomicLong redeliveryCount =
         new java.util.concurrent.atomic.AtomicLong(0);
+
+    /**
+     * WO-INT-10 (Q3): сколько публикаций результата отказано брокером по правам
+     * (403/access_refused — misconfig permissions, не транспорт). Растёт —
+     * чинить права воркера и перегонять припаркованное из poison.
+     */
+    private final java.util.concurrent.atomic.AtomicLong accessDeniedCount =
+        new java.util.concurrent.atomic.AtomicLong(0);
+
+    /** WO-INT-10 (Q3): отказы публикации по правам (misconfig, не транспорт). */
+    public long accessDeniedCountForTest() {
+        return accessDeniedCount.get();
+    }
 
     /** WO-C8-36 (M-1): сколько раз задание было переотправлено после отказа доставки. */
     public long redeliveryCountForTest() {
@@ -503,7 +521,10 @@ public class JobCompletionListener implements MessageListener {
             // здесь был дословно; per-send CorrelationData, trace-forward
             // WO-OBS-8 и waitForConfirmsOrDie-запрет red-team blocker 1.1 —
             // всё переехало туда без изменения поведения).
-            ConfirmedCompletionSender.sendAndConfirm(rabbitTemplate, completeQueueName,
+            // WO-INT-10: через completion-exchange, ключ — имя очереди
+            // (identity-биндинг движка), не default exchange.
+            ConfirmedCompletionSender.sendAndConfirm(rabbitTemplate,
+                CompletionTopology.COMPLETION_EXCHANGE, completeQueueName,
                 completeData, null, null, confirmTimeoutMs, waitForConfirm, unroutableCount);
             if (waitForConfirm) {
                 // NACK/timeout/разрыв до confirm и unroutable-возврат бросают из
@@ -536,6 +557,18 @@ public class JobCompletionListener implements MessageListener {
      * WO-REL-64: отказ публикации результата — либо парковка, либо backoff и
      * проброс.
      *
+     * <p>WO-INT-10 (Q3): отказ ПРАВ ({@code CompletionPublishDeniedException} —
+     * 403/access_refused: неверные permissions воркера) — НЕ транспорт.
+     * Отличие в реакции: счётчик + ERROR, называющий misconfig (exchange/ключ),
+     * и ЕДИНИЧНАЯ попытка немедленной парковки (шкала попыток бессмысленна —
+     * повтор с теми же правами даст тот же 403). Честная механика stock-прав
+     * RabbitMQ (write — на exchange целиком): отказ означает, что парковаться
+     * через тот же exchange тоже некуда, поэтому попытка обычно падает тем же
+     * 403 — тогда и при выключенной парковке результат остаётся в resultCache,
+     * а вход — неподтверждённым: штатный backoff-redelivery до починки прав
+     * (видный по счётчику, самолечащийся — переотправка из кэша без повторного
+     * бизнес-эффекта). Потеря результата исключена в обеих ветках.
+     *
      * <p>Счётчик попыток ведётся на отправку: ключ — completionId при наличии
      * correlationId (стабилен на redelivery через resultCache) либо
      * fallback-ключ serviceTaskId#фаза без него (см. H-1 выше). N-я неудача
@@ -546,6 +579,45 @@ public class JobCompletionListener implements MessageListener {
      * backoff и проброс исходного исключения (вход НЕ подтверждается).
      */
     private void handleSendFailure(ServiceTaskCompleteData completeData, String completionId,
+            String attemptKey, RuntimeException cause) {
+        if (cause instanceof CompletionPublishDeniedException denied) {
+            long n = accessDeniedCount.incrementAndGet();
+            log.error("Completion {} publish DENIED by broker (access denied total={}): {} — "
+                    + "worker permissions misconfigured (not a transport failure)",
+                completionId, n, denied.getMessage());
+            if (poisonParkingEnabled) {
+                try {
+                    parkPoisonedCompletion(completeData, completionId, 1, denied);
+                } catch (RuntimeException parkFailure) {
+                    // Штатно при stock-правах: отказ = нет write на exchange,
+                    // парковаться некуда. Падаем в транспортный хвост ниже
+                    // (backoff + проброс, вход не подтверждён).
+                    log.error("Denied completion {} could not be parked ({}) — "
+                            + "holding input unacked with backoff until permissions "
+                            + "are fixed (result is cached, no business re-effect)",
+                        completionId, parkFailure.getMessage());
+                    handleTransportFailure(completeData, completionId, attemptKey, denied);
+                    return;
+                }
+                long parked = poisonedCount.incrementAndGet();
+                log.error("Denied completion {} parked in {} (parked total={}) — "
+                    + "fix worker permissions, then redrive from poison",
+                    completionId, poisonQueueName, parked);
+                return;
+            }
+            log.error("Denied completion {} NOT parked (poison parking disabled) — "
+                + "falling back to transport-style redelivery (result is cached, "
+                + "input stays unacked)", completionId);
+        }
+        handleTransportFailure(completeData, completionId, attemptKey, cause);
+    }
+
+    /**
+     * WO-REL-64: транспортный хвост отказа — шкала попыток, потолок с парковкой
+     * либо backoff и проброс. Сюда же падает отказ прав, когда парковаться
+     * некуда/выключено (см. выше).
+     */
+    private void handleTransportFailure(ServiceTaskCompleteData completeData, String completionId,
             String attemptKey, RuntimeException cause) {
         CompletionRedeliveryBackoff backoff = redeliveryBackoffRef.get();
         int attempt = backoff.recordFailedAttempt(attemptKey);
@@ -582,13 +654,16 @@ public class JobCompletionListener implements MessageListener {
     /**
      * WO-REL-64: парковка отравленного результата — та же надёжная отправка
      * (confirm/return), что основная, плюс заголовки попыток и причины.
+     * WO-INT-10: через completion-exchange, ключ — имя poison-очереди
+     * (identity-биндинг движка).
      */
     private void parkPoisonedCompletion(ServiceTaskCompleteData completeData, String completionId,
             int attempt, RuntimeException cause) {
         String reason = cause.getClass().getSimpleName()
             + (cause.getMessage() != null
                 ? ": " + truncate(cause.getMessage(), 500) : "");
-        ConfirmedCompletionSender.sendAndConfirm(rabbitTemplate, poisonQueueName, completeData,
+        ConfirmedCompletionSender.sendAndConfirm(rabbitTemplate,
+            CompletionTopology.COMPLETION_EXCHANGE, poisonQueueName, completeData,
             Map.of(CompletionPoisonRetryListener.HDR_ATTEMPTS, attempt,
                 CompletionPoisonRetryListener.HDR_REASON, reason),
             null, confirmTimeoutMs,

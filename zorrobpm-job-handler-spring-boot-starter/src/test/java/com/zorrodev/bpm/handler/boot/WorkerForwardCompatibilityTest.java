@@ -84,10 +84,10 @@ class WorkerForwardCompatibilityTest {
 
     private void confirmAcking() {
         doAnswer(inv -> {
-            ((CorrelationData) inv.getArgument(3)).getFuture()
+            ((CorrelationData) inv.getArgument(4)).getFuture()
                 .complete(new CorrelationData.Confirm(true, null));
             return null;
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
     }
 
@@ -156,7 +156,7 @@ class WorkerForwardCompatibilityTest {
 
         verify(handler).handleJob(any(JobDetailModel.class));
         ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
-        verify(rabbitTemplate).convertAndSend(anyString(), payload.capture(),
+        verify(rabbitTemplate).convertAndSend(anyString(), anyString(), payload.capture(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
         assertThat(payload.getValue()).isInstanceOf(com.zorrodev.bpm.exchange.ServiceTaskCompleteData.class);
     }
