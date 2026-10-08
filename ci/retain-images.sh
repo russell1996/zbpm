@@ -48,13 +48,79 @@ for t in ${RETAIN_IMAGES_PROTECT:-}; do
 done
 [ -n "$protected" ] && echo "retain-images: protected tags:$protected"
 
-# List this repo's tags, newest first (CreatedAt is ISO-like → lexicographic sort).
-# Format: "<CreatedAt>|<Repository>:<Tag>"
-mapfile -t entries < <(docker image ls --format '{{.CreatedAt}}|{{.Repository}}:{{.Tag}}' "$repo" | grep -v '<none>' | sort -r)
+# WO-REL-67: build-order journal. `sort -r` on CreatedAt ties (BuildKit cache
+# hits stamp several tags with the SAME CreatedAt — incident 2026-10-08: the
+# nightly run untagged 5f2d85a6, built but not yet deployed) falls through to
+# reverse-lexicographic hex-SHA order, i.e. random. The journal
+# $DEPLOY_DIR/.image-build-order-<repo> (one tag per line, oldest first,
+# appended AND trimmed by the build job) is the source of truth for "newest".
+# Tags absent from the journal (legacy: built before the journal existed) sort
+# below every journaled tag, ordered among themselves by CreatedAt as before.
+journal_file="$deploy_dir/.image-build-order-$(printf '%s' "$repo" | tr -c 'A-Za-z0-9_-' '_')"
+declare -A build_rank=()
+journal_len=0
+if [ -f "$journal_file" ]; then
+  while IFS= read -r jt || [ -n "$jt" ]; do
+    [ -n "$jt" ] || continue
+    journal_len=$((journal_len + 1))
+    build_rank["$jt"]=$journal_len
+  done < "$journal_file"
+  echo "retain-images: build-order journal $journal_file (${journal_len} entries)"
+fi
+
+# WO-REL-67 invariant: a tag journaled AFTER .current_tag was built after the
+# deployed one — i.e. built, not yet deployed — and is never removed, whatever
+# the CreatedAt ties say. (If .current_tag is missing or predates the journal,
+# every journaled tag counts as newer — bounded by the build job's trim.)
+current_tag_val=""
+if [ -f "$deploy_dir/.current_tag" ]; then
+  current_tag_val="$(cat "$deploy_dir/.current_tag")"
+fi
+current_rank=0
+if [ -n "$current_tag_val" ] && [ "${#build_rank[@]}" -gt 0 ]; then
+  current_rank="${build_rank[$current_tag_val]:-0}"
+fi
+if [ "${#build_rank[@]}" -gt 0 ]; then
+  for jt in "${!build_rank[@]}"; do
+    if [ "${build_rank[$jt]}" -gt "$current_rank" ]; then
+      already=0
+      for p in $protected; do
+        [ "$jt" = "$p" ] && already=1
+      done
+      [ "$already" -eq 0 ] && protected="$protected $jt" \
+        && echo "retain-images: keeping built-not-deployed $jt (journaled after current)"
+    fi
+  done
+fi
+
+# List this repo's tags, newest first. Rank (journal position; 0 = legacy) is
+# the primary key, CreatedAt the secondary (ISO-like → lexicographic sort).
+# Format: "<rank>|<CreatedAt>|<Repository>:<Tag>"
+mapfile -t raw < <(docker image ls --format '{{.CreatedAt}}|{{.Repository}}:{{.Tag}}' "$repo" | grep -v '<none>')
+entries=()
+if [ "${#raw[@]}" -gt 0 ]; then
+  decorated=()
+  for entry in "${raw[@]}"; do
+    created="${entry%%|*}"
+    full="${entry#*|}"
+    tag="${full##*:}"
+    if [ "${#build_rank[@]}" -gt 0 ]; then
+      r="${build_rank[$tag]:-0}"
+    else
+      r=0
+    fi
+    decorated+=("$r|$created|$full")
+  done
+  # Explicit 3rd key: when rank AND CreatedAt tie (the cache-hit state),
+  # GNU sort's last-resort full-line comparison ignores the per-key `r` flags
+  # and goes ascending — the tie must fall through to reverse-lexicographic
+  # order exactly like the old plain `sort -r` did (HOLD round 2 premise).
+  mapfile -t entries < <(printf '%s\n' "${decorated[@]}" | sort -t'|' -k1,1nr -k2,2r -k3,3r)
+fi
 
 kept=0
-for entry in "${entries[@]}"; do
-  full="${entry#*|}"
+for entry in ${entries[@]+"${entries[@]}"}; do
+  full="${entry#*|*|}"
   tag="${full##*:}"
   case "$tag" in
     latest) continue ;;   # latest always survives
