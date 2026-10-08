@@ -5,8 +5,8 @@ import com.zorrodev.bpm.engine.event.DomainEventEmitter;
 import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.exchange.OutboxDeliveryResult;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -28,12 +28,32 @@ import java.util.UUID;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class OutboxDeliveryResultListener {
 
     private final OutboxRepository outboxRepository;
     private final BpmMetrics bpmMetrics;
     private final DomainEventEmitter domainEventEmitter;
+    private final tools.jackson.databind.ObjectMapper objectMapper;
+
+    @Autowired
+    public OutboxDeliveryResultListener(OutboxRepository outboxRepository,
+            BpmMetrics bpmMetrics, DomainEventEmitter domainEventEmitter,
+            tools.jackson.databind.ObjectMapper objectMapper) {
+        this.outboxRepository = outboxRepository;
+        this.bpmMetrics = bpmMetrics;
+        this.domainEventEmitter = domainEventEmitter;
+        this.objectMapper = objectMapper;
+    }
+
+    /**
+     * WO-REL-66 (B): backward-compatible constructor for existing call sites
+     * (unit/PgIT tests) that build the listener with three arguments — the
+     * guard only needs a default mapper to sniff the envelope type.
+     */
+    public OutboxDeliveryResultListener(OutboxRepository outboxRepository,
+            BpmMetrics bpmMetrics, DomainEventEmitter domainEventEmitter) {
+        this(outboxRepository, bpmMetrics, domainEventEmitter, new tools.jackson.databind.ObjectMapper());
+    }
 
     @Value("${zorrobpm.outbox.max-retries:5}")
     private int maxRetries;
@@ -65,6 +85,16 @@ public class OutboxDeliveryResultListener {
         int nextAttempt = entry.getAttempts() + 1;
         String errorSummary = truncate(result.getCause(), 500);
         if (nextAttempt >= maxRetries) {
+            // WO-REL-66 (B): a quarantine notification that itself was not
+            // delivered (NO_ROUTE) must NOT be quarantined (that re-emits
+            // the loop) — drop with accounting instead. Same cut as the
+            // inline-failure path in OutboxBatchProcessor (both quarantine
+            // paths — criterion 3 pins both).
+            if (QuarantineNotificationGuard.isQuarantineNotification(
+                    entry.getKind(), entry.getPayload(), objectMapper)) {
+                QuarantineNotificationGuard.dropUndeliverable(entry, outboxRepository, bpmMetrics);
+                return;
+            }
             // WO-REL-22 (B3): emit only on the FIRST transition — a duplicate delivery
             // result landing after quarantine re-marks nothing and emits nothing.
             // Skip already-quarantined rows outright (no pointless update).

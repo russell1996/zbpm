@@ -1,12 +1,14 @@
 package com.zorrodev.bpm.rabbitmq.configuration;
 
 import com.zorrodev.bpm.exchange.OutboxDeliveryResult;
+import com.zorrodev.bpm.rabbitmq.JobQueueDeclarer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Binding;
 import org.springframework.amqp.core.BindingBuilder;
 import org.springframework.amqp.core.DirectExchange;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.core.QueueBuilder;
+import org.springframework.amqp.core.ReturnedMessage;
 import org.springframework.amqp.core.TopicExchange;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.Connection;
@@ -113,7 +115,8 @@ public class RabbitConfiguration {
     @Bean
     public RabbitTemplate rabbitTemplate(RabbitTemplateConfigurer configurer,
                                          ConnectionFactory connectionFactory,
-                                         ApplicationEventPublisher publisher) {
+                                         ApplicationEventPublisher publisher,
+                                         JobQueueDeclarer jobQueueDeclarer) {
         Set<String> returnedIds = ConcurrentHashMap.newKeySet();
         RabbitTemplate template = new RabbitTemplate();
         configurer.configure(template, connectionFactory);
@@ -149,8 +152,50 @@ public class RabbitConfiguration {
                     correlationId, false,
                     "unroutable: " + returned.getReplyCode() + " " + returned.getReplyText()));
             }
+            // WO-REL-66 (A): one redeclare attempt when the lost queue is ours.
+            maybeRedeclareJobQueue(returned, jobQueueDeclarer);
         });
         return template;
+    }
+
+    /**
+     * WO-REL-66 (A): an unroutable return published to the DEFAULT exchange
+     * with a {@code zorrobpm.jobs.*} routing key means the work queue is gone
+     * on the broker (recreated broker) while this JVM still has it cached as
+     * declared — {@link JobQueueDeclarer#declare} on the send path was a no-op.
+     * One redeclare attempt now (debounced + legacy-aware inside); the retry
+     * itself comes from the outbox poller tick (at-least-once resend), NOT
+     * from a second send here — this callback runs on the connection thread
+     * and must stay lightweight.
+     *
+     * <p>Scope guard (narrow by construction): only the default exchange
+     * (direct-to-queue sends — the exact shape of the job send path), only
+     * our prefix, never DLQs (we never send to them; a DLQ routing key here
+     * would be someone else's message).
+     */
+    static void maybeRedeclareJobQueue(ReturnedMessage returned, JobQueueDeclarer jobQueueDeclarer) {
+        String exchange = returned.getExchange();
+        if (exchange != null && !exchange.isEmpty()) {
+            return;
+        }
+        String routingKey = returned.getRoutingKey();
+        if (routingKey == null || !routingKey.startsWith(JobQueueDeclarer.JOB_QUEUE_PREFIX)) {
+            return;
+        }
+        if (routingKey.endsWith(".dlq")) {
+            return;
+        }
+        String jobType = routingKey.substring(JobQueueDeclarer.JOB_QUEUE_PREFIX.length());
+        if (jobType.isBlank()) {
+            return;
+        }
+        if (jobQueueDeclarer.redeclareForSend(jobType)) {
+            log.info("WO-REL-66: unroutable return for {} — redeclare attempted, "
+                + "redelivery comes from the outbox poller tick", routingKey);
+        } else {
+            log.debug("WO-REL-66: unroutable return for {} — redeclare skipped "
+                + "(legacy-pinned, debounced, or blank type)", routingKey);
+        }
     }
 
     /**
