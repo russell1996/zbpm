@@ -61,7 +61,7 @@ class PresetFlagEnvBindingTest {
     }
 
     @Test
-    void key_presentInBothPropertiesFiles() throws Exception {
+    void key_presentInRestProperties_andEnvGivesDirectOverride() throws Exception {
         Path cwd = Path.of("").toAbsolutePath();
         // CWD surefire — каталог модуля (zorrobpm-engine), корень репо — на уровень выше;
         // если гоняют из корня — он сам.
@@ -69,11 +69,13 @@ class PresetFlagEnvBindingTest {
             ? cwd : cwd.getParent();
         String restProps = Files.readString(
             root.resolve("zorrobpm-rest/src/main/resources/zorrobpm-rest.properties"));
+        assertThat(restProps).as("ключ в rest-файле").contains(KEY);
+        assertThat(restProps).contains(ENV);
+        // Пин по WO/G15: в app-файле строки ключа быть НЕ ДОЛЖНО — иначе
+        // переменная окружения заворачивается в properties-значение и перестаёт
+        // доезжать до @Value без проброса в compose.
         String appProps = Files.readString(
             root.resolve("zorrobpm-app/src/main/resources/application.properties"));
-        assertThat(restProps).as("ключ в rest-файле").contains(KEY);
-        assertThat(appProps).as("ключ в app-файле (F-7: иначе в fat-jar потеряется)").contains(KEY);
-        assertThat(restProps).contains(ENV);
-        assertThat(appProps).contains(ENV);
+        assertThat(appProps).as("ключ в app-файле ломает G15-контракт").doesNotContain(KEY);
     }
 }
