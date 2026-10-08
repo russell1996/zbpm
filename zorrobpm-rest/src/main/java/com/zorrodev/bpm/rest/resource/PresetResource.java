@@ -41,7 +41,8 @@ public class PresetResource implements PresetContract {
     private final VariablePresetService presetService;
     private final HttpServletRequest request;
 
-    /** WO-VT-1 п.6: ключ в ОБОИХ файлах (rest-properties + app-файл, урок C8-36 F-7). */
+    /** WO-VT-1 п.6: ключ живёт только в zorrobpm-rest.properties; в app-файл
+     *  НЕ дублируется сознательно — G15 (env не в compose). Дефолт true в @Value. */
     @Value("${zorrobpm.ui.variable-presets.enabled:true}")
     private boolean presetsEnabled;
 
