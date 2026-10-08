@@ -343,19 +343,29 @@ class AdmissionOutsideTxTest {
     }
 
     @Test
-    void admitInsideTx_failFast() {
+    void admitInsideTx_degradedFallback_countedNotFailed() throws Exception {
+        // WO-ENG-35: вызов внутри транзакции (легитимный путь запроса с
+        // Idempotency-Key через IdempotencyFilter) НЕ падает, а деградирует:
+        // то же ограниченное окно + счётчик in-tx + лиза работает как обычно.
+        // Fail-fast здесь превращал бы такой запрос в 500 (поймано полным
+        // clean verify: IdempotencyFilterTest 4× «expected 201 but was 500»).
         newSvc(10);
+        double inTxBefore = inTxCount();
         TransactionSynchronizationManager.initSynchronization();
         TransactionSynchronizationManager.setActualTransactionActive(true);
         try {
-            assertThatThrownBy(() -> svc.admitOutsideTx())
-                .as("гейт внутри транзакции — громкий отказ, а не тихое удержание соединения")
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("OUTSIDE");
+            assertThat(permits()).isEqualTo(2);
+            AdmissionLease lease = svc.admitOutsideTx();
+            assertThat(permits()).as("лиза выдана и внутри транзакции").isEqualTo(1);
+            lease.close();
+            assertThat(permits()).isEqualTo(2);
         } finally {
             TransactionSynchronizationManager.setActualTransactionActive(false);
             TransactionSynchronizationManager.clearSynchronization();
         }
+        assertThat(inTxCount() - inTxBefore)
+            .as("внутритранзакционный гейт посчитан как in-tx (виден оператору)")
+            .isEqualTo(1.0);
     }
 
     @Test
