@@ -90,7 +90,7 @@ class CompletionReliablePublishTest {
 
     private CorrelationData sentCorrelationData() {
         ArgumentCaptor<CorrelationData> captor = ArgumentCaptor.forClass(CorrelationData.class);
-        org.mockito.Mockito.verify(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        org.mockito.Mockito.verify(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), captor.capture());
         return captor.getValue();
     }
@@ -109,9 +109,9 @@ class CompletionReliablePublishTest {
     void confirmNack_throws_inputNotAcked() {
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
         doAnswer(inv -> {
-            answerConfirm((CorrelationData) inv.getArgument(3), false, "exchange down");
+            answerConfirm((CorrelationData) inv.getArgument(4), false, "exchange down");
             return null;
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
 
         // CR-13/крит.5: NACK обязан выйти наружу — контейнер не подтвердит вход.
@@ -182,7 +182,7 @@ class CompletionReliablePublishTest {
         // считаться успехом.
         AtomicReference<String> inFlight = new AtomicReference<>();
         doAnswer(inv -> {
-            CorrelationData cd = (CorrelationData) inv.getArgument(3);
+            CorrelationData cd = (CorrelationData) inv.getArgument(4);
             inFlight.set(cd.getId());
             // Так spring-amqp и помечает возврат: basic.return кладёт
             // ReturnedMessage в саму отправку ДО подтверждения.
@@ -191,7 +191,7 @@ class CompletionReliablePublishTest {
                 312, "NO_ROUTE", "", "c836.it.complete.unroutable"));
             answerConfirm(cd, true, null);
             return null;
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
 
         assertThatThrownBy(() -> listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-ret")))
@@ -208,9 +208,9 @@ class CompletionReliablePublishTest {
     void confirmedRoutable_sendsOnce_withPerSendCorrelationData() {
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
         doAnswer(inv -> {
-            answerConfirm((CorrelationData) inv.getArgument(3), true, null);
+            answerConfirm((CorrelationData) inv.getArgument(4), true, null);
             return null;
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
 
         listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-ok"));
@@ -249,7 +249,7 @@ class CompletionReliablePublishTest {
         AtomicInteger call = new AtomicInteger();
         List<CorrelationData> sends = new java.util.ArrayList<>();
         doAnswer(inv -> {
-            CorrelationData cd = (CorrelationData) inv.getArgument(3);
+            CorrelationData cd = (CorrelationData) inv.getArgument(4);
             sends.add(cd);
             if (call.getAndIncrement() == 0) {
                 cd.setReturned(new org.springframework.amqp.core.ReturnedMessage(
@@ -258,7 +258,7 @@ class CompletionReliablePublishTest {
             }
             answerConfirm(cd, true, null);
             return null;
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
 
         assertThatThrownBy(() -> listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-a")))
@@ -300,15 +300,15 @@ class CompletionReliablePublishTest {
         // FAILED-дубликаты. Без этого охранник недостижим из живого пути.
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
         doAnswer(inv -> {
-            answerConfirm((CorrelationData) inv.getArgument(3), true, null);
+            answerConfirm((CorrelationData) inv.getArgument(4), true, null);
             return null;
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
 
         listener.onMessage(message(jobJson(UUID.randomUUID()), "corr-cid"));
 
         ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
-        org.mockito.Mockito.verify(rabbitTemplate).convertAndSend(anyString(), payload.capture(),
+        org.mockito.Mockito.verify(rabbitTemplate).convertAndSend(anyString(), anyString(), payload.capture(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
         ServiceTaskCompleteData sent = (ServiceTaskCompleteData) payload.getValue();
         assertThat(sent.getCompletionId())
@@ -323,9 +323,9 @@ class CompletionReliablePublishTest {
         // возвращаются в completion без изменений (assert на КОНКРЕТНЫЕ значения).
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
         doAnswer(inv -> {
-            answerConfirm((CorrelationData) inv.getArgument(3), true, null);
+            answerConfirm((CorrelationData) inv.getArgument(4), true, null);
             return null;
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
         UUID taskId = UUID.randomUUID();
         String body = "{\"serviceTaskId\":\"" + taskId + "\","
@@ -337,7 +337,7 @@ class CompletionReliablePublishTest {
         listener.onMessage(message(body, "corr-echo"));
 
         ArgumentCaptor<Object> payload = ArgumentCaptor.forClass(Object.class);
-        org.mockito.Mockito.verify(rabbitTemplate).convertAndSend(anyString(), payload.capture(),
+        org.mockito.Mockito.verify(rabbitTemplate).convertAndSend(anyString(), anyString(), payload.capture(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
         assertThat(payload.getValue()).isInstanceOf(ServiceTaskCompleteData.class);
         ServiceTaskCompleteData sent = (ServiceTaskCompleteData) payload.getValue();

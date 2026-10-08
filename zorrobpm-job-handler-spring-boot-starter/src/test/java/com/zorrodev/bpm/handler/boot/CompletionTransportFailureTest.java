@@ -108,7 +108,7 @@ class CompletionTransportFailureTest {
         UUID taskId = UUID.randomUUID();
         when(handler.handleJob(any())).thenReturn(List.of(outVar()));
         doThrow(new AmqpException("broker down")).when(rabbitTemplate)
-            .convertAndSend(anyString(), (Object) any(), any(org.springframework.amqp.core.MessagePostProcessor.class),
+            .convertAndSend(anyString(), anyString(), (Object) any(), any(org.springframework.amqp.core.MessagePostProcessor.class),
                 any(org.springframework.amqp.rabbit.connection.CorrelationData.class));
 
         // Фикс: исключение отправки обязано выйти наружу (NACK/retry входа).
@@ -124,7 +124,7 @@ class CompletionTransportFailureTest {
         listener.onMessage(message("not-json{{{", "corr-2", false));
 
         verify(handler, times(0)).handleJob(any());
-        verify(rabbitTemplate, times(0)).convertAndSend(anyString(), (Object) any(),
+        verify(rabbitTemplate, times(0)).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(org.springframework.amqp.rabbit.connection.CorrelationData.class));
     }
@@ -142,7 +142,7 @@ class CompletionTransportFailureTest {
         // Pre-fix: handler вызван дважды (эффект повторён). Post-fix: ровно один раз,
         // а completion отправлен дважды (второй — переотправка результата, не работы).
         verify(handler, times(1)).handleJob(any());
-        verify(rabbitTemplate, times(2)).convertAndSend(anyString(), (Object) any(),
+        verify(rabbitTemplate, times(2)).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(org.springframework.amqp.rabbit.connection.CorrelationData.class));
     }
@@ -177,7 +177,7 @@ class CompletionTransportFailureTest {
         };
         // doAnswer на 3-arg перегрузку (именно её зовёт прод-код после OBS-8).
         org.mockito.Mockito.doAnswer(captureMdc).when(rabbitTemplate)
-            .convertAndSend(anyString(), (Object) any(),
+            .convertAndSend(anyString(), anyString(), (Object) any(),
                 any(org.springframework.amqp.core.MessagePostProcessor.class),
                 any(org.springframework.amqp.rabbit.connection.CorrelationData.class));
 
@@ -191,7 +191,7 @@ class CompletionTransportFailureTest {
         ArgumentCaptor<Object> bodyCaptor = ArgumentCaptor.forClass(Object.class);
         ArgumentCaptor<org.springframework.amqp.core.MessagePostProcessor> mppCaptor =
             ArgumentCaptor.forClass(org.springframework.amqp.core.MessagePostProcessor.class);
-        verify(rabbitTemplate).convertAndSend(anyString(), bodyCaptor.capture(), mppCaptor.capture(),
+        verify(rabbitTemplate).convertAndSend(anyString(), anyString(), bodyCaptor.capture(), mppCaptor.capture(),
             any(org.springframework.amqp.rabbit.connection.CorrelationData.class));
         assertThat(bodyCaptor.getValue()).isInstanceOf(com.zorrodev.bpm.exchange.ServiceTaskCompleteData.class);
         com.zorrodev.bpm.exchange.ServiceTaskCompleteData sent =
