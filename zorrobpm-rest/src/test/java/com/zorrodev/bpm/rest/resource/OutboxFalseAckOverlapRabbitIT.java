@@ -5,18 +5,25 @@ import com.zorrodev.bpm.engine.entity.OutboxKind;
 import com.zorrodev.bpm.engine.entity.OutboxStatus;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.scheduler.OutboxBatchProcessor;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import tools.jackson.databind.ObjectMapper;
 
+import java.lang.reflect.Field;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -35,20 +42,21 @@ import static org.awaitility.Awaitility.await;
  * {@code OutboxDeliveryResultListener} делает {@code markPublished} на реально
  * недоставленной (NO_ROUTE) строке.
  *
- * <p>Драйвер наложения: K вызовов {@code processBatch()} подряд без ожиданий
- * между ними — каждый перечитывает pending и перепубликует ту же строку, пока
- * delivery-result предыдущих отправок ещё в полёте. Поллер в этом контексте
- * выключен ({@code OutboxPollerService @Profile("!test")}), лишних отправок
- * нет: число sends == числу вызовов, число returns == attempts.
+ * <p>Флейк CI (pipeline 177046 job 561523) был в свидетеле наложения:
+ * {@code attempts >= 2} — это счётчик БД с lost updates, а не факт прихода
+ * кадров. При быстром результате первый confirm успевал пометить строку
+ * published до повторной выборки, и тест падал с {@code actual 1}.</p>
+ * <p>Здесь наложение строится конструкцией: все {@code return}/{@code confirm}
+ * колбэки замораживаются обёртками вокруг реальных колбэков прод-шаблона до
+ * вызова {@link #releaseFrozenResultFrames()}. Счётчики реальных кадров
+ * ({@code returnedMessage}, {@code confirm(..., ack=true, ...)}) — свидетель
+ * наложения ({@code returns >= 2}), а обработка результатов через
+ * {@code OutboxDeliveryResultListener} идёт только после release: сначала все
+ * return-события, затем все confirm-события. Set-модель на этом стабильно
+ * краснеет (второй confirm публикует ложный ack), счётчик REL-68 подавляет
+ * каждый ack индивидуально.</p>
  *
- * <p>Про отсутствие гонки в самом вердикте: после того как attempts >= 2
- * (минимум две отправки ушли до прихода результатов — наложение реально
- * было), тест ждёт quiescence — attempts стабилен 1 с. Возврат/confirm на
- * localhost идут миллисекунды, опоздавший confirm после quiescence
- * практически исключён; наложение крутится несколькими раундами (см. ниже),
- * RED достаточно хотя бы одного потёкшего раунда.
- *
- * <p>Запуск: свой брокер + сьют {@code ci/run-rabbit-tests.sh}.
+ * <p>Запуск: свой брокер + сьют {@code ci/run-rabbit-tests.sh}.</p>
  */
 @Tag("rabbit")
 @ActiveProfiles("test")
@@ -74,10 +82,61 @@ class OutboxFalseAckOverlapRabbitIT {
 
     @Autowired private OutboxRepository outboxRepository;
     @Autowired private OutboxBatchProcessor outboxBatchProcessor;
+    @Autowired private RabbitTemplate rabbitTemplate;
+
+    private RabbitTemplate.ConfirmCallback originalConfirmCallback;
+    private RabbitTemplate.ReturnsCallback originalReturnsCallback;
+
+    /** Реальных broker-returned событий, посчитанных обёрткой-над-продом. */
+    private final AtomicInteger returnFrames = new AtomicInteger();
+    /** Реальных ack=true confirm событий, посчитанных обёрткой-над-продом. */
+    private final AtomicInteger ackedConfirmFrames = new AtomicInteger();
+
+    /**
+     * Реальные return/confirm события, пока что НЕ пропущенные в прод-колбэки.
+     * Параллельно состоянию broker API: пустые только после {@link
+     * #releaseFrozenResultFrames()}.
+     */
+    private final LinkedBlockingQueue<DelayedResultFrame> delayedResults = new LinkedBlockingQueue<>();
 
     @BeforeEach
-    void cleanOutbox() {
+    void cleanOutboxAndFreezeResults() throws Exception {
         outboxRepository.deleteAllInBatch();
+        returnFrames.set(0);
+        ackedConfirmFrames.set(0);
+        delayedResults.clear();
+
+        originalConfirmCallback = privateField("confirmCallback");
+        originalReturnsCallback = privateField("returnsCallback");
+        assertThat(originalConfirmCallback).isNotNull();
+        assertThat(originalReturnsCallback).isNotNull();
+
+        // обёртка над RabbitConfiguration#rabbitTemplate callback'ами:
+        // считать кадры, отложить пока до release.
+        // Direct field injection: Spring 4.0.4 forbids second setter calls; we are
+        // wrapping the existing prod callbacks, not adding a concurrent consumer.
+        setPrivateField("returnsCallback", (RabbitTemplate.ReturnsCallback) returned -> {
+            returnFrames.incrementAndGet();
+            delayedResults.offer(new DelayedResultFrame(true, () -> originalReturnsCallback.returnedMessage(returned)));
+        });
+        setPrivateField("confirmCallback", (RabbitTemplate.ConfirmCallback) (correlationData, ack, cause) -> {
+            if (ack) {
+                ackedConfirmFrames.incrementAndGet();
+                delayedResults.offer(new DelayedResultFrame(false, () -> originalConfirmCallback.confirm(correlationData, ack, cause)));
+            } else {
+                delayedResults.offer(new DelayedResultFrame(false, () -> originalConfirmCallback.confirm(correlationData, ack, cause)));
+            }
+        });
+    }
+
+    @AfterEach
+    void restoreRabbitTemplate() throws Exception {
+        if (originalConfirmCallback != null) {
+            setPrivateField("confirmCallback", originalConfirmCallback);
+        }
+        if (originalReturnsCallback != null) {
+            setPrivateField("returnsCallback", originalReturnsCallback);
+        }
     }
 
     @Test
@@ -86,37 +145,47 @@ class OutboxFalseAckOverlapRabbitIT {
             final int r = round;
             OutboxEntry probe = insertProbe("rel68.overlap.probe");
 
-            // Наложение: K отправок подряд, без ожиданий между ними.
+            // Детерминированное наложение: пять processBatch() ДО release
+            // return/confirm-колбэков => строка перечитывается как pending и
+            // повторно публикуется каждый раз.
             for (int i = 0; i < OVERLAP_SENDS; i++) {
                 outboxBatchProcessor.processBatch();
             }
 
-            // Все возвраты обработаны. Порог — >= 2, а не == K: пять
-            // конкурентных return-обработок делают read-modify-write
-            // (OutboxDeliveryResultListener.on читает attempts и пишет
-            // абсолютное recordFailure(id, attempts+1)) — возможны lost
-            // updates (наблюдено attempts=4 при 5 отправках). Это отдельная
-            // прод-слабость (V7-находка в отчёте WO-REL-68, вне scope), а для
-            // доказательства наложения достаточно >= 2: минимум две отправки
-            // ушли до прихода результатов, т.е. кадры реально наложились.
+            // Свидетель наложения — настоящие кадры брокера, а не attempts:
+            // attempts подвержен lost updates и на быстром CI давал actual 1.
             await().atMost(Duration.ofSeconds(30))
-                .untilAsserted(() -> assertThat(attemptsOf(probe.getId()))
-                    .as("раунд %d: возвраты обработаны, наложение было; outbox: %s",
-                        r, describeOutbox())
-                    .isGreaterThanOrEqualTo(2));
-            awaitQuiescence(probe.getId());
+                .untilAsserted(() -> {
+                    assertThat(returnFrames.get())
+                        .as("раунд %d: реальных return-кадров >=2; outbox: %s", r, describeOutbox())
+                        .isGreaterThanOrEqualTo(2);
+                    assertThat(ackedConfirmFrames.get())
+                        .as("раунд %d: реальных ack=true confirm-кадров >=2; outbox: %s", r, describeOutbox())
+                        .isGreaterThanOrEqualTo(2);
+                });
 
-            // Ядро WO-REL-68: незамаршрутизируемая строка НЕ помечена
-            // published. Других писателей published=true на этом пути нет:
-            // markPublished зовут только ack-ветка OutboxDeliveryResultListener
-            // и QuarantineNotificationGuard.dropUndeliverable — последний
-            // только для type=outbox.quarantined, а зонд — rel68.*. Значит
-            // published=true здесь = ложный ack=true без подавления.
+            // Пока confirms на паузе — fallback published не может быть true
+            // только из return-пути: якорь неподвижной строки.
             assertThat(publishedOf(probe.getId()))
-                .as("раунд %d: незамаршрутизируемая строка НЕ помечена published "
-                    + "ложным ack (attempts=%d, lastError — в дампе); outbox: %s",
-                    r, attemptsOf(probe.getId()), describeOutbox())
+                .as("раунд %d: до unfreeze published=false; outbox: %s", r, describeOutbox())
                 .isFalse();
+
+            // Release сначала проводит все return-события, потом все
+            // confirm-события — канонический порядок наложенных кадров.
+            releaseFrozenResultFrames();
+
+            // На Set-модели второй confirm публикует ложный ack и строка
+            // становится published=true: этот assert стабильно RED.
+            assertThat(publishedOf(probe.getId()))
+                .as("раунд %d: после обработки наложенных return/confirm published=false; returns=%d,acks=%d; outbox: %s",
+                    r, returnFrames.get(), ackedConfirmFrames.get(), describeOutbox())
+                .isFalse();
+            // Ядро WO-REL-68: незамаршрутизируемая строка НЕ помечена published.
+            OutboxEntry reloaded = outboxRepository.findById(probe.getId()).orElseThrow();
+            assertThat(reloaded.getStatus())
+                .as("раунд %d: после наложенных return/confirm строка всё ещё PENDING; outbox: %s",
+                    r, describeOutbox())
+                .isEqualTo(OutboxStatus.PENDING);
         }
     }
 
@@ -127,10 +196,15 @@ class OutboxFalseAckOverlapRabbitIT {
         outboxBatchProcessor.processBatch();
 
         await().atMost(Duration.ofSeconds(30))
-            .untilAsserted(() -> assertThat(attemptsOf(probe.getId()))
-                .as("одиночная отправка: возврат обработан; outbox: %s", describeOutbox())
-                .isGreaterThanOrEqualTo(1));
-        awaitQuiescence(probe.getId());
+            .untilAsserted(() -> {
+                assertThat(returnFrames.get())
+                    .as("одиночная отправка: ровно один return-кадр; outbox: %s", describeOutbox())
+                    .isEqualTo(1);
+                assertThat(ackedConfirmFrames.get())
+                    .as("одиночная отправка: ровно один ack=true confirm-кадр; outbox: %s", describeOutbox())
+                    .isEqualTo(1);
+            });
+        releaseFrozenResultFrames();
 
         // Паритетный пин одиночного полёта: незамаршрутизируемая строка ждёт
         // (published=false, PENDING, attempts=1) — так было до фикса
@@ -148,24 +222,22 @@ class OutboxFalseAckOverlapRabbitIT {
             .isEqualTo(1);
     }
 
-    /**
-     * Ждёт, пока по id не останется ничего в полёте: attempts (монотонный —
-     * только растёт, других писателей у поля на этом пути нет) стабилен 1 с.
-     * Возврат/confirm на localhost — миллисекунды. Вызывается только после
-     * того, как attempts >= 2.
-     */
-    private void awaitQuiescence(UUID id) {
-        await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofMillis(100))
-            .until(() -> {
-                int before = attemptsOf(id);
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return false;
-                }
-                return attemptsOf(id) == before;
-            });
+    private void releaseFrozenResultFrames() {
+        List<DelayedResultFrame> perKind = new ArrayList<>();
+        delayedResults.drainTo(perKind);
+
+        // Все возвраты — первыми, все подтверждающие — вторыми. Так
+        // overlapped ordering в каноническом виде return-then-confirm.
+        for (DelayedResultFrame f : perKind) {
+            if (f.isReturn()) {
+                f.run();
+            }
+        }
+        for (DelayedResultFrame f : perKind) {
+            if (!f.isReturn()) {
+                f.run();
+            }
+        }
     }
 
     private OutboxEntry insertProbe(String type) throws Exception {
@@ -185,12 +257,27 @@ class OutboxFalseAckOverlapRabbitIT {
         return outboxRepository.save(entry);
     }
 
-    private int attemptsOf(UUID id) {
-        return outboxRepository.findById(id).map(OutboxEntry::getAttempts).orElse(-1);
-    }
-
     private boolean publishedOf(UUID id) {
         return outboxRepository.findById(id).map(OutboxEntry::isPublished).orElse(false);
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T privateField(String name) throws Exception {
+        Field f = RabbitTemplate.class.getDeclaredField(name);
+        f.setAccessible(true);
+        return (T) f.get(rabbitTemplate);
+    }
+
+    private void setPrivateField(String name, Object value) throws Exception {
+        Field f = RabbitTemplate.class.getDeclaredField(name);
+        f.setAccessible(true);
+        f.set(rabbitTemplate, value);
+    }
+
+    record DelayedResultFrame(boolean isReturn, Runnable runnable) {
+        void run() {
+            runnable.run();
+        }
     }
 
     private String describeOutbox() {
