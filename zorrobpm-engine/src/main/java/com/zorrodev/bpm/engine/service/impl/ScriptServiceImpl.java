@@ -168,12 +168,17 @@ public class ScriptServiceImpl implements ScriptService {
     @Override
     public AdmissionLease admitOutsideTx() {
         if (TransactionSynchronizationManager.isActualTransactionActive()) {
-            // Fail-fast: ожидание внутри транзакции — именно тот дефект, что
-            // закрывает WO. Тихий acquire здесь удерживал бы соединение —
-            // лучше громко упасть и чинить вызывающего, чем молча держать.
-            throw new IllegalStateException(
-                "admitOutsideTx must be called OUTSIDE a transaction (holding a lease "
-                + "inside a transaction keeps the DB connection for the whole wait)");
+            // WO-ENG-35: деградация, а не fail-fast. Легитимный путь запроса с
+            // Idempotency-Key идёт через IdempotencyFilter, который выполняет
+            // цепочку (включая контроллер) внутри своей транзакции, — жёсткий
+            // отказ превращал бы его в 500 (поймано полным clean verify:
+            // IdempotencyFilterTest 4× «expected 201 but was 500»). Ожидание
+            // здесь — то же ограниченное окно, считается как in-tx и видно
+            // оператору; вынос гейта до фильтра — отдельная эскалация.
+            bpmMetrics.scriptAdmissionInTx();
+            log.warn("Script admission inside caller transaction "
+                + "(e.g. idempotent request via IdempotencyFilter): "
+                + "bounded wait holds the transaction, counted in zbpm.script.admission.in_tx");
         }
         if (reservationHolder.get() != null) {
             // Реентрантный вход того же потока (гейтованный вход зовёт
