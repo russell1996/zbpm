@@ -37,8 +37,21 @@ import static org.awaitility.Awaitility.await;
  * {@code zbpm.domain.event.unroutable{type="outbox.quarantined"}}) и НЕ
  * карантинится рекурсивно — счётчик карантина стабилен.
  *
- * <p>На master КРАСНЫЙ (карантин растёт каскадом). Запуск: свой брокер +
- * точечный failsafe (см. отчёт WO-REL-66).
+ * <p><b>WO-REL-66-fix (детерминированность; флейк CI 176897/job 560691).</b>
+ * Прежняя версия гоняла {@code processBatch()} в цикле и перепубликовывала одну
+ * и ту же строку, пока её delivery-result был в полёте. Подавление ложного
+ * {@code ack=true} после unroutable-возврата живёт в
+ * {@code RabbitConfiguration} в множестве по одному лишь outbox-id: два
+ * наложившихся publish'а одного id схлопывают add, и один confirm уходит без
+ * подавления → незамаршрутизируемая строка помечается published и выпадает из
+ * обработки (дроп/метрика не наступают). Это прод-слабость отправки
+ * (эскалирована CTO, V10) — тест обязан доказывать разрыв петли, а не гонку
+ * подавления, поэтому теперь каждая строка публикуется РОВНО ОДИН раз:
+ * {@code max-retries=1} делает одну неудачу терминальной, а недоставленные
+ * результаты ожидаются Awaitility по фактическому состоянию, без sleep-подгонки.
+ *
+ * <p>Запуск: свой брокер + сьют {@code ci/run-rabbit-tests.sh} (см. отчёт
+ * WO-REL-66-fix-quarantine-it-flake).
  */
 @Tag("rabbit")
 @ActiveProfiles("test")
@@ -49,8 +62,10 @@ import static org.awaitility.Awaitility.await;
     "spring.rabbitmq.password=${RABBITMQ_PASSWORD:zorrodev}",
     "spring.rabbitmq.publisher-confirm-type=correlated",
     "spring.rabbitmq.publisher-returns=true",
-    // Быстрее к терминалу: 3 неудачи вместо 5 (механика та же).
-    "zorrobpm.outbox.max-retries=3"
+    // WO-REL-66-fix: 1 неудача = терминал. Механика гарда та же (терминальный
+    // переход после failed delivery), но каждая строка публикуется один раз —
+    // переплетение confirm/return одного id невозможно по построению.
+    "zorrobpm.outbox.max-retries=1"
 })
 class QuarantineLoopBreakIT {
 
@@ -81,55 +96,105 @@ class QuarantineLoopBreakIT {
         seed.setPublished(false);
         outboxRepository.save(seed);
 
-        // Дожимаем seed до карантина (3 неудачи → FAILED + emit outbox.quarantined).
-        driveUntilQuarantined();
+        // Публикуем seed РОВНО ОДИН раз: единственная pending-строка — seed.
+        // Первый же NO_ROUTE терминален (max-retries=1): запись уходит в
+        // карантин и эмитит уведомление outbox.quarantined.
+        outboxBatchProcessor.processBatch();
+        await().atMost(Duration.ofSeconds(30))
+            .untilAsserted(() -> assertThat(statusOf(seed.getId()))
+                .as("seed докарантинен после первой же неудачи (max-retries=1)")
+                .isEqualTo(OutboxStatus.FAILED));
         long quarantinedAfterSeed = outboxRepository.countQuarantined();
         assertThat(quarantinedAfterSeed)
             .as("seed докарантинен (ровно одна запись)")
             .isEqualTo(1);
 
-        // Гоняем поллер дальше: уведомление о карантине тоже незамаршрутизируемо.
-        // На master оно само уходит в карантин и эмитит следующее (каскад).
-        for (int i = 0; i < 10; i++) {
-            outboxBatchProcessor.processBatch();
-            Thread.sleep(1000);
-        }
+        // Уведомление о карантине — теперь единственная pending-строка.
+        // Публикуем и её РОВНО ОДИН раз (см. javadoc о гонке подавления ack).
+        OutboxEntry notification = findQuarantineNotification();
+        assertThat(notification)
+            .as("карантин эмитил уведомление outbox.quarantined")
+            .isNotNull();
+        assertThat(notification.getStatus())
+            .as("уведомление ждёт публикации")
+            .isEqualTo(OutboxStatus.PENDING);
+        outboxBatchProcessor.processBatch();
 
-        // WO-REL-66: каскада нет — счётчик карантина стабилен.
+        // NO_ROUTE на уведомлении → guard дропает его с учётом: терминальный
+        // markPublished + метрика, БЕЗ нового карантина и нового события.
+        await().atMost(Duration.ofSeconds(30))
+            .untilAsserted(() -> {
+                assertThat(unroutableCount())
+                    .as("дроп незамаршрутизируемого уведомления учтён метрикой; "
+                        + "строки outbox: %s", describeOutbox())
+                    .isGreaterThanOrEqualTo(1.0);
+                assertThat(publishedOf(notification.getId()))
+                    .as("уведомление помечено published (терминал, без ре-эмита)")
+                    .isTrue();
+            });
+
+        // Каскада нет — счётчик карантина не изменился.
         assertThat(outboxRepository.countQuarantined())
             .as("карантин не растёт каскадом (петля разорвана)")
             .isEqualTo(quarantinedAfterSeed);
-
-        // Учёт дропа: метрика незамаршрутизируемых уведомлений выросла.
-        double dropped = meterRegistry
-            .find("zbpm.domain.event.unroutable").tag("type", "outbox.quarantined")
-            .counter() == null ? 0.0 : meterRegistry
-            .find("zbpm.domain.event.unroutable").tag("type", "outbox.quarantined")
-            .counter().count();
-        assertThat(dropped)
-            .as("дроп незамаршрутизируемого уведомления учтён метрикой")
-            .isGreaterThanOrEqualTo(1.0);
     }
 
-    /** Крутит processBatch, пока хотя бы одна запись не уйдёт в карантин. */
-    private void driveUntilQuarantined() throws Exception {
-        long deadline = System.currentTimeMillis() + 30_000;
-        while (System.currentTimeMillis() < deadline) {
-            outboxBatchProcessor.processBatch();
-            if (quarantinedCount() > 0) {
-                return;
-            }
-            Thread.sleep(400);
-        }
-        await().atMost(Duration.ofSeconds(10))
-            .untilAsserted(() -> assertThat(quarantinedCount())
-                .as("seed докарантинен")
-                .isGreaterThanOrEqualTo(1L));
+    private double unroutableCount() {
+        io.micrometer.core.instrument.Counter counter = meterRegistry
+            .find("zbpm.domain.event.unroutable").tag("type", "outbox.quarantined")
+            .counter();
+        return counter == null ? 0.0 : counter.count();
     }
 
-    private long quarantinedCount() {
+    private OutboxStatus statusOf(UUID id) {
+        return outboxRepository.findById(id).map(OutboxEntry::getStatus).orElse(null);
+    }
+
+    private boolean publishedOf(UUID id) {
+        return outboxRepository.findById(id).map(OutboxEntry::isPublished).orElse(false);
+    }
+
+    private OutboxEntry findQuarantineNotification() {
         return outboxRepository.findAll().stream()
-            .filter(e -> e.getStatus() == OutboxStatus.FAILED)
-            .count();
+            .filter(e -> {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> envelope =
+                        objectMapper.readValue(e.getPayload(), Map.class);
+                    return "outbox.quarantined".equals(envelope.get("type"));
+                } catch (Exception ex) {
+                    return false;
+                }
+            })
+            .findFirst()
+            .orElse(null);
+    }
+
+    /**
+     * Дословный снимок outbox для диагностики расхождений: по нему видно,
+     * какая строка заморожена/опубликована без учёта и с каким lastError
+     * (пригодилось при разборе флейка CI 176897/job 560691).
+     */
+    private String describeOutbox() {
+        StringBuilder sb = new StringBuilder("[");
+        for (OutboxEntry e : outboxRepository.findAll()) {
+            String type;
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> envelope = objectMapper.readValue(e.getPayload(), Map.class);
+                type = String.valueOf(envelope.get("type"));
+            } catch (Exception ex) {
+                type = "<unparseable>";
+            }
+            sb.append("{id=").append(e.getId())
+                .append(",kind=").append(e.getKind())
+                .append(",status=").append(e.getStatus())
+                .append(",published=").append(e.isPublished())
+                .append(",attempts=").append(e.getAttempts())
+                .append(",type=").append(type)
+                .append(",lastError=").append(e.getLastError())
+                .append("};");
+        }
+        return sb.append("]").toString();
     }
 }
