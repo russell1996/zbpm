@@ -57,6 +57,15 @@ default:
 # governance-only commits too.
 # ---------------------------------------------------------------------------
 .rules-code-changes: &rules-code-changes
+  # WO-REL-67: the nightly schedule (№56) must run ONLY backup:pg, test:chaos,
+  # test:e2e-login (incident 2026-10-08: the schedule ran the WHOLE pipeline —
+  # build, both test suites, all CVE scans — for a backup that takes 12 s).
+  # Rules match top-down, first match wins: a schedule pipeline hits this
+  # `when: never` before any branch/MR rule below, so these jobs are absent
+  # from scheduled pipelines entirely. Push/MR pipelines never have
+  # $CI_PIPELINE_SOURCE == "schedule", so their composition is unchanged.
+  - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    when: never
   - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     changes: &code-changes-paths
       - "zorrobpm-contract/**/*"
@@ -108,6 +117,9 @@ test:gate:
     - bash ci/test-gate-selftest.sh HEAD
     - bash ci/test-gate.sh origin/master HEAD
   rules:
+    # WO-REL-67: not on schedule (nightly runs backup:pg + chaos + e2e only).
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
 
@@ -460,6 +472,17 @@ build:
     # `docker image ls` accepts at most one repository argument — list each separately
     - docker image ls "$IMAGE_BACKEND"
     - docker image ls "$IMAGE_FRONTEND"
+    # WO-REL-67: build-order journal. CreatedAt ties on cache hits make the
+    # retention recency-sort random — incident 2026-10-08: the nightly run
+    # untagged built-not-yet-deployed 5f2d85a6. The journal (oldest first,
+    # trimmed to 30) is the source of truth; retain-images.sh never removes
+    # tags journaled after .current_tag. Written BEFORE retention runs below,
+    # so this build's own tag is already journaled when retention reads it.
+    - mkdir -p "$DEPLOY_DIR"
+    - echo "$IMAGE_TAG" >> "$DEPLOY_DIR/.image-build-order-$IMAGE_BACKEND"
+    - echo "$IMAGE_TAG" >> "$DEPLOY_DIR/.image-build-order-$IMAGE_FRONTEND"
+    - tail -n 30 "$DEPLOY_DIR/.image-build-order-$IMAGE_BACKEND" > "$DEPLOY_DIR/.image-build-order-$IMAGE_BACKEND.tmp" && mv "$DEPLOY_DIR/.image-build-order-$IMAGE_BACKEND.tmp" "$DEPLOY_DIR/.image-build-order-$IMAGE_BACKEND"
+    - tail -n 30 "$DEPLOY_DIR/.image-build-order-$IMAGE_FRONTEND" > "$DEPLOY_DIR/.image-build-order-$IMAGE_FRONTEND.tmp" && mv "$DEPLOY_DIR/.image-build-order-$IMAGE_FRONTEND.tmp" "$DEPLOY_DIR/.image-build-order-$IMAGE_FRONTEND"
     # WO-OPS-5: SHA-tagged images accumulate one per push — `docker image prune -f` in deploy only
     # removes dangling images, so prune here per repository, keeping RETAIN_IMAGES_KEEP newest
     # plus the tags in $DEPLOY_DIR/.current_tag / .previous_tag (rollback must stay possible).
@@ -473,6 +496,9 @@ build:
     # WO-OPS-2: save build manifest for traceability
     - echo "backend=$IMAGE_BACKEND:$IMAGE_TAG frontend=$IMAGE_FRONTEND:$IMAGE_TAG built=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > build-manifest.txt
   rules:
+    # WO-REL-67: not on schedule (nightly runs backup:pg + chaos + e2e only).
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes: *code-changes-paths
     - if: '$CI_COMMIT_BRANCH'
@@ -556,7 +582,11 @@ deploy:
         test -e "$src" || { echo "deploy copy source missing in checkout: $src — refusing to wipe $DEPLOY_DIR"; exit 1; }
       done
     # WO-REL-65 END pre-wipe-sources
-    - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' ! -name backups -exec sudo rm -rf {} +
+    # WO-REL-67: `.image-build-order-*` (build-order journals for retention)
+    # survive the wipe like .current_tag/.previous_tag/backups — without the
+    # journal the next retention falls back to CreatedAt-sort and the
+    # built-not-deployed invariant is lost again (incident 2026-10-08).
+    - find "$DEPLOY_DIR" -mindepth 1 -maxdepth 1 ! -name .env ! -name '.current_tag' ! -name '.previous_tag' ! -name backups ! -name '.image-build-order-*' -exec sudo rm -rf {} +
     # WO-OPS-4b O-03: copy ONLY the runtime bundle — never the full checkout
     # (.git/governance/docs stay on the runner). The set below is exactly what
     # `docker compose -f docker-compose.yml -f docker-compose.observability.yml up`
@@ -629,6 +659,12 @@ deploy:
     name: production
     url: https://test-zbpm.telecom.kz
   rules:
+    # WO-REL-67: never on schedule — nightly runs backup:pg + chaos + e2e only.
+    # (Manual anyway, but an unplayed manual job still shows up in the scheduled
+    # pipeline; the criterion is that the schedule pipeline contains ONLY
+    # backup:pg, test:chaos, test:e2e-login.)
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes: *code-changes-paths
       when: manual
@@ -677,6 +713,9 @@ rollback:
     name: production
     url: https://test-zbpm.telecom.kz
   rules:
+    # WO-REL-67: never on schedule (same reasoning as deploy above).
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      when: never
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       when: manual
       allow_failure: true
@@ -707,11 +746,26 @@ backup:pg:
   tags: [zbpm]
   needs: []
   resource_group: zorrobpm-production
+  # WO-REL-67: GitLab auto-cancel ("auto-cancel redundant pipelines") never
+  # touches a job with `interruptible: false` — neither a started one (mode
+  # `interruptible` cancels only interruptible jobs; mode `conservative`, the
+  # default, cancels the old pipeline only if NO non-interruptible job has
+  # started — docs: workflow:auto_cancel:on_new_commit). Incident 2026-10-07:
+  # pipeline 176380 was auto-canceled mid-schedule after pushes 176385/176386
+  # and the night 06→07.10 has no dump. The backup must survive exactly that.
+  interruptible: false
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
   script:
     - bash ci/disk-space-check.sh
     - bash ci/pg-backup.sh
+    # WO-REL-67: freshness guard — fails visibly if the newest dump is older
+    # than 26 h (nightly cadence 24 h + 2 h runner-queue slack). Runs AFTER the
+    # backup above, so it proves this very job's artifact end-to-end (a silent
+    # write failure still fails the job instead of a green "backup ran").
+    # A job that never ran cannot guard itself — that half is covered by
+    # `interruptible: false` above, not by this step.
+    - bash ci/check-backup-freshness.sh
 
 # ---------------------------------------------------------------------------
 # GitHub fork mirror — auto, on every push to master. Publishes a code-only
