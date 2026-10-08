@@ -24,7 +24,7 @@ class RetentionJobTest {
     @BeforeEach
     void setUp() {
         config = new RetentionConfig();
-        job = new RetentionJob(config, batchProcessor, bpmMetrics);
+        job = new RetentionJob(config, batchProcessor, bpmMetrics, new com.zorrodev.bpm.engine.event.SseLiveCursorTracker());
     }
 
     @Test

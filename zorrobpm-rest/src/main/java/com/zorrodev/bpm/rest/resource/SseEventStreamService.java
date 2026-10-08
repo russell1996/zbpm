@@ -78,6 +78,10 @@ public class SseEventStreamService implements SmartLifecycle {
     private final BpmMetrics bpmMetrics;
     // WO-PERF-1 N4: single thread-safe Jackson 3 ObjectMapper instance (replaces per-message new)
     private final tools.jackson.databind.ObjectMapper objectMapper;
+    // WO-AUDIT-7: транзитный пин живых курсоров для events-retention
+    // (nullable — тот же unit-scope shape, что SEC-67/мок-коллабораторы выше:
+    // хуки молчат без трекера, поведение без него — как раньше).
+    private final com.zorrodev.bpm.engine.event.SseLiveCursorTracker cursorTracker;
 
     @Autowired
     public SseEventStreamService(EventQueryService eventQueryService,
@@ -86,7 +90,8 @@ public class SseEventStreamService implements SmartLifecycle {
                                     tools.jackson.databind.ObjectMapper objectMapper,
                                     UiUserLookupService uiUserLookupService,
                                     ApiKeyService apiKeyService,
-                                    @Lazy @Autowired(required = false) BpmMetrics bpmMetrics) {
+                                    @Lazy @Autowired(required = false) BpmMetrics bpmMetrics,
+                                    com.zorrodev.bpm.engine.event.SseLiveCursorTracker cursorTracker) {
         this.eventQueryService = eventQueryService;
         this.eventAuthzResolver = eventAuthzResolver;
         this.rabbitAdmin = rabbitAdmin;
@@ -94,6 +99,7 @@ public class SseEventStreamService implements SmartLifecycle {
         this.uiUserLookupService = uiUserLookupService;
         this.apiKeyService = apiKeyService;
         this.bpmMetrics = bpmMetrics;
+        this.cursorTracker = cursorTracker;
     }
 
     /**
@@ -107,7 +113,7 @@ public class SseEventStreamService implements SmartLifecycle {
                                     UiUserLookupService uiUserLookupService,
                                     ApiKeyService apiKeyService) {
         this(eventQueryService, eventAuthzResolver, rabbitAdmin, objectMapper,
-            uiUserLookupService, apiKeyService, null);
+            uiUserLookupService, apiKeyService, null, null);
     }
 
     /** Connected SSE clients: emitterId → client info */
@@ -466,6 +472,13 @@ public class SseEventStreamService implements SmartLifecycle {
      */
     private void removeClientState(String clientId) {
         SseClientInfo removed = clients.remove(clientId);
+        // WO-AUDIT-7: сессия закрыта любым путём — пин снимается (транзитный
+        // пин не залипает: emitter-timeout/F-13 закрывают протухшие сессии
+        // принудительно; худший эффект пропущенного снятия — задержка
+        // удаления, никогда — удаление чужого).
+        if (cursorTracker != null) {
+            cursorTracker.untrack(clientId);
+        }
         if (removed != null) {
             removed.closeWriter();
         }
@@ -565,6 +578,25 @@ public class SseEventStreamService implements SmartLifecycle {
             return;
         }
         client.drainToLive(catchupBoundary);
+        // WO-AUDIT-7: catchup прочитан до границы — пин отпускает всё, что
+        // клиент уже получил (advance — max-merge: граница ниже текущего
+        // курсора — no-op).
+        if (cursorTracker != null) {
+            cursorTracker.advance(clientId, catchupBoundary);
+        }
+    }
+
+    /**
+     * WO-AUDIT-7: зарегистрировать курсор catchup'а клиента (зовёт
+     * контроллер ДО чтения catchup — окно register→read закрыто: проход
+     * retention, стартовавший между регистрацией и чтением, увидит пин).
+     * Без заголовка (since &lt;= 0) — не трекается: клиенту нужны только
+     * новые строки, старые ему не нужны.
+     */
+    public void trackCatchupCursor(String clientId, long since) {
+        if (cursorTracker != null) {
+            cursorTracker.track(clientId, since);
+        }
     }
 
     /**
@@ -1432,6 +1464,13 @@ public class SseEventStreamService implements SmartLifecycle {
             // решение под локом клиента, одним шагом — окно потери закрыто).
             // AuthZ-гейты выше (credential/rights) уже пройдены.
             client.enqueueLive(buildLiveEvent(cursor, eventType, envelope), envelope, cursor);
+            // WO-AUDIT-7: клиент увидел позицию (очередь pump'а/BUFFERING —
+            // drain решит дубль/новое по границе catchup'а): пин двигается
+            // вперёд max-merge'ем. Строка свежая (только прибыла live), cutoff
+            // её всё равно держит — раннее продвижение безопасно.
+            if (cursorTracker != null && cursor > 0) {
+                cursorTracker.advance(client.clientId, cursor);
+            }
     }
 
     /**
