@@ -222,11 +222,16 @@ class ScopeJoinCleanupWiringTest {
         when(scope.getBpmnElementId()).thenReturn("tx");
         when(dbService.getActivity(eq(scopeActivityId))).thenReturn(scope);
         when(dbService.getCompletedActivities(eq(pi))).thenReturn(List.of());
+        when(dbService.getActiveActivities(eq(pi))).thenReturn(List.of());
+        // WO-C8-39: scope-фильтры — passthrough (моки без цепочки токенов;
+        // пустые списки проходят как есть, verify ниже на вызове чистки).
+        when(elementSupport.filterActivitiesInScope(eq(pi), any(), eq(scopeActivityId)))
+            .thenAnswer(inv -> inv.getArgument(1));
         when(scopeContainment.inclusiveGatewayIdsInsideScope(eq(bpmn), eq("tx")))
             .thenReturn(List.of("joinIn"));
 
         CancelEndHandler handler = new CancelEndHandler(dbService, flowNavigator,
-            activityService, compensationThrowHandler, scopeContainment);
+            activityService, compensationThrowHandler, elementSupport, scopeContainment);
         handler.handle(new ExecutionCtx(pi, tokenId, mock(TokenExecutor.class), null), bpmn, el);
 
         verify(dbService).cancelActivity(eq(scopeActivityId));

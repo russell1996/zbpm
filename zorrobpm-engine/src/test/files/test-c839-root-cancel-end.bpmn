@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c839_root" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c839-root-cancel" name="test-c839-root-cancel" isExecutable="true">
+    <!-- WO-C8-39: cancel-конец на КОРНЕВОМ уровне (вне любой транзакции).
+         Прежнее поведение сохраняется: тихое завершение ветви без отмены,
+         без компенсации, без инцидента. По BPMN 2.0 такой конец невалиден
+         (cancel end — только внутри transaction), но движок его принимает
+         и завершает ветвь — фиксируем как есть, НЕ чиним здесь. -->
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="taskR" />
+    <bpmn:userTask id="taskR" name="taskR">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="taskR" targetRef="rootCancel" />
+    <bpmn:endEvent id="rootCancel" name="rootCancel">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:cancelEventDefinition id="cadR" />
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

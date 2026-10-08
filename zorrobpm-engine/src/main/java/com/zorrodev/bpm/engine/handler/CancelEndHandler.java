@@ -31,6 +31,13 @@ public class CancelEndHandler implements ElementHandler, TypedElementHandler {
     private final FlowNavigator flowNavigator;
     private final ActivityService activityService;
     private final CompensationThrowHandler compensationThrowHandler;
+    private final ElementSupport elementSupport;
+    /**
+     * WO-C8-39: цепочка scope для cancel-конца на форк-токене (у него нет
+     * {@code scopeActivityId}) + scope-фильтры компенсации/отмены (прецедент —
+     * {@code ElementSupport.filterActivitiesInScope} в terminate-пути и
+     * compensation-throw). Цикла нет: ElementSupport не зависит от хендлеров.
+     */
     /**
      * WO-C8-38 (C38-2): containment для чистки arrived-строк join'ов ВНУТРИ
      * отменяемой транзакции (та же транзакция, без резюма — воскрешать join
@@ -54,26 +61,42 @@ public class CancelEndHandler implements ElementHandler, TypedElementHandler {
         dbService.completeActivity(activityId);
 
         Token endToken = dbService.getToken(tokenId);
-        if (endToken == null || endToken.getScopeActivityId() == null) {
+        // WO-C8-39: cancel-конец на форк-ветви внутри транзакции несёт токен БЕЗ
+        // scopeActivityId (форк: ParallelGatewayHandler.createToken(tokenId)) —
+        // смотреть только свой токен здесь нельзя ("outside a transaction scope",
+        // тихое no-op по отмене). Транзакция — ближайший scope-контейнер по
+        // цепочке scope (тот же обход, что ElementSupport.enclosingScopeChain);
+        // линейный и ad-hoc случаи дают тот же контейнер, что раньше.
+        UUID scopeActivityId = resolveTransactionScope(processInstanceId, activityId, endToken);
+        if (scopeActivityId == null) {
             log.info("{}/{}: Cancel end {} outside a transaction scope, ending branch", processInstanceId, tokenId, bpmnElement.getId());
             activityService.finishBranch(processInstanceId, tokenId, bpmn);
             return;
         }
 
-        UUID scopeActivityId = endToken.getScopeActivityId();
         Activity scope = dbService.getActivity(scopeActivityId);
         BpmnElementModel transaction = bpmn.getElement(scope.getBpmnElementId());
-        UUID parentToken = endToken.getParentId();
+        // Продолжение cancel-границы идёт ВНЕ отменённого scope: на родителе
+        // scope-токена (в линейном случае — ровно endToken.getParentId(), как
+        // раньше; на форк-ветви — корень, а не scope-токен отменённой транзакции).
+        UUID parentToken = parentOfScopeToken(endToken, scopeActivityId);
         log.info("{}/{}: Cancel end {} cancelling transaction {}", processInstanceId, tokenId, bpmnElement.getId(), transaction.getId());
 
-        // compensate the transaction's completed activities (those carried by this scope token)
-        List<Activity> scopeCompleted = dbService.getCompletedActivities(processInstanceId).stream()
-            .filter(a -> tokenId.equals(a.getToken()))
-            .toList();
+        // compensate the transaction scope's completed activities (BPMN 2.0: гасятся
+        // ВСЕ активные исполнения scope, затем компенсация в scope транзакции —
+        // CIB seven transaction-subprocess; фильтр — тот же scope-confined, что
+        // terminate-путь и compensation-throw, а не равенство токена: иначе
+        // соседи по форку не компенсируются и не отменяются).
+        List<Activity> scopeCompleted = elementSupport.filterActivitiesInScope(
+            processInstanceId, dbService.getCompletedActivities(processInstanceId), scopeActivityId);
         compensationThrowHandler.runCompensation(processInstanceId, tokenId, bpmn, scopeCompleted, executor);
 
         // cancel the transaction scope, then continue from the (interrupting) cancel boundary
-        dbService.cancelActiveActivitiesForToken(tokenId);
+        List<Activity> inScope = elementSupport.filterActivitiesInScope(
+            processInstanceId, dbService.getActiveActivities(processInstanceId), scopeActivityId);
+        for (Activity active : inScope) {
+            dbService.cancelActivity(active.getId());
+        }
         dbService.cancelActivity(scopeActivityId);
         // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемой транзакции.
         dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
@@ -85,6 +108,44 @@ public class CancelEndHandler implements ElementHandler, TypedElementHandler {
         } else {
             log.warn("{}/{}: Transaction {} cancelled but has no cancel boundary", processInstanceId, tokenId, transaction.getId());
         }
+    }
+
+    /**
+     * WO-C8-39: ближайший scope-контейнер cancel-конца по цепочке scope, или null
+     * вне любого scope (корневой токен — прежнее тихое завершение ветви). Свой
+     * токен со scope — как раньше; форк-токен без scope — innermost цепочки
+     * (цепочка outermost-first, берём последний). Контейнер НЕ проверяется на
+     * «транзакционность»: парсер маппит {@code <transaction>} в SUB_PROCESS,
+     * различие стёрто, а ad-hoc уже принимается как transaction (прецедент C8-38).
+     */
+    private UUID resolveTransactionScope(UUID processInstanceId, UUID cancelActivityId, Token endToken) {
+        if (endToken != null && endToken.getScopeActivityId() != null) {
+            return endToken.getScopeActivityId();
+        }
+        List<UUID> chain = elementSupport.enclosingScopeChain(processInstanceId, cancelActivityId);
+        if (chain.isEmpty()) {
+            return null;
+        }
+        return chain.get(chain.size() - 1);
+    }
+
+    /**
+     * WO-C8-39: родитель scope-токена отменённой транзакции — на нём продолжается
+     * cancel-граница (вне отменённого scope). Scope-токен — первый токен вверх по
+     * цепочке, несущий {@code scopeActivityId}; в линейном случае это сам
+     * endToken, и результат совпадает со старым {@code endToken.getParentId()}.
+     */
+    private UUID parentOfScopeToken(Token endToken, UUID scopeActivityId) {
+        Token cursor = endToken;
+        while (cursor != null) {
+            if (scopeActivityId.equals(cursor.getScopeActivityId())) {
+                return cursor.getParentId();
+            }
+            cursor = cursor.getParentId() == null
+                ? null
+                : dbService.findToken(cursor.getParentId()).orElse(null);
+        }
+        return endToken == null ? null : endToken.getParentId();
     }
 
     /** Finds the cancel boundary attached to {@code hostId} (a transaction), or null if none. */

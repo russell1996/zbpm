@@ -39,7 +39,7 @@ class CompensationCancelServiceTaskHandlerTest {
     void cancelEndHandler_elementTypeAndHandler() {
         CompensationThrowHandler compHandler = new CompensationThrowHandler(dbService, flowNavigator, elementSupport);
         CancelEndHandler handler = new CancelEndHandler(dbService, flowNavigator, activityService, compHandler,
-            new ScopeContainment());
+            elementSupport, new ScopeContainment());
         assertEquals(BpmnElementType.CANCEL_END_EVENT, handler.elementType());
         assertSame(handler, handler.handler());
     }
