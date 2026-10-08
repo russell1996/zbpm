@@ -178,14 +178,20 @@ class ScheduleSplitGuardTest {
             .containsPattern(
                 Pattern.compile("(?m)^\\s*auto_cancel:\\s*$[\\s\\S]*?^\\s*on_new_commit:\\s*conservative\\s*$"));
 
-        // Первая workflow-запись — scoping для schedule (rules match top-down).
+        // Первая workflow-запись — scoping для schedule (rules match top-down;
+        // на schedule $CI_COMMIT_BRANCH ТОЖЕ установлена, поэтому нижележащая
+        // веточная запись перекроет schedule-исключение, если оно не первое —
+        // WO-REL-69 verifier: перестановка двух записей обязана ронять тест).
         List<String> entries = workflowRuleEntries(workflow);
         assertThat(entries)
-            .as("workflow:rules must carry a schedule entry")
-            .anySatisfy(e -> assertThat(e).contains("$CI_PIPELINE_SOURCE == \"schedule\""));
-        String scheduleEntry = entries.stream()
-            .filter(e -> e.contains("$CI_PIPELINE_SOURCE == \"schedule\""))
-            .findFirst().orElseThrow();
+            .as("workflow:rules must not be empty")
+            .isNotEmpty();
+        String scheduleEntry = entries.get(0);
+        assertThat(scheduleEntry)
+            .as("FIRST workflow:rules entry must be the schedule auto-cancel "
+                + "exemption (top-down match; a branch entry above it would also "
+                + "match schedules, which run on a branch)")
+            .contains("$CI_PIPELINE_SOURCE == \"schedule\"");
         assertThat(scheduleEntry)
             .as("schedule entry must disable auto-cancel (pending backup:pg "
                 + "survives pushes — incident 2026-10-07)")
