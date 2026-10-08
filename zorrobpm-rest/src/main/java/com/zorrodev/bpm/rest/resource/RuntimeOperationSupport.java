@@ -145,6 +145,9 @@ public class RuntimeOperationSupport {
     public com.zorrodev.bpm.contract.dto.IdDTO toDTO(com.zorrodev.bpm.engine.dto.IdDTO idDTO) {
         com.zorrodev.bpm.contract.dto.IdDTO result = new com.zorrodev.bpm.contract.dto.IdDTO();
         result.setId(idDTO.getId());
+        // WO-AUDIT-8 (A-NEW4-15): проброс флага повтора; null = отсутствует
+        // (NON_NULL — старый клиент видит байтово тот же ответ).
+        result.setAlreadyCompleted(idDTO.getAlreadyCompleted());
         return result;
     }
 }

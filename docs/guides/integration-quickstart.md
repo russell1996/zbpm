@@ -101,6 +101,18 @@ completion со статусом `FAILED`, а ретраи/инцидент ве
 > нет. Полная процедура миграции — `docs/runbooks/rabbitmq-legacy-queue-dlx-migration.md`:
 > путь A (policy-DLX без пересоздания очереди, DLQ работает сразу, без простоя) и путь B
 > (drain → delete → redeclare + рестарт приложения — нативная схема, метрика в 0).
+>
+> WO-AUDIT-8 (NEW2-15): то же правило для очереди завершений
+> `zorrobpm.complete-service-task` → DLQ `zorrobpm.complete-service-task.dlq`
+> (direct exchange `zorrobpm.complete-service-task.dlx`). Сценарий: sustained
+> FEEL-перегрузка — временная перегрузка переигрывается контейнерным retry
+> (`ScriptOverloadException` наружу без обёртки, в DLQ НЕ уходит), а completion,
+> от которого сдались (reject с `requeue=false`), паркуется в DLQ телом целиком,
+> а не теряется и не крутится вечно. Возврат вручную: Management UI → сообщение
+> из DLQ → Publish to `zorrobpm.complete-service-task` как есть (тело вербатим);
+> повторная обработка идемпотентна (дедуп `completionId` C8-36 + replay-guard
+> со счётчиком `zbpm.completion.replay{kind}`). Живой прогон —
+> `CompleteOverloadDlqRabbitIT` (`@Tag("rabbit")`).
 
 ### Настройки воркерского стартера (WO-C8-36)
 

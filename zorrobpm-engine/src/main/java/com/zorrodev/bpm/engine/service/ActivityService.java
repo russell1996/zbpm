@@ -11,14 +11,19 @@ public interface ActivityService {
 
     void execute(UUID processInstanceId, UUID tokenId, String bpmnElementId);
 
-    void completeServiceTask(UUID activityId, List<ProcessVariable> variables);
+    /**
+     * WO-AUDIT-8 (A-NEW4-15): TRUE — вызов ничего не изменил (поглощён
+     * идемпотентным guard'ом: повторный complete), FALSE — обычное завершение.
+     */
+    boolean completeServiceTask(UUID activityId, List<ProcessVariable> variables);
 
     /**
      * WO-C8-36 (CR-01): тот же complete с идентификатором вызова
      * ({@code dispatchPhase}/{@code dispatchIndex}, оба nullable;
-     * null-фаза = legacy без проверки).
+     * null-фаза = legacy без проверки). Возврат — как у плоской версии
+     * (WO-AUDIT-8: TRUE = поглощённый повтор).
      */
-    void completeServiceTask(UUID activityId, List<ProcessVariable> variables, String dispatchPhase, Integer dispatchIndex);
+    boolean completeServiceTask(UUID activityId, List<ProcessVariable> variables, String dispatchPhase, Integer dispatchIndex);
 
     /**
      * WO-C8-33: completes a job-worker ad-hoc scope job with its structured result
@@ -50,7 +55,11 @@ public interface ActivityService {
     void failServiceTask(UUID serviceTaskId, String errorMessage, Integer retries, String dispatchPhase,
         Integer dispatchIndex, String completionId);
 
-    void completeUserTask(UUID activityId, List<ProcessVariable> variables);
+    /**
+     * WO-AUDIT-8 (A-NEW4-15): TRUE — поглощённый повтор (guard), FALSE — обычное
+     * завершение. Статус-коды НЕ меняются.
+     */
+    boolean completeUserTask(UUID activityId, List<ProcessVariable> variables);
 
     /**
      * WO-C8-28: phase-aware assignment (assign-API) — parks in an assigning phase

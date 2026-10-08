@@ -223,6 +223,11 @@ services:
       # контейнер стартовал с дефолтом 3600, зажим F-3 был недостижим, WARN молчал.
       # Доказано: engine-тест C836ComposeEnvBindingTest берёт имя ОТСЮДА.
       ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS: ${ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS:-3600}
+      # WO-AUDIT-8 (A-NEW4-10): размер retry-lane SSE-моста. Имя — точная
+      # relaxed-binding форма ключа `zorrobpm.sse.retry-lane-size` (прецедент
+      # C8-36 F-7: без префикса переменная не разрешается). Дефолт 1 = как
+      # хардкод до WO; связка compose → env → бин — тестом ниже в этом же WO.
+      ZORROBPM_SSE_RETRY_LANE_SIZE: ${ZORROBPM_SSE_RETRY_LANE_SIZE:-1}
       # WO-ENG-31 Фаза 2: HTTP-коннектор (дефолты fail-closed: выключен + deny-all;
       # пусто = дефолт свойства; compose пробрасывает явно — WO-INT-6 класс).
       ZORROBPM_HTTP_CONNECTOR_ENABLED: ${ZORROBPM_HTTP_CONNECTOR_ENABLED:-false}

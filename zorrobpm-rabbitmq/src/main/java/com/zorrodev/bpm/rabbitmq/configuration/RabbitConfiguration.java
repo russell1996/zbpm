@@ -70,8 +70,14 @@ public class RabbitConfiguration {
         }
     }
 
+    /**
+     * WO-AUDIT-8 (NEW2-15): public для G-N-честности живого теста
+     * {@code CompleteOverloadDlqRabbitIT} — топологию объявляет настоящий
+     * прод-бин, а не копия его аргументов (мутант без DLX роняет тест).
+     * Поведение не меняется: Spring вызывает @Bean-методы той же сигнатурой.
+     */
     @Bean
-    Queue completeServiceTaskQueue() {
+    public Queue completeServiceTaskQueue() {
         return QueueBuilder.durable(COMPLETE_QUEUE)
             .deadLetterExchange(COMPLETE_DLX)
             .deadLetterRoutingKey(COMPLETE_DLQ)
@@ -79,17 +85,17 @@ public class RabbitConfiguration {
     }
 
     @Bean
-    DirectExchange completeServiceTaskDlx() {
+    public DirectExchange completeServiceTaskDlx() {
         return new DirectExchange(COMPLETE_DLX);
     }
 
     @Bean
-    Queue completeServiceTaskDlq() {
+    public Queue completeServiceTaskDlq() {
         return QueueBuilder.durable(COMPLETE_DLQ).build();
     }
 
     @Bean
-    Binding completeServiceTaskDlqBinding() {
+    public Binding completeServiceTaskDlqBinding() {
         return BindingBuilder.bind(completeServiceTaskDlq()).to(completeServiceTaskDlx()).with(COMPLETE_DLQ);
     }
 
