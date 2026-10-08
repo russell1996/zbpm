@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c839_nested" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c839-nested-cancel" name="test-c839-nested-cancel" isExecutable="true">
+    <!-- WO-C8-39: cancel-конец на форк-ветви ВНУТРЕННЕЙ транзакции.
+         inner гасится и продолжается со СВОЕЙ cancel-границы (cbIn ->
+         afterInner); внешняя outer НЕ тронута: outerTask остаётся живым,
+         qux-граница outer НЕ срабатывает, normalEnd не достигается. -->
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="outer" />
+
+    <bpmn:transaction id="outer" name="outer">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="oStart" name="oStart">
+        <bpmn:outgoing>fo0</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="fo0" name="fo0" sourceRef="oStart" targetRef="oFork" />
+      <bpmn:parallelGateway id="oFork" name="oFork">
+        <bpmn:incoming>fo0</bpmn:incoming>
+        <bpmn:outgoing>foA</bpmn:outgoing>
+        <bpmn:outgoing>foB</bpmn:outgoing>
+      </bpmn:parallelGateway>
+      <bpmn:sequenceFlow id="foA" name="foA" sourceRef="oFork" targetRef="outerTask" />
+      <bpmn:sequenceFlow id="foB" name="foB" sourceRef="oFork" targetRef="inner" />
+      <bpmn:userTask id="outerTask" name="outerTask">
+        <bpmn:incoming>foA</bpmn:incoming>
+        <bpmn:outgoing>foA2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="foA2" name="foA2" sourceRef="outerTask" targetRef="oEnd" />
+      <bpmn:endEvent id="oEnd" name="oEnd">
+        <bpmn:incoming>foA2</bpmn:incoming>
+      </bpmn:endEvent>
+
+      <bpmn:transaction id="inner" name="inner">
+        <bpmn:incoming>foB</bpmn:incoming>
+        <bpmn:outgoing>fiOut</bpmn:outgoing>
+        <bpmn:startEvent id="iStart" name="iStart">
+          <bpmn:outgoing>fi0</bpmn:outgoing>
+        </bpmn:startEvent>
+        <bpmn:sequenceFlow id="fi0" name="fi0" sourceRef="iStart" targetRef="iFork" />
+        <bpmn:parallelGateway id="iFork" name="iFork">
+          <bpmn:incoming>fi0</bpmn:incoming>
+          <bpmn:outgoing>fiA</bpmn:outgoing>
+          <bpmn:outgoing>fiB</bpmn:outgoing>
+        </bpmn:parallelGateway>
+        <bpmn:sequenceFlow id="fiA" name="fiA" sourceRef="iFork" targetRef="innerTask" />
+        <bpmn:sequenceFlow id="fiB" name="fiB" sourceRef="iFork" targetRef="trigIn" />
+        <bpmn:userTask id="innerTask" name="innerTask">
+          <bpmn:incoming>fiA</bpmn:incoming>
+          <bpmn:outgoing>fiA2</bpmn:outgoing>
+        </bpmn:userTask>
+        <bpmn:sequenceFlow id="fiA2" name="fiA2" sourceRef="innerTask" targetRef="iEnd" />
+        <bpmn:endEvent id="iEnd" name="iEnd">
+          <bpmn:incoming>fiA2</bpmn:incoming>
+        </bpmn:endEvent>
+        <bpmn:userTask id="trigIn" name="trigIn">
+          <bpmn:incoming>fiB</bpmn:incoming>
+          <bpmn:outgoing>fiB2</bpmn:outgoing>
+        </bpmn:userTask>
+        <bpmn:sequenceFlow id="fiB2" name="fiB2" sourceRef="trigIn" targetRef="cancelIn" />
+        <bpmn:endEvent id="cancelIn" name="cancelIn">
+          <bpmn:incoming>fiB2</bpmn:incoming>
+          <bpmn:cancelEventDefinition id="cadIn" />
+        </bpmn:endEvent>
+      </bpmn:transaction>
+      <bpmn:sequenceFlow id="fiOut" name="fiOut" sourceRef="inner" targetRef="innerDone" />
+      <bpmn:endEvent id="innerDone" name="innerDone">
+        <bpmn:incoming>fiOut</bpmn:incoming>
+      </bpmn:endEvent>
+
+      <bpmn:boundaryEvent id="cbIn" name="cbIn" attachedToRef="inner">
+        <bpmn:outgoing>fiC1</bpmn:outgoing>
+        <bpmn:cancelEventDefinition id="cadInB" />
+      </bpmn:boundaryEvent>
+      <bpmn:sequenceFlow id="fiC1" name="fiC1" sourceRef="cbIn" targetRef="afterInner" />
+      <bpmn:scriptTask id="afterInner" name="afterInner" scriptFormat="feel" resultVariable="log">
+        <bpmn:incoming>fiC1</bpmn:incoming>
+        <bpmn:outgoing>fiC2</bpmn:outgoing>
+        <bpmn:script>log + 1000</bpmn:script>
+      </bpmn:scriptTask>
+      <bpmn:sequenceFlow id="fiC2" name="fiC2" sourceRef="afterInner" targetRef="innerCancelEnd" />
+      <bpmn:endEvent id="innerCancelEnd" name="innerCancelEnd">
+        <bpmn:incoming>fiC2</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:transaction>
+
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="outer" targetRef="normalEnd" />
+    <bpmn:endEvent id="normalEnd" name="normalEnd">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:boundaryEvent id="cbOut" name="cbOut" attachedToRef="outer">
+      <bpmn:outgoing>foC1</bpmn:outgoing>
+      <bpmn:cancelEventDefinition id="cadOutB" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="foC1" name="foC1" sourceRef="cbOut" targetRef="afterOuter" />
+    <bpmn:scriptTask id="afterOuter" name="afterOuter" scriptFormat="feel" resultVariable="log">
+      <bpmn:incoming>foC1</bpmn:incoming>
+      <bpmn:outgoing>foC2</bpmn:outgoing>
+      <bpmn:script>log + 1</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="foC2" name="foC2" sourceRef="afterOuter" targetRef="outerCancelEnd" />
+    <bpmn:endEvent id="outerCancelEnd" name="outerCancelEnd">
+      <bpmn:incoming>foC2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
