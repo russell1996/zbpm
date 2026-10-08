@@ -136,6 +136,9 @@ test:gate:
   script:
     - bash ci/test-gate-selftest.sh HEAD
     - bash ci/test-gate.sh origin/master HEAD
+    # WO-REL-69 П.3: self-test G2 docs-only carve-out в ci/wo-report-gate.sh —
+    # рядом с self-test соседнего гейта, тем же приёмом (throwaway-коммиты).
+    - bash ci/test-wo-report-gate-selftest.sh HEAD
   rules:
     # WO-REL-67: not on schedule (nightly runs backup:pg + chaos + e2e only).
     - if: '$CI_PIPELINE_SOURCE == "schedule"'
