@@ -649,12 +649,11 @@ describe('WO-VT-3 round 2 IA (CTO E-VT3-1): actions menu fits the header', () =>
     const header = menu!.closest('div.flex.items-center.gap-2') as HTMLElement
     expect(header).toBeTruthy()
     expect(menu!.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_CONTAINS).toBeTruthy()
-    // Кнопка-меню не вылезает за хост 360px; страница — по общей мерке сьюта.
-    const hb = menu!.getBoundingClientRect()
-    const hostEl = hosts[hosts.length - 1]
-    const rb = hostEl.getBoundingClientRect()
+    // Кнопка-меню — внутри шапки (containment выше); геометрия страницы —
+    // по общей мерке сьюта overflowing() + скриншот (сырые rect здесь не
+    // нужны: шапка шире хоста по построению стенда, merка — отсутствие
+    // вылезающих элементов, а не ширина контейнера).
     expect(overflowing(document.body)).toEqual([])
     await page.screenshot({ path: SHOT('after-instance-actions-360') })
-    void hb; void rb
   })
 })
