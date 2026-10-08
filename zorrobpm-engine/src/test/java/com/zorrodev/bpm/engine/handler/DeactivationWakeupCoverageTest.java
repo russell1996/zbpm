@@ -245,7 +245,9 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("IncidentService.java#resolveIncident[]|dbService.cancelActivity(incident.getActivityId())", R07);
         // ── погашен ВЕСЬ scope (scope сабпроцесса / scope-контейнер границы), все ег…
         WHITELIST.put("CancelEndHandler.java#processCancelEnd[]|dbService.completeActivity(activityId)", R08);
-        WHITELIST.put("CancelEndHandler.java#processCancelEnd[]|dbService.cancelActiveActivitiesForToken(tokenId)", R08);
+        // WO-C8-39: cancelActiveActivitiesForToken(tokenId) заменён scope-циклом
+        // (форк-соседи тоже гасятся); число сайтов то же — счёт не меняется.
+        WHITELIST.put("CancelEndHandler.java#processCancelEnd[for (Activity active : inScope) {]|dbService.cancelActivity(active.getId())", R08);
         WHITELIST.put("CancelEndHandler.java#processCancelEnd[]|dbService.cancelActivity(scopeActivityId)", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwError[if (boundary != null) { #2]|dbService.cancelActiveActivitiesForToken(tok.getId())", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwError[if (boundary != null) { #2]|dbService.cancelActivity(scope.getId())", R08);

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_c839_fork" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c839-fork-cancel" name="test-c839-fork-cancel" isExecutable="true">
+    <!-- WO-C8-39: cancel-конец на форк-ветви внутри <transaction>.
+         txFork — parallel 1 в 2: ветвь taskA (userTask, паркуется) и ветвь
+         trigB (userTask) -> cancelEnd. Токен cancel-конца — дитя scope-токена
+         БЕЗ scopeActivityId, поэтому CancelEndHandler на master уходит в ветку
+         "outside a transaction scope" (тихое no-op по отмене): транзакция НЕ
+         гасится, cancel-граница НЕ продолжается. -->
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="tx" />
+
+    <bpmn:transaction id="tx" name="tx">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="txStart" name="txStart">
+        <bpmn:outgoing>tf0</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="tf0" name="tf0" sourceRef="txStart" targetRef="txFork" />
+      <bpmn:parallelGateway id="txFork" name="txFork">
+        <bpmn:incoming>tf0</bpmn:incoming>
+        <bpmn:outgoing>fa1</bpmn:outgoing>
+        <bpmn:outgoing>fb1</bpmn:outgoing>
+      </bpmn:parallelGateway>
+      <bpmn:sequenceFlow id="fa1" name="fa1" sourceRef="txFork" targetRef="taskA" />
+      <bpmn:sequenceFlow id="fb1" name="fb1" sourceRef="txFork" targetRef="trigB" />
+      <bpmn:userTask id="taskA" name="taskA">
+        <bpmn:incoming>fa1</bpmn:incoming>
+        <bpmn:outgoing>fa2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fa2" name="fa2" sourceRef="taskA" targetRef="endA" />
+      <bpmn:endEvent id="endA" name="endA">
+        <bpmn:incoming>fa2</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:userTask id="trigB" name="trigB">
+        <bpmn:incoming>fb1</bpmn:incoming>
+        <bpmn:outgoing>fb2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="fb2" name="fb2" sourceRef="trigB" targetRef="cancelEnd" />
+      <bpmn:endEvent id="cancelEnd" name="cancelEnd">
+        <bpmn:incoming>fb2</bpmn:incoming>
+        <bpmn:cancelEventDefinition id="cad1" />
+      </bpmn:endEvent>
+    </bpmn:transaction>
+
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="tx" targetRef="normalEnd" />
+    <bpmn:endEvent id="normalEnd" name="normalEnd">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:boundaryEvent id="bTaskA" name="bTaskA" attachedToRef="taskA">
+      <bpmn:compensateEventDefinition id="cedA" />
+    </bpmn:boundaryEvent>
+    <bpmn:association id="assocA" sourceRef="bTaskA" targetRef="txHandler" />
+    <bpmn:scriptTask id="txHandler" name="txHandler" scriptFormat="feel" resultVariable="log" isForCompensation="true">
+      <bpmn:script>log + 100</bpmn:script>
+    </bpmn:scriptTask>
+
+    <bpmn:boundaryEvent id="cb" name="cb" attachedToRef="tx">
+      <bpmn:outgoing>fc1</bpmn:outgoing>
+      <bpmn:cancelEventDefinition id="cad2" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fc1" name="fc1" sourceRef="cb" targetRef="afterCancel" />
+    <bpmn:scriptTask id="afterCancel" name="afterCancel" scriptFormat="feel" resultVariable="log">
+      <bpmn:incoming>fc1</bpmn:incoming>
+      <bpmn:outgoing>fc2</bpmn:outgoing>
+      <bpmn:script>log + 1000</bpmn:script>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="fc2" name="fc2" sourceRef="afterCancel" targetRef="endCancel" />
+    <bpmn:endEvent id="endCancel" name="endCancel">
+      <bpmn:incoming>fc2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
