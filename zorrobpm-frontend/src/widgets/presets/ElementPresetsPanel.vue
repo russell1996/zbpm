@@ -152,6 +152,13 @@ async function onFileChosen(e: Event) {
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
+  // WO-VT-1 раунд 2 (оформительская №2 рецензии r1): клиентский лимит
+  // размера — гигантский JSON вешал вкладку до серверного 400.
+  // Лимит 1 МБ с запасом над серверными 256 КБ × 100 переменных.
+  if (file.size > 1024 * 1024) {
+    toast.error(t('presetImportTooLarge'))
+    return
+  }
   try {
     const text = await file.text()
     const payload = JSON.parse(text) as {

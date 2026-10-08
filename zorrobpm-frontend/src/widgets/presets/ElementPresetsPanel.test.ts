@@ -97,6 +97,20 @@ describe('ElementPresetsPanel', () => {
     expect(star.text()).toBe('★')
   })
 
+  it('oversized import file is rejected client-side (no service call)', async () => {
+    const { importPreset } = await import('@/services/presetService')
+    mockList.mockResolvedValue([])
+    const w = render()
+    await flushPromises()
+    const big = new File(['x'.repeat(10)], 'big.json', { type: 'application/json' })
+    Object.defineProperty(big, 'size', { value: 2 * 1024 * 1024 })
+    const input = w.find('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [big] })
+    await input.trigger('change')
+    await flushPromises()
+    expect(vi.mocked(importPreset)).not.toHaveBeenCalled()
+  })
+
   it('disabled flag hides the whole panel', async () => {
     mockList.mockRejectedValue({ disabled: true })
     const w = render()

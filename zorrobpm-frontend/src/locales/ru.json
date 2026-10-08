@@ -695,5 +695,6 @@
   "presetKind_ADHOC_JOB": "Ad-hoc работа",
   "presetBooleanTrue": "да",
   "presetBooleanFalse": "нет",
-  "presetFavoriteStar": " ★"
+  "presetFavoriteStar": " ★",
+  "presetImportTooLarge": "Файл шаблона слишком большой (макс. 1 МБ)"
 }

@@ -23,15 +23,20 @@ const messageName = ref('')
 const correlationKey = ref('')
 const pickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
 const askMissing = ref<string[]>([])
+// WO-VT-1 раунд 2 (Б-3): guard по невалидным строкам — как на 5 соседних
+// страницах (publish/disabled раньше его не учитывали, невалидный JSON/LONG
+// уходил в /messages/publish, который пресет-валидацию не выполняет).
+const pickerInvalid = ref(false)
 const publishing = ref(false)
 const result = ref<string | null>(null)
 
 function onPickerChange() {
   askMissing.value = pickerRef.value?.missingAsk ?? []
+  pickerInvalid.value = pickerRef.value?.hasErrors ?? false
 }
 
 async function publish() {
-  if (!messageName.value.trim() || !pickerRef.value || askMissing.value.length || publishing.value) return
+  if (!messageName.value.trim() || !pickerRef.value || askMissing.value.length || pickerInvalid.value || publishing.value) return
   publishing.value = true
   result.value = null
   try {
@@ -91,7 +96,7 @@ async function publish() {
       <button
         type="button"
         class="px-4 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
-        :disabled="!messageName.trim() || !pickerRef || askMissing.length > 0 || publishing"
+        :disabled="!messageName.trim() || !pickerRef || askMissing.length > 0 || pickerInvalid || publishing"
         :title="askMissing.length ? t('presetFillAskFields', { fields: askMissing.join(', ') }) : ''"
         @click="publish"
       >
