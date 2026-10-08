@@ -62,7 +62,7 @@ describe('ProcessDefinitionDetail render', () => {
     expect(wrapper.text()).toContain('Test')
   })
 
-  it('dropdown contains JSON and UUID options', async () => {
+  it('start modal renders the preset picker (manual input by default)', async () => {
     const wrapper = mount(ProcessDefinitionDetail, {
       global: { stubs: { teleport: true }, plugins: [createPinia()] },
     })
@@ -70,14 +70,25 @@ describe('ProcessDefinitionDetail render', () => {
     const vm = wrapper.vm as any
     vm.showStartModal = true
     await wrapper.vm.$nextTick()
-    const select = wrapper.find('select')
-    const options = select.findAll('option').map((o: any) => o.text())
-    expect(options).toContain('JSON')
-    expect(options).toContain('UUID')
-    expect(options).toContain('DOUBLE')
-    expect(options).toContain('BOOLEAN')
-    expect(options).toContain('LONG')
-    expect(options).toContain('STRING')
+    // WO-VT-1: инлайн-редактор старта заменён PresetPicker «Ручной ввод | Из шаблона».
+    expect(wrapper.text()).toContain('presetManualMode')
+    expect(wrapper.text()).toContain('presetTemplateMode')
+  })
+
+  it('manual rows offer all six variable types', async () => {
+    const wrapper = mount(ProcessDefinitionDetail, {
+      global: { stubs: { teleport: true }, plugins: [createPinia()] },
+    })
+    await wrapper.vm.$nextTick()
+    const vm = wrapper.vm as any
+    vm.showStartModal = true
+    await wrapper.vm.$nextTick()
+    const addBtn = wrapper.findAll('button').find((b) => b.text().includes('presetAddVariable'))!
+    await addBtn.trigger('click')
+    const options = wrapper.find('select[id^="pv-type-"]').findAll('option').map((o: any) => o.text())
+    for (const tp of ['STRING', 'UUID', 'LONG', 'DOUBLE', 'BOOLEAN', 'JSON']) {
+      expect(options).toContain(tp)
+    }
   })
 
   it('shows textarea when JSON type is selected', async () => {
@@ -88,24 +99,30 @@ describe('ProcessDefinitionDetail render', () => {
     const vm = wrapper.vm as any
     vm.showStartModal = true
     await wrapper.vm.$nextTick()
-    vm.newVarType = 'JSON'
-    await wrapper.vm.$nextTick()
+    await wrapper.findAll('button').find((b) => b.text().includes('presetAddVariable'))!.trigger('click')
+    await wrapper.find('select[id^="pv-type-"]').setValue('JSON')
     // Should show textarea instead of input for value
-    const textarea = wrapper.find('textarea')
+    const textarea = wrapper.find('textarea[id^="pv-value-"]')
     expect(textarea.exists()).toBe(true)
   })
 
-  it('rejects invalid JSON in addVariable', () => {
+  it('rejects invalid JSON: row error shows and start stays disabled', async () => {
     const wrapper = mount(ProcessDefinitionDetail, {
       global: { stubs: { teleport: true }, plugins: [createPinia()] },
     })
+    await wrapper.vm.$nextTick()
     const vm = wrapper.vm as any
-    vm.newVarType = 'JSON'
-    vm.newVarValue = '{invalid}'
-    vm.newVarName = 'badJson'
-    vm.addVariable()
-    expect(vm.startVars.length).toBe(0)
-    expect(vm.jsonError).toBe('Invalid JSON')
+    vm.showStartModal = true
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('button').find((b) => b.text().includes('presetAddVariable'))!.trigger('click')
+    await wrapper.find('input[id^="pv-name-"]').setValue('badJson')
+    await wrapper.find('select[id^="pv-type-"]').setValue('JSON')
+    await wrapper.find('textarea[id^="pv-value-"]').setValue('{invalid}')
+    // WO-VT-1: плохой JSON подсвечен, запуск заблокирован (как раньше addVariable).
+    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
+    const startBtn = wrapper.findAll('button').find((b) => b.text().trim() === 'startProcess')!
+    expect((startBtn.element as HTMLButtonElement).disabled).toBe(true)
+    expect(mockStartInstance).not.toHaveBeenCalled()
   })
 
   it('POF: start process with type=JSON sends type JSON in API payload', async () => {
@@ -114,28 +131,18 @@ describe('ProcessDefinitionDetail render', () => {
     })
     await wrapper.vm.$nextTick()
     const vm = wrapper.vm as any
-
-    // Inject a JSON variable directly into startVars
-    vm.startVars.push({ name: 'data', type: 'JSON', value: '["u1","u2"]' })
-    await vm.startProcess()
+    vm.showStartModal = true
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('button').find((b) => b.text().includes('presetAddVariable'))!.trigger('click')
+    await wrapper.find('input[id^="pv-name-"]').setValue('data')
+    await wrapper.find('select[id^="pv-type-"]').setValue('JSON')
+    await wrapper.find('textarea[id^="pv-value-"]').setValue('["u1","u2"]')
+    await wrapper.findAll('button').find((b) => b.text().trim() === 'startProcess')!.trigger('click')
+    await wrapper.vm.$nextTick()
 
     expect(mockStartInstance).toHaveBeenCalledTimes(1)
     const callArg = mockStartInstance.mock.calls[0][0]
     expect(callArg.variables).toContainEqual({ name: 'data', type: 'JSON', value: '["u1","u2"]' })
-  })
-
-  it('accepts valid JSON and adds the variable', () => {
-    const wrapper = mount(ProcessDefinitionDetail, {
-      global: { stubs: { teleport: true }, plugins: [createPinia()] },
-    })
-    const vm = wrapper.vm as any
-    vm.newVarType = 'JSON'
-    vm.newVarValue = '{"key":"val"}'
-    vm.newVarName = 'cfg'
-    vm.addVariable()
-    expect(vm.startVars.length).toBe(1)
-    expect(vm.startVars[0]).toEqual({ name: 'cfg', type: 'JSON', value: '{"key":"val"}' })
-    expect(vm.jsonError).toBe('')
   })
 })
 

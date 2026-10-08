@@ -46,3 +46,18 @@ export async function completeServiceTask(id: string, dto: CompleteTaskDTO): Pro
   const { data } = await api.post<IdDTO>(`/service-tasks/${id}/complete`, dto)
   return data
 }
+
+// WO-VT-1 (фронт): завершение service task «ошибкой» и throw error берут
+// переменные из шаблона элемента — эндпоинты бэкенда уже есть
+// (RuntimeContract: /service-tasks/{id}/fail, /throw-error), фронт их не звал.
+export async function failServiceTask(id: string, message: string, variables: CompleteTaskDTO['variables']): Promise<IdDTO> {
+  const { data } = await api.post<IdDTO>(`/service-tasks/${id}/fail`, { message, variables })
+  return data
+}
+
+export async function throwServiceTaskError(
+  id: string, errorCode: string, variables: CompleteTaskDTO['variables'],
+): Promise<IdDTO> {
+  const { data } = await api.post<IdDTO>(`/service-tasks/${id}/throw-error`, { errorCode, variables })
+  return data
+}

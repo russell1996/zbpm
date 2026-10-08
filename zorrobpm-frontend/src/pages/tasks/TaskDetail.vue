@@ -9,6 +9,8 @@ import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import { getTaskForm, type TaskFormResponse } from '@/services/formService'
 import type { ProcessVariable } from '@/types/api'
 import { dataToVariables } from '@/shared/lib/formMapping'
+import { useProcessStore } from '@/stores/process'
+import PresetPicker from '@/widgets/presets/PresetPicker.vue'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import FormRenderer from '@/widgets/forms/FormRenderer.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
@@ -36,6 +38,13 @@ const editableVars = ref<{ name: string; type: string; value: string }[]>([])
 const formResponse = ref<TaskFormResponse | null>(null)
 const formRef = ref<InstanceType<typeof FormRenderer> | null>(null)
 const formErrors = ref<Record<string, string> | null>(null)
+// WO-VT-1: завершение из шаблона ЭТОГО элемента (targetRef = bpmnElementId).
+const processStore = useProcessStore()
+const pickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
+const askMissing = ref<string[]>([])
+const pickerInvalid = ref(false)
+const presetKey = ref<string>('')
+const presetRef = ref<string | null>(null)
 
 async function loadForm() {
   if (!store.currentTask) return
@@ -59,6 +68,21 @@ async function complete() {
     type: v.type as ProcessVariable['type'],
     value: v.value,
   })))
+}
+
+/** WO-VT-1: завершение из PresetPicker (шаблон элемента или ручной ввод). */
+async function completeFromPicker() {
+  if (!pickerRef.value || askMissing.value.length || pickerInvalid.value) return
+  await doComplete(pickerRef.value.getVariables().map((v) => ({
+    name: v.name,
+    type: v.type,
+    value: v.value,
+  })))
+}
+
+function onPickerChange() {
+  askMissing.value = pickerRef.value?.missingAsk ?? []
+  pickerInvalid.value = pickerRef.value?.hasErrors ?? false
 }
 
 async function doComplete(variables: ProcessVariable[]) {
@@ -91,6 +115,18 @@ onMounted(async () => {
       type: v.type,
       value: v.value,
     }))
+  }
+
+  // WO-VT-1: ключ процесса для шаблонов места (START-привязка — по ключу).
+  const task = store.currentTask
+  if (task?.processDefinitionId) {
+    try {
+      await processStore.fetchDefinition(task.processDefinitionId)
+      presetKey.value = processStore.currentDefinition?.key ?? ''
+      presetRef.value = task.code
+    } catch {
+      // Шаблоны недоступны — останется ручной ввод через legacy-редактор.
+    }
   }
 })
 </script>
@@ -165,10 +201,18 @@ onMounted(async () => {
         </a>
       </div>
 
-      <!-- FORM-3: No form — legacy variable editor (unchanged) -->
-      <div v-else class="border border-border rounded-lg p-4 bg-card">
+      <!-- FORM-3: No form — WO-VT-1: ручной ввод или шаблон элемента -->
+      <div v-else class="border border-border rounded-lg p-4 bg-card space-y-3">
         <h2 class="text-lg font-bold mb-4">{{ t('variables') }}</h2>
-        <div class="space-y-3">
+        <PresetPicker
+          v-if="presetKey"
+          ref="pickerRef"
+          :process-key="presetKey"
+          target-kind="USER_TASK"
+          :target-ref="presetRef"
+          @change="onPickerChange"
+        />
+        <div v-else class="space-y-3">
           <div v-for="(v, i) in editableVars" :key="v.name" class="flex items-center gap-3">
             <label class="text-sm font-mono w-32">{{ v.name }}</label>
             <span class="text-xs text-muted-foreground">({{ v.type }})</span>
@@ -183,11 +227,22 @@ onMounted(async () => {
 
       <div v-if="!store.currentTask.completedAt" class="flex justify-end">
         <button
+          v-if="formResponse?.type === 'embedded' || !presetKey"
           data-testid="task-complete-btn"
           class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm"
           @click="complete"
         >
           {{ formResponse?.type === 'embedded' ? t('submitForm') : t('completeTask') }}
+        </button>
+        <button
+          v-else
+          data-testid="task-complete-btn"
+          class="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:opacity-90 transition-opacity text-sm disabled:opacity-50"
+          :disabled="askMissing.length > 0 || pickerInvalid"
+          :title="askMissing.length ? t('presetFillAskFields', { fields: askMissing.join(', ') }) : ''"
+          @click="completeFromPicker"
+        >
+          {{ t('completeTask') }}
         </button>
       </div>
     </template>
