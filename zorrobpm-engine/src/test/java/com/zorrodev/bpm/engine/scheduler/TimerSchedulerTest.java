@@ -2,7 +2,9 @@ package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.service.ActivityService;
+import com.zorrodev.bpm.engine.service.AdmissionLease;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.ScriptService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -25,6 +27,16 @@ class TimerSchedulerTest {
     @Mock private DBService dbService;
     @Mock private ActivityService activityService;
     @InjectMocks private TimerJobExecutor executor;
+
+    /**
+     * WO-ENG-35: admission-гейт в тестах — мок с no-op лизой (место «есть
+     * сразу»): этот тест проверяет fire/изоляцию, а не гейт.
+     */
+    private static ScriptService gatedScriptService() {
+        ScriptService scriptService = org.mockito.Mockito.mock(ScriptService.class);
+        org.mockito.Mockito.lenient().when(scriptService.admitOutsideTx()).thenReturn(AdmissionLease.noop());
+        return scriptService;
+    }
 
     @Test
     void executor_firesJobAndSignalsActivity() {
@@ -67,7 +79,7 @@ class TimerSchedulerTest {
         DBService dbServiceMock = org.mockito.Mockito.mock(DBService.class);
         TimerJobExecutor executorMock = org.mockito.Mockito.mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutorMock = org.mockito.Mockito.mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbServiceMock, executorMock, startExecutorMock, Runnable::run);
+        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbServiceMock, executorMock, startExecutorMock, Runnable::run, gatedScriptService());
         Field f = TimerBatchProcessor.class.getDeclaredField("batchSize");
         f.setAccessible(true);
         f.setInt(batchProcessor, 100);

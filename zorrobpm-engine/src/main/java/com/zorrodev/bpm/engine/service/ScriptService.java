@@ -28,4 +28,27 @@ public interface ScriptService {
      *         {@code EngineException}) проходит наружу как есть
      */
     Object runWithBudget(java.util.concurrent.Callable<Object> task, String codeRef);
+
+    /**
+     * WO-ENG-35 (NEW2-16): резервирует место в script-пуле ДО открытия
+     * транзакции вызывающего. Вызывающий (REST-вход, AMQP-слушатель, fire
+     * таймера) держит возвращённую лизу всё время операции ({@code try}-with-resources);
+     * пока лиза открыта, все {@code evaluate*}/{@code runWithBudget} этого потока
+     * идут в пул напрямую, не ожидая admission внутри транзакции.
+     *
+     * <p>Вызывать СТРОГО вне транзакции (fail-fast при активной транзакции):
+     * ожидание внутри транзакции — именно тот дефект, что закрывает WO.
+     * Таймаут ожидания — то же окно {@code script-queue-wait-seconds}, отказ —
+     * тот же {@link com.zorrodev.bpm.engine.service.ScriptOverloadException}
+     * (503), что и у внутритранзакционного пути: видимое поведение при
+     * перегрузке не меняется, меняется только то, ЧТО удерживается во время
+     * ожидания (ничего вместо транзакции+соединения).
+     *
+     * @return лиза; закрыть в {@code finally} (иначе слот утечёт —
+     *         пермиты конечны, утечка видна как рост отказов до перезапуска)
+     * @throws IllegalStateException если вызвано внутри транзакции
+     * @throws com.zorrodev.bpm.engine.service.ScriptOverloadException если место
+     *         не освободилось за окно ожидания
+     */
+    AdmissionLease admitOutsideTx();
 }
