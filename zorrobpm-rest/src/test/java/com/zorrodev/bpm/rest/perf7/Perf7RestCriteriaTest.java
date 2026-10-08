@@ -64,10 +64,13 @@ class Perf7RestCriteriaTest {
         // переоценки прав — НЕ клиенты вовсе). Eviction по-прежнему идёт через
         // clients/removeClientState — per-subject cap лишь отказывает в НОВОЙ
         // регистрации (429), никого не выселяет.
+        // WO-AUDIT-9 шаг 3: сам реестр (обе Map) переехал в SseSessionRegistry
+        // (поля sessions/sessionsPerSubject) — проверяем ТАМ тем же смыслом:
+        // ровно один реестр сессий + счётчики слотов, второго механизма нет.
+        // Капсы maxClients/maxClientsPerSubject остались @Value-полями сервиса
+        // (реестр читает их suppliers) — проверяем ЗДЕСЬ.
         boolean hasMaxClients = false;
         boolean hasPerClientQueueCap = false;
-        java.util.Set<String> mapFields = new java.util.TreeSet<>();
-        java.util.Set<String> caffeineFields = new java.util.TreeSet<>();
         for (Field f : clazz.getDeclaredFields()) {
             if (f.getName().equals("maxClients")) {
                 hasMaxClients = true;
@@ -75,18 +78,27 @@ class Perf7RestCriteriaTest {
             if (f.getName().equals("perClientQueueEvents")) {
                 hasPerClientQueueCap = true;
             }
+        }
+        assertThat(hasMaxClients).isTrue();
+        assertThat(hasPerClientQueueCap).as("WO-REL-47: per-client bounded queue cap").isTrue();
+        Class<?> registryClazz = Class.forName(
+            "com.zorrodev.bpm.rest.resource.SseSessionRegistry");
+        java.util.Set<String> mapFields = new java.util.TreeSet<>();
+        java.util.Set<String> caffeineFields = new java.util.TreeSet<>();
+        for (Field f : registryClazz.getDeclaredFields()) {
             if (java.util.Map.class.isAssignableFrom(f.getType())) {
                 mapFields.add(f.getName());
             }
-            // Caffeine Cache's runtime type name is lowercase ("caffeine") —
-            // match case-insensitively, not on the capital-C import idiom.
+        }
+        // Caffeine-кэш переоценки прав — в SseAuthzGate (шаг 4), проверяем там.
+        Class<?> gateClazz = Class.forName(
+            "com.zorrodev.bpm.rest.resource.SseAuthzGate");
+        for (Field f : gateClazz.getDeclaredFields()) {
             if (f.getType().getName().toLowerCase(java.util.Locale.ROOT).contains("caffeine")) {
                 caffeineFields.add(f.getName());
             }
         }
-        assertThat(hasMaxClients).isTrue();
-        assertThat(hasPerClientQueueCap).as("WO-REL-47: per-client bounded queue cap").isTrue();
-        assertThat(mapFields).containsExactly("clients", "clientsPerSubject");
+        assertThat(mapFields).containsExactly("sessions", "sessionsPerSubject");
         assertThat(caffeineFields).containsExactly("rightsCache");
     }
 
