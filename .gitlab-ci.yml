@@ -33,7 +33,27 @@ variables:
   GIT_CLEAN_FLAGS: none
 
 workflow:
+  # WO-REL-69 П.2 (инцидент 2026-10-07, пайплайн 176380): ночной schedule-пайплайн
+  # был убит авто-отменой, пока backup:pg ещё стоял в очереди. interruptible: false
+  # защищает только СТАРТОВАВШУЮ джобу — pending-джоба по документации GitLab всегда
+  # interruptible, а режим conservative (дефолт инстанса) отменяет ВЕСЬ старый
+  # пайплайн, если ни одна non-interruptible джоба ещё не стартовала.
+  # Защита: дефолт conservative для всех (поведение push/MR — как раньше) +
+  # scoping-первая workflow-запись: schedule-пайплайны не отменяются новыми
+  # коммитами вообще (on_new_commit: none). Записи — ТОЛЬКО scoping авто-отмены
+  # (if: + auto_cancel:, без when:): создание пайплайнов не меняется — schedule
+  # с when: never здесь означал бы «не создавать ночные пайплайны вовсе».
+  # Механизм: workflow:auto_cancel GA с GitLab 16.10 (Free tier, self-managed;
+  # инстанс <internal-git-host> — 19.3.3), проверен POST /ci/lint. Правила матчат
+  # сверху вниз: schedule-запись обязана стоять ПЕРВОЙ, иначе её перекроет
+  # $CI_COMMIT_BRANCH ниже (на schedule она ТОЖЕ установлена — расписание идёт
+  # по ветке; тот же порядок, что требует ScheduleSplitGuardTest для джоб).
+  auto_cancel:
+    on_new_commit: conservative
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+      auto_cancel:
+        on_new_commit: none
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH'
 
