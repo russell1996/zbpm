@@ -24,9 +24,6 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-
 @Slf4j
 @Configuration
 public class RabbitConfiguration {
@@ -188,16 +185,18 @@ public class RabbitConfiguration {
      * after a real ACK (never right after convertAndSend).
      *
      * <p>Unroutable messages (mandatory mode) produce BOTH a return and a confirm with
-     * {@code ack=true}. The return arrives first; ids seen there are recorded so the misleading
-     * {@code ack=true} confirm is suppressed — otherwise a lost message would be marked
-     * {@code published} in the DB.
+     * {@code ack=true}. The return arrives first; outstanding returns per id are counted
+     * ({@link UnroutableConfirmSuppressor}) so each misleading {@code ack=true} confirm is
+     * suppressed — otherwise a lost message would be marked {@code published} in the DB.
+     * A bare {@code Set} collapsed overlapping publishes of one id (WO-REL-68); the counter
+     * suppresses exactly one ack per return, in any frame order.
      */
     @Bean
     public RabbitTemplate rabbitTemplate(RabbitTemplateConfigurer configurer,
                                          ConnectionFactory connectionFactory,
                                          ApplicationEventPublisher publisher,
                                          JobQueueDeclarer jobQueueDeclarer) {
-        Set<String> returnedIds = ConcurrentHashMap.newKeySet();
+        UnroutableConfirmSuppressor suppressor = new UnroutableConfirmSuppressor();
         RabbitTemplate template = new RabbitTemplate();
         configurer.configure(template, connectionFactory);
         template.setMessageConverter(messageConverter());
@@ -207,7 +206,7 @@ public class RabbitConfiguration {
                 return;
             }
             String id = correlationData.getId();
-            if (ack && returnedIds.remove(id)) {
+            if (ack && suppressor.shouldSuppressAck(id, System.currentTimeMillis())) {
                 // basic.return arrived first for this id: message was unroutable, the failure
                 // was already reported — this ack=true only means the broker accepted it on
                 // the exchange, NOT that it was delivered.
@@ -215,7 +214,7 @@ public class RabbitConfiguration {
                 return;
             }
             if (!ack) {
-                returnedIds.remove(id);
+                suppressor.noteNack(id);
             }
             log.info("Broker confirm for outbox entry {}: ack={}, cause={}", id, ack, cause);
             publisher.publishEvent(new OutboxDeliveryResult(id, ack, cause));
@@ -227,7 +226,7 @@ public class RabbitConfiguration {
             log.warn("Broker returned unroutable message: replyCode={}, replyText={}, correlationId={}",
                 returned.getReplyCode(), returned.getReplyText(), correlationId);
             if (correlationId != null) {
-                returnedIds.add(correlationId);
+                suppressor.noteReturn(correlationId, System.currentTimeMillis());
                 publisher.publishEvent(new OutboxDeliveryResult(
                     correlationId, false,
                     "unroutable: " + returned.getReplyCode() + " " + returned.getReplyText()));
