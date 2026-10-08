@@ -50,6 +50,12 @@ import static org.mockito.Mockito.lenient;
  *       pre-REL-47 two-step drain lost.</li>
  *   <li>C4 — cursor order (100 before 101) survives the buffered→live
  *       switchover ({@code drainDeliversCursorOrder}).</li>
+ *   <li>C5 — post-send fan-out has no replay: a listener registered AFTER
+ *       both sends completed observes nothing
+ *       ({@code lateListener_missesAlreadyDeliveredEvents_noReplayByDesign}).
+ *       This pins WHY C4 must register its listener BEFORE the drain —
+ *       post-merge flake CI 177064/job 561582
+ *       ({@code drainDeliversCursorOrder:350} ConditionTimeout).</li>
  * </ul>
  */
 @ExtendWith(MockitoExtension.class)
@@ -338,14 +344,22 @@ class SseRel47WriterProtocolTest {
         svc.onDomainEvent(body(101L, "rel47.c4"));
 
         // Boundary 0: nothing is a duplicate — both must be delivered, in order.
-        svc.drainBufferedClient(clientId, 0L);
-
+        // The listener is registered BEFORE the drain: the drain kicks the
+        // pump asynchronously (dispatch lane → send lane) and notifySent fans
+        // out only to listeners registered at send-completion time. Draining
+        // first lets both sends complete before the listener exists — then
+        // `notified` stays empty and the await below dies with
+        // ConditionTimeout (post-merge flake, CI pipeline 177064 job 561582:
+        // `drainDeliversCursorOrder:350`). Prod behavior is by design
+        // (post-send fan-out); the test must observe from before the sends.
         List<Map<String, Object>> notified = new CopyOnWriteArrayList<>();
         svc.addEventListener((cid, envelope) -> {
             if (cid.equals(clientId)) {
                 notified.add(envelope);
             }
         });
+
+        svc.drainBufferedClient(clientId, 0L);
 
         await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
             assertThat(emitter.delivered).hasSize(2);
@@ -368,6 +382,71 @@ class SseRel47WriterProtocolTest {
 
         svc.removeClient(clientId);
         svc.removeClient(resumedId);
+    }
+
+    /**
+     * C5: post-send fan-out has no replay — a listener registered AFTER both
+     * sends completed observes NOTHING (notified stays empty), while the real
+     * emitter output proves both events were delivered in cursor order.
+     *
+     * <p>This pins the mechanism behind the post-merge flake (CI pipeline
+     * 177064 job 561582, {@code drainDeliversCursorOrder:350}
+     * ConditionTimeout): {@code notifySent} fans out only to listeners
+     * registered at send-completion time, so C4 MUST register its listener
+     * BEFORE the drain — draining first lets both sends complete before the
+     * listener exists on a fast runner.
+     *
+     * <p>Determinism (no timing luck): the barrier waits for BOTH sends to be
+     * REALLY done AND the pump idle (empty queue + pumpActive cleared — the
+     * completion callback calls notifySent BEFORE its trailing pump(), so an
+     * idle pump implies every notifySent for these sends happened-before).
+     * Only then is the late listener registered; a 1500ms detection window
+     * (same pattern as {@code listenerFiresOnlyAfterRealSend}) proves no
+     * replay arrives.
+     *
+     * <p>P-67 naming: the losing mutation is "drain BEFORE the listener in
+     * C4" (the pre-fix order): C4 then REDs with {@code Expected size: 2 but
+     * was: 0} whenever both sends complete before the listener exists — on a
+     * fast runner, and deterministically when the completion barrier below is
+     * inserted between the drain and the registration (proven by the
+     * throwaway repro {@code SseListenerRaceReproTest}, RED 3/3 with the
+     * exact CI signature, removed after the proof). This C5 test itself is
+     * the GREEN-side pin of that mechanism: deleting the barrier/registration
+     * order here would test replay, not the flake — its own POF is the C4
+     * RED above, not a mutation of this method.
+     */
+    @Test
+    void lateListener_missesAlreadyDeliveredEvents_noReplayByDesign() throws Exception {
+        SseEventStreamService svc = service();
+
+        CapturingEmitter emitter = new CapturingEmitter();
+        String clientId = svc.registerBufferedClient(emitter, admin(), null, null, null);
+        svc.onDomainEvent(body(100L, "rel47.c5"));
+        svc.onDomainEvent(body(101L, "rel47.c5"));
+        svc.drainBufferedClient(clientId, 0L);
+
+        // Forced interleave barrier: delivery fully done AND pump idle —
+        // no race left, the late listener can never observe these sends.
+        await().atMost(java.time.Duration.ofSeconds(5)).untilAsserted(() -> {
+            assertThat(emitter.delivered).hasSize(2);
+            assertThat(pumpIdle(svc, clientId)).isTrue();
+        });
+
+        List<Map<String, Object>> notified = new CopyOnWriteArrayList<>();
+        svc.addEventListener((cid, envelope) -> {
+            if (cid.equals(clientId)) {
+                notified.add(envelope);
+            }
+        });
+
+        Thread.sleep(1500);
+        assertThat(emitter.delivered).hasSize(2);
+        assertThat(((Number) emitter.delivered.get(0).get("sequence")).longValue()).isEqualTo(100L);
+        assertThat(((Number) emitter.delivered.get(1).get("sequence")).longValue()).isEqualTo(101L);
+        assertThat(notified)
+            .as("post-send fan-out has no replay: late listener misses already-delivered events")
+            .isEmpty();
+        svc.removeClient(clientId);
     }
 
     @Test
@@ -714,6 +793,26 @@ class SseRel47WriterProtocolTest {
         var queueField = client.getClass().getDeclaredField("queue");
         queueField.setAccessible(true);
         return ((java.util.ArrayDeque<?>) queueField.get(client)).size();
+    }
+
+    /**
+     * C5 barrier probe: the pump is idle (empty queue AND no in-flight send)
+     * for a still-registered client. The send-completion callback calls
+     * notifySent BEFORE its trailing pump() — so an idle pump observed after
+     * full delivery implies every notifySent for the delivered sends already
+     * ran, and a listener registered now can never observe them.
+     */
+    private static boolean pumpIdle(SseEventStreamService svc, String clientId) throws Exception {
+        Object client = sessionById(svc, clientId);
+        if (client == null) {
+            return false;
+        }
+        var queueField = client.getClass().getDeclaredField("queue");
+        queueField.setAccessible(true);
+        var pumpField = client.getClass().getDeclaredField("pumpActive");
+        pumpField.setAccessible(true);
+        return ((java.util.ArrayDeque<?>) queueField.get(client)).isEmpty()
+            && !((boolean) pumpField.get(client));
     }
 
     private static long droppedOverflow(SseEventStreamService svc, String clientId) throws Exception {
