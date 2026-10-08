@@ -1,5 +1,10 @@
 package com.zorrodev.bpm.engine.service;
 
+import com.zorrodev.bpm.contract.dto.CreatePresetDTO;
+import com.zorrodev.bpm.contract.dto.PresetHistoryEntryDTO;
+import com.zorrodev.bpm.contract.dto.PresetImportDTO;
+import com.zorrodev.bpm.contract.dto.UpdatePresetDTO;
+import com.zorrodev.bpm.contract.dto.VariablePresetDTO;
 import com.zorrodev.bpm.contract.exception.ApiException;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.entity.VariablePresetEntity;
@@ -57,18 +62,28 @@ public class VariablePresetService {
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
 
+/* WO-VT-1: граница WO-DEBT-7 — ресурс в zorrobpm-rest НЕ импортирует
+ * engine.entity/* (ловит RestRepositoryBoundaryTest), поэтому сервис принимает
+ * contract-DTO со строками (как ProcessMemberService принимает AddMemberDTO)
+ * и отдаёт готовые DTO: весь entity-маппинг — здесь, внутри engine.
+ */
+
+    /**
+     * Создание — строковые kind/visibility (неизвестные — машинная
+     * PRESET_VALIDATION_FAILED, а не 500); variables — готовый список.
+     */
     public record PresetPayload(
         String processDefinitionKey,
-        VariablePresetTargetKind targetKind,
+        String targetKind,
         String targetRef,
         String name,
         String description,
-        String variablesJson,
-        VariablePresetVisibility visibility) {
+        List<ProcessVariable> variables,
+        String visibility) {
     }
 
     @Transactional(readOnly = true)
-    public VariablePresetEntity get(Principal principal, UUID id) {
+    public VariablePresetDTO get(Principal principal, UUID id) {
         requireAuth(principal);
         VariablePresetEntity entity = presetRepository.findById(id)
             .orElseThrow(() -> notFound());
@@ -76,13 +91,13 @@ public class VariablePresetService {
             // Чужой PRIVATE — как отсутствующий (не раскрываем существование).
             throw notFound();
         }
-        return entity;
+        return toDto(entity, isFavoriteOf(entity.getId(), principal));
     }
 
     @Transactional(readOnly = true)
-    public List<VariablePresetEntity> list(Principal principal, String key,
-            VariablePresetTargetKind kind, String ref) {
+    public List<VariablePresetDTO> list(Principal principal, String key, String kind, String ref) {
         requireAuth(principal);
+        VariablePresetTargetKind targetKind = parseKind(kind);
         UUID me = actorUserId(principal);
         // Свои — все, фильтр matches() ниже (по key/kind/ref при наличии).
         List<VariablePresetEntity> own = presetRepository.findByOwnerUserId(me);
@@ -92,39 +107,44 @@ public class VariablePresetService {
                 principal, key, AuthorizationService.Action.VIEW_MEMBERS)) {
             // Чужие PROCESS только там, где вызывающий — участник. Без canOperate —
             // пусто (не раскрываем даже факта наличия чужих шаблонов).
-            if (kind != null) {
+            if (targetKind != null) {
                 shared.addAll(presetRepository.findSharedAtBinding(
-                    VariablePresetVisibility.PROCESS, key, kind,
-                    normalizeStoredRef(kind, ref), me));
+                    VariablePresetVisibility.PROCESS, key, targetKind,
+                    normalizeStoredRef(targetKind, ref), me));
             } else {
                 shared.addAll(presetRepository.findSharedInKeys(
                     VariablePresetVisibility.PROCESS, List.of(key), me));
             }
         }
-        List<VariablePresetEntity> out = new ArrayList<>(own.size() + shared.size());
+        List<VariablePresetDTO> out = new ArrayList<>(own.size() + shared.size());
         for (VariablePresetEntity e : own) {
-            if (matches(e, key, kind, ref)) {
-                out.add(e);
+            if (matches(e, key, targetKind, ref)) {
+                out.add(toDto(e, isFavoriteOf(e.getId(), principal)));
             }
         }
         for (VariablePresetEntity e : shared) {
-            if (matches(e, key, kind, ref) && out.stream().noneMatch(x -> x.getId().equals(e.getId()))) {
-                out.add(e);
+            if (matches(e, key, targetKind, ref)
+                    && out.stream().noneMatch(x -> x.getId().equals(e.getId()))) {
+                out.add(toDto(e, isFavoriteOf(e.getId(), principal)));
             }
         }
         return out;
     }
 
     @Transactional
-    public VariablePresetEntity create(Principal principal, PresetPayload payload) {
+    public VariablePresetDTO create(Principal principal, PresetPayload payload) {
         requireAuth(principal);
         requireCanLaunch(principal, payload.processDefinitionKey());
+        requireVariables(payload.variables());
+        VariablePresetTargetKind targetKind = parseKind(payload.targetKind());
+        VariablePresetVisibility visibility = parseVisibilityOrDefault(payload.visibility());
         List<VariablePresetValidator.FieldError> errors = new ArrayList<>();
         errors.addAll(VariablePresetValidator.validateName(payload.name()));
         errors.addAll(VariablePresetValidator.validateBinding(
-            payload.processDefinitionKey(), payload.targetKind(), payload.targetRef()));
+            payload.processDefinitionKey(), targetKind, payload.targetRef()));
         VariablePresetValidator.VariablesResult vars =
-            VariablePresetValidator.parseAndValidate(payload.variablesJson());
+            VariablePresetValidator.parseAndValidate(
+                VariablePresetValidator.toJson(payload.variables()));
         errors.addAll(vars.errors());
         failOnErrors(errors);
         UUID owner = actorUserId(principal);
@@ -135,22 +155,21 @@ public class VariablePresetService {
                     + VariablePresetValidator.MAX_PRESETS_PER_KEY_OWNER + ")",
                 Map.of("processDefinitionKey", payload.processDefinitionKey()));
         }
-        String storedRef = normalizeStoredRef(payload.targetKind(), payload.targetRef());
+        String storedRef = normalizeStoredRef(targetKind, payload.targetRef());
         if (presetRepository.existsByOwnerUserIdAndProcessDefinitionKeyAndTargetKindAndTargetRefAndName(
-                owner, payload.processDefinitionKey(), payload.targetKind(), storedRef, payload.name().trim())) {
+                owner, payload.processDefinitionKey(), targetKind, storedRef, payload.name().trim())) {
             throw conflict("A preset with this name already exists here");
         }
         VariablePresetEntity entity = new VariablePresetEntity();
         entity.setId(UUID.randomUUID());
         entity.setProcessDefinitionKey(payload.processDefinitionKey());
-        entity.setTargetKind(payload.targetKind());
+        entity.setTargetKind(targetKind);
         entity.setTargetRef(storedRef);
         entity.setName(payload.name().trim());
         entity.setDescription(blankToNull(payload.description()));
         entity.setVariables(VariablePresetValidator.toJson(vars.variables()));
         entity.setOwnerUserId(owner);
-        entity.setVisibility(payload.visibility() == null
-            ? VariablePresetVisibility.PRIVATE : payload.visibility());
+        entity.setVisibility(visibility);
         entity.setCreatedAt(Instant.now());
         entity.setUpdatedAt(entity.getCreatedAt());
         entity.setVersion(0);
@@ -163,12 +182,11 @@ public class VariablePresetService {
         auditLogService.record(principal, "PRESET_CREATE",
             entity.getProcessDefinitionKey(), entity.getId().toString());
         recordHistory(principal, entity.getId(), "CREATE", null, entity.getVariables());
-        return entity;
+        return toDto(entity, false);
     }
 
     @Transactional
-    public VariablePresetEntity update(Principal principal, UUID id, String name, String description,
-            String variablesJson, VariablePresetVisibility visibility, int version) {
+    public VariablePresetDTO update(Principal principal, UUID id, UpdatePresetDTO dto) {
         requireAuth(principal);
         VariablePresetEntity entity = presetRepository.findById(id)
             .orElseThrow(VariablePresetService::notFound);
@@ -180,24 +198,30 @@ public class VariablePresetService {
                 "Only the owner, a process admin or SUPER_ADMIN may change this preset",
                 Map.of("id", id.toString()));
         }
-        if (entity.getVersion() != version) {
+        if (entity.getVersion() != dto.getVersion()) {
             throw new ApiException(HttpStatus.CONFLICT, "PRESET_CONFLICT",
-                "Preset was changed concurrently (expected version " + version
+                "Preset was changed concurrently (expected version " + dto.getVersion()
                     + ", actual " + entity.getVersion() + ")",
-                Map.of("expectedVersion", version, "actualVersion", entity.getVersion()));
+                Map.of("expectedVersion", dto.getVersion(), "actualVersion", entity.getVersion()));
         }
         List<VariablePresetValidator.FieldError> errors = new ArrayList<>();
         String newName = entity.getName();
-        if (name != null) {
-            errors.addAll(VariablePresetValidator.validateName(name));
-            newName = name.trim();
+        if (dto.getName() != null) {
+            errors.addAll(VariablePresetValidator.validateName(dto.getName()));
+            newName = dto.getName().trim();
         }
         List<ProcessVariable> newVars = null;
-        if (variablesJson != null) {
+        if (dto.getVariables() != null) {
+            requireVariables(dto.getVariables());
             VariablePresetValidator.VariablesResult vars =
-                VariablePresetValidator.parseAndValidate(variablesJson);
+                VariablePresetValidator.parseAndValidate(
+                    VariablePresetValidator.toJson(dto.getVariables()));
             errors.addAll(vars.errors());
             newVars = vars.variables();
+        }
+        VariablePresetVisibility newVisibility = entity.getVisibility();
+        if (dto.getVisibility() != null) {
+            newVisibility = parseVisibility(dto.getVisibility());
         }
         failOnErrors(errors);
         if (!newName.equals(entity.getName())
@@ -207,17 +231,15 @@ public class VariablePresetService {
             throw conflict("A preset with this name already exists here");
         }
         entity.setName(newName);
-        if (description != null) {
-            entity.setDescription(blankToNull(description));
+        if (dto.getDescription() != null) {
+            entity.setDescription(blankToNull(dto.getDescription()));
         }
         String variablesBefore = null;
         if (newVars != null) {
             variablesBefore = entity.getVariables();
             entity.setVariables(VariablePresetValidator.toJson(newVars));
         }
-        if (visibility != null) {
-            entity.setVisibility(visibility);
-        }
+        entity.setVisibility(newVisibility);
         entity.setUpdatedAt(Instant.now());
         entity.setVersion(entity.getVersion() + 1);
         try {
@@ -232,7 +254,7 @@ public class VariablePresetService {
             // фиксируется аудитом, снапшоты до/после совпали бы побайтово).
             recordHistory(principal, entity.getId(), "UPDATE", variablesBefore, entity.getVariables());
         }
-        return entity;
+        return toDto(entity, isFavoriteOf(entity.getId(), principal));
     }
 
     @Transactional
@@ -263,8 +285,7 @@ public class VariablePresetService {
      * молча потерял смену видимости.
      */
     @Transactional
-    public VariablePresetEntity changeVisibility(
-            Principal principal, UUID id, VariablePresetVisibility visibility) {
+    public VariablePresetDTO changeVisibility(Principal principal, UUID id, String visibility) {
         requireAuth(principal);
         VariablePresetEntity entity = presetRepository.findById(id)
             .orElseThrow(VariablePresetService::notFound);
@@ -276,18 +297,18 @@ public class VariablePresetService {
                 "Only the owner, a process admin or SUPER_ADMIN may change visibility",
                 Map.of("id", id.toString()));
         }
-        if (visibility == null) {
+        if (visibility == null || visibility.isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "PRESET_VALIDATION_FAILED",
                 "Preset validation failed",
                 Map.of("fields", List.of(Map.of("field", "visibility", "message", "visibility is required"))));
         }
-        entity.setVisibility(visibility);
+        entity.setVisibility(parseVisibility(visibility));
         entity.setUpdatedAt(Instant.now());
         entity.setVersion(entity.getVersion() + 1);
         entity = presetRepository.saveAndFlush(entity);
         auditLogService.record(principal, "PRESET_VISIBILITY",
             entity.getProcessDefinitionKey(), entity.getId().toString());
-        return entity;
+        return toDto(entity, isFavoriteOf(entity.getId(), principal));
     }
 
     /**
@@ -341,14 +362,63 @@ public class VariablePresetService {
      * снапшотами; DELETE — только в аудит-логе (см. комментарий в delete()).
      */
     @Transactional(readOnly = true)
-    public List<VariablePresetHistoryEntity> history(Principal principal, UUID id) {
+    public List<PresetHistoryEntryDTO> history(Principal principal, UUID id) {
         requireAuth(principal);
         VariablePresetEntity entity = presetRepository.findById(id)
             .orElseThrow(VariablePresetService::notFound);
         if (!canRead(principal, entity)) {
             throw notFound();
         }
-        return historyRepository.findByPresetIdOrderByAtAscIdAsc(id);
+        return historyRepository.findByPresetIdOrderByAtAscIdAsc(id).stream().map(r -> {
+            PresetHistoryEntryDTO dto = new PresetHistoryEntryDTO();
+            dto.setId(r.getId());
+            dto.setAction(r.getAction());
+            dto.setActorUserId(r.getActorUserId());
+            dto.setAt(r.getAt());
+            dto.setVariablesBefore(r.getVariablesBefore() == null
+                ? null : VariablePresetValidator.parseStored(r.getVariablesBefore()));
+            dto.setVariablesAfter(r.getVariablesAfter() == null
+                ? null : VariablePresetValidator.parseStored(r.getVariablesAfter()));
+            return dto;
+        }).toList();
+    }
+
+    /**
+     * WO-VT-1 п.3: export — то же тело, что import (формат запроса старта +
+     * привязка и имя). Права — как на чтение.
+     */
+    @Transactional(readOnly = true)
+    public PresetImportDTO exportPreset(Principal principal, UUID id) {
+        requireAuth(principal);
+        VariablePresetEntity entity = presetRepository.findById(id)
+            .orElseThrow(VariablePresetService::notFound);
+        if (!canRead(principal, entity)) {
+            throw notFound();
+        }
+        PresetImportDTO dto = new PresetImportDTO();
+        dto.setProcessDefinitionKey(entity.getProcessDefinitionKey());
+        dto.setTargetKind(entity.getTargetKind().name());
+        dto.setTargetRef(storedRefToApi(entity.getTargetRef()));
+        dto.setName(entity.getName());
+        dto.setDescription(entity.getDescription());
+        dto.setVisibility(entity.getVisibility().name());
+        dto.setVariables(VariablePresetValidator.parseStored(entity.getVariables()));
+        return dto;
+    }
+
+    /** Import — тот же create, другим именем (тело как в запросе старта, п.3 WO). */
+    @Transactional
+    public VariablePresetDTO importPreset(Principal principal, PresetImportDTO dto) {
+        return create(principal, new PresetPayload(dto.getProcessDefinitionKey(),
+            dto.getTargetKind(), dto.getTargetRef(), dto.getName(), dto.getDescription(),
+            dto.getVariables(), dto.getVisibility()));
+    }
+
+    @Transactional
+    public VariablePresetDTO createFromContract(Principal principal, CreatePresetDTO dto) {
+        return create(principal, new PresetPayload(dto.getProcessDefinitionKey(),
+            dto.getTargetKind(), dto.getTargetRef(), dto.getName(), dto.getDescription(),
+            dto.getVariables(), dto.getVisibility()));
     }
 
     private void recordHistory(Principal principal, UUID presetId, String action,
@@ -433,6 +503,71 @@ public class VariablePresetService {
 
     private static String blankToNull(String s) {
         return s == null || s.isBlank() ? null : s;
+    }
+
+    /** Хранение '' → API null (см. комментарий changeset 20261007-120). */
+    private static String storedRefToApi(String stored) {
+        return stored == null || stored.isEmpty() ? null : stored;
+    }
+
+    private static void requireVariables(List<ProcessVariable> variables) {
+        if (variables == null || variables.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "PRESET_VALIDATION_FAILED",
+                "Preset validation failed",
+                Map.of("fields", List.of(
+                    Map.of("field", "variables", "message", "variables must be a non-empty array"))));
+        }
+    }
+
+    /** Неизвестный kind — машинная PRESET_VALIDATION_FAILED, а не 500. */
+    static VariablePresetTargetKind parseKind(String kind) {
+        if (kind == null || kind.isBlank()) return null;
+        try {
+            return VariablePresetTargetKind.valueOf(kind.trim());
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "PRESET_VALIDATION_FAILED",
+                "Preset validation failed",
+                Map.of("fields", List.of(
+                    Map.of("field", "targetKind", "message", "unknown targetKind '" + kind + "'"))));
+        }
+    }
+
+    static VariablePresetVisibility parseVisibility(String visibility) {
+        try {
+            return VariablePresetVisibility.valueOf(visibility.trim());
+        } catch (IllegalArgumentException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "PRESET_VALIDATION_FAILED",
+                "Preset validation failed",
+                Map.of("fields", List.of(
+                    Map.of("field", "visibility", "message", "unknown visibility '" + visibility + "'"))));
+        }
+    }
+
+    private static VariablePresetVisibility parseVisibilityOrDefault(String visibility) {
+        if (visibility == null || visibility.isBlank()) return VariablePresetVisibility.PRIVATE;
+        return parseVisibility(visibility);
+    }
+
+    private VariablePresetDTO toDto(VariablePresetEntity e, boolean favorite) {
+        VariablePresetDTO dto = new VariablePresetDTO();
+        dto.setId(e.getId());
+        dto.setProcessDefinitionKey(e.getProcessDefinitionKey());
+        dto.setTargetKind(e.getTargetKind().name());
+        dto.setTargetRef(storedRefToApi(e.getTargetRef()));
+        dto.setName(e.getName());
+        dto.setDescription(e.getDescription());
+        dto.setVariables(VariablePresetValidator.parseStored(e.getVariables()));
+        dto.setOwnerUserId(e.getOwnerUserId());
+        dto.setVisibility(e.getVisibility().name());
+        dto.setFavorite(favorite);
+        dto.setCreatedAt(e.getCreatedAt());
+        dto.setUpdatedAt(e.getUpdatedAt());
+        dto.setVersion(e.getVersion());
+        return dto;
+    }
+
+    private boolean isFavoriteOf(UUID presetId, Principal principal) {
+        return favoriteRepository.existsByUserIdAndPresetId(actorUserId(principal), presetId);
     }
 
     /**
