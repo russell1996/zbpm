@@ -82,9 +82,11 @@ public class CancelEndHandler implements ElementHandler, TypedElementHandler {
         UUID parentToken = parentOfScopeToken(endToken, scopeActivityId);
         log.info("{}/{}: Cancel end {} cancelling transaction {}", processInstanceId, tokenId, bpmnElement.getId(), transaction.getId());
 
-        // compensate the transaction scope's completed activities (BPMN 2.0: гасятся
-        // ВСЕ активные исполнения scope, затем компенсация в scope транзакции —
-        // CIB seven transaction-subprocess; фильтр — тот же scope-confined, что
+        // compensate the transaction scope's completed activities (BPMN 2.0: cancel-граница
+        // сначала прерывает ВСЕ активные исполнения scope, затем синхронно компенсирует в
+        // scope транзакции — CIB seven transaction-subprocess; в коде компенсация идёт
+        // раньше физической отмены строк, но множества disjoint (completed vs active),
+        // так что порядок функционально иррелевантен; фильтр — тот же scope-confined, что
         // terminate-путь и compensation-throw, а не равенство токена: иначе
         // соседи по форку не компенсируются и не отменяются).
         List<Activity> scopeCompleted = elementSupport.filterActivitiesInScope(
