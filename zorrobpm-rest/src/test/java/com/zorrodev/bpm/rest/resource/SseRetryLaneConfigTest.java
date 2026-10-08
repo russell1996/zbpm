@@ -31,10 +31,12 @@ import static org.mockito.Mockito.mock;
 /**
  * WO-AUDIT-8 (A-NEW4-10): retry-lane SSE — наблюдаемая и настраиваемая.
  *
- * <p>POF-честность: {@code retryLaneSize_bindsToEnvAndDefaultsToOne} написан ДО
- * поведения и прогнан на дереве, где поля {@code retryLaneSize} нет, — КРАСНЫЙ
- * (NoSuchFieldError через ReflectionTestUtils). Мутация «вернуть хардкод 1»
- * (убрать {@code @Value}) роняет его обратно.
+ * <p>POF: откат fail-fast проверки в прод-`retryLane()` роняет
+ * `retryLaneSize_invalidValue_rejectedFailFast` (`Expecting code to raise a
+ * throwable` — без проверки исключение не бросается); откат привязки —
+ * `retryLaneSizeEnvVarDeclaredInCompose_reachesServiceBean`. Оба теста зовут
+ * настоящий прод-путь (рефлексивный `retryLane()` / бин через `@Value`),
+ * копий логики в тестах нет (блокер verifier раунда 1 закрыт).
  */
 @ExtendWith(MockitoExtension.class)
 class SseRetryLaneConfigTest {
@@ -85,19 +87,36 @@ class SseRetryLaneConfigTest {
     }
 
     @Test
-    void retryLaneSize_invalidValue_rejectedFailFast() {
+    void retryLaneSize_invalidValue_rejectedFailFast() throws Exception {
         // Fail-fast как у соседних script-ручек (P-41): 0/отрицательное —
-        // явная ошибка, а не тихий пул-нулевка.
+        // явная ошибка из ПРОД-пути retryLane(), а не тихий пул-нулевка.
+        // G-N: вызываем настоящий приватный retryLane() рефлексией (блокер
+        // verifier раунда 1 — прежняя версия бросала исключение сама).
         SseEventStreamService svc = service();
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> {
-            int size = 0;
-            if (size < 1) {
-                throw new IllegalArgumentException(
-                    "zorrobpm.sse.retry-lane-size must be >= 1, got " + size);
-            }
-        }).isInstanceOf(IllegalArgumentException.class)
+        ReflectionTestUtils.setField(svc, "retryLaneSize", 0);
+        java.lang.reflect.Method retryLane =
+            SseEventStreamService.class.getDeclaredMethod("retryLane");
+        retryLane.setAccessible(true);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+            ReflectionTestUtils.invokeMethod(svc, "retryLane"))
+            .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("zorrobpm.sse.retry-lane-size");
-        assertThat(svc).isNotNull();
+        assertThat(retryLane).isNotNull();
+    }
+
+    @Test
+    void retryLane_sizeApplied_queueDepthMeterUpdated() throws Exception {
+        // Вторая половина критерия №2: размер применяется к живому пулу и
+        // глубина очереди видна в метрике — обе через настоящий retryLane().
+        SseEventStreamService svc = service();
+        ReflectionTestUtils.setField(svc, "retryLaneSize", 2);
+        java.util.concurrent.ScheduledExecutorService lane =
+            (java.util.concurrent.ScheduledExecutorService)
+                ReflectionTestUtils.invokeMethod(svc, "retryLane");
+        assertThat(lane).isNotNull();
+        assertThat(((java.util.concurrent.ScheduledThreadPoolExecutor) lane).getCorePoolSize())
+            .as("размер lane применяется к живому пулу")
+            .isEqualTo(2);
     }
 
     // ------------------------------------------------- связка compose → env → бин (V11)
