@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import VariablesEditor from './VariablesEditor.vue'
 import type {
@@ -23,6 +23,7 @@ import {
 import { validatePresetRow, duplicateVariableNames } from '@/shared/lib/presetVariables'
 import { errorMessage } from '@/shared/lib/utils'
 import { useToast } from '@/composables/useToast'
+import { onCtrlEnter, usePresetModal } from '@/composables/usePresetModal'
 
 /**
  * WO-VT-1 (фронт, §1-бис п.2-бис): создание/правка шаблона. Правка — через PUT
@@ -63,6 +64,29 @@ const confirmDelete = ref(false)
 const view = ref<'edit' | 'history'>('edit')
 const history = ref<PresetHistoryEntry[]>([])
 const historyLoading = ref(false)
+
+// WO-VT-3 (критерии 4, 5, 8): липкие шапка/подвал, focus-trap + Esc,
+// Ctrl+Enter = сохранить, скролл фона заблокирован, фокус возвращается.
+const dialogRef = ref<HTMLElement | null>(null)
+const openRef = computed(() => props.open)
+function requestClose() {
+  emit('close')
+}
+usePresetModal(openRef, dialogRef, requestClose)
+
+function onDialogKeydown(e: KeyboardEvent) {
+  onCtrlEnter(e, () => {
+    if (!formError.value && !saving.value) void save()
+  })
+}
+
+function historyActionLabel(action: string): string {
+  const key = `presetHistoryAction_${action}`
+  const v = t(key)
+  // Нет ключа для нового действия сервера — показываем сырое (честно);
+  // localeKeys-сканер это место покрывает через presetHistoryAction_*.
+  return v === key ? action : v
+}
 
 const isEdit = computed(() => !!props.presetId)
 const titleKey = computed(() => {
@@ -205,10 +229,31 @@ async function remove() {
     confirmDelete.value = true
     return
   }
+  // WO-VT-3 Дополнение №2 п.4: «Отменить» в тосте — пересоздаём удалённое
+  // теми же данными (данные уже загружены в форму правки).
+  const backup = {
+    processDefinitionKey: props.processKey,
+    targetKind: props.targetKind,
+    targetRef: props.targetRef ?? null,
+    name: name.value.trim(),
+    description: description.value || null,
+    visibility: visibility.value,
+    variables: cleanVariables(),
+  }
+  const deletedId = props.presetId
   try {
-    await deletePreset(props.presetId)
-    toast.success(t('presetDeleted'))
-    emit('deleted', props.presetId)
+    await deletePreset(deletedId)
+    toast.success(t('presetDeleted'), {
+      action: {
+        label: t('presetUndo'),
+        onClick: () => {
+          void createPreset(backup)
+            .then((saved) => emit('saved', saved))
+            .catch((e: unknown) => toast.error(errorMessage(e, t('presetSaveFailed'))))
+        },
+      },
+    })
+    emit('deleted', deletedId)
     emit('close')
   } catch (e) {
     saveError.value = errorMessage(e, t('presetDeleteFailed'))
@@ -265,22 +310,27 @@ function historyJson(vars: PresetVariable[] | null): string {
 <template>
   <div
     v-if="open"
-    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-    @click.self="emit('close')"
+    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+    @click.self="requestClose"
   >
+    <!-- WO-VT-3 (критерий 4): min(960px, 94vw), шапка/подвал липкие,
+         тело скроллится; Esc/trap/Ctrl+Enter — usePresetModal. -->
     <div
-      class="bg-card rounded-lg shadow-lg w-full max-w-2xl p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+      ref="dialogRef"
+      class="flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-lg bg-card shadow-lg"
+      style="width: min(960px, 94vw);"
       role="dialog"
       aria-modal="true"
       :aria-label="t(titleKey)"
+      @keydown="onDialogKeydown"
     >
-      <div class="flex items-center justify-between">
-        <h2 class="text-lg font-bold">{{ t(titleKey) }}</h2>
-        <div class="flex items-center gap-2">
+      <div class="sticky top-0 flex items-center justify-between gap-2 border-b border-border bg-card px-4 py-3">
+        <h2 class="truncate text-lg font-bold">{{ t(titleKey) }}</h2>
+        <div class="flex shrink-0 items-center gap-2">
           <button
             v-if="isEdit && !duplicateName"
             type="button"
-            class="text-xl leading-none px-1"
+            class="h-8 w-8 px-1 text-xl leading-none"
             :aria-label="t('presetFavorite')"
             :aria-pressed="favorite ? 'true' : 'false'"
             :title="t('presetFavorite')"
@@ -290,14 +340,15 @@ function historyJson(vars: PresetVariable[] | null): string {
           </button>
           <button
             type="button"
-            class="text-sm text-muted-foreground hover:text-foreground"
-            @click="emit('close')"
+            class="h-8 px-2 text-sm text-muted-foreground hover:text-foreground"
+            @click="requestClose"
           >
             {{ t('close') }}
           </button>
         </div>
       </div>
 
+      <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
       <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
       <template v-else-if="view === 'history'">
@@ -306,17 +357,17 @@ function historyJson(vars: PresetVariable[] | null): string {
         <ol v-else class="space-y-3">
           <li v-for="h in history" :key="h.id" class="border border-border rounded-md p-3 space-y-2">
             <div class="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-              <span class="font-semibold text-foreground">{{ h.action }}</span>
+              <span class="font-semibold text-foreground">{{ historyActionLabel(h.action) }}</span>
               <span class="font-mono">{{ h.at }}</span>
             </div>
-            <div class="grid grid-cols-2 gap-2 text-xs">
-              <div>
+            <div class="grid grid-cols-1 min-[560px]:grid-cols-2 gap-2 text-xs">
+              <div class="min-w-0">
                 <div class="font-semibold mb-1">{{ t('presetHistoryBefore') }}</div>
-                <pre class="font-mono bg-muted rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">{{ historyJson(h.variablesBefore) }}</pre>
+                <pre class="font-mono bg-muted rounded p-2 overflow-auto whitespace-pre-wrap break-all max-h-48">{{ historyJson(h.variablesBefore) }}</pre>
               </div>
-              <div>
+              <div class="min-w-0">
                 <div class="font-semibold mb-1">{{ t('presetHistoryAfter') }}</div>
-                <pre class="font-mono bg-muted rounded p-2 overflow-x-auto whitespace-pre-wrap break-all">{{ historyJson(h.variablesAfter) }}</pre>
+                <pre class="font-mono bg-muted rounded p-2 overflow-auto whitespace-pre-wrap break-all max-h-48">{{ historyJson(h.variablesAfter) }}</pre>
               </div>
             </div>
           </li>
@@ -333,43 +384,43 @@ function historyJson(vars: PresetVariable[] | null): string {
       </template>
 
       <template v-else>
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label for="preset-name" class="block text-xs font-medium mb-1">{{ t('presetName') }}</label>
+        <div class="grid grid-cols-1 gap-3 min-[560px]:grid-cols-2">
+          <div class="min-w-0">
+            <label for="preset-name" class="mb-1 block text-xs font-medium">{{ t('presetName') }}</label>
             <input
               id="preset-name"
               v-model="name"
-              class="w-full px-2 py-1.5 border border-input rounded text-sm"
+              class="h-9 w-full rounded border border-input px-2 py-1.5 text-sm"
               maxlength="255"
             />
           </div>
-          <div>
-            <label for="preset-visibility" class="block text-xs font-medium mb-1">{{ t('presetVisibility') }}</label>
-            <select id="preset-visibility" v-model="visibility" class="w-full px-2 py-1.5 border border-input rounded text-sm">
+          <div class="min-w-0">
+            <label for="preset-visibility" class="mb-1 block text-xs font-medium">{{ t('presetVisibility') }}</label>
+            <select id="preset-visibility" v-model="visibility" class="h-9 w-full rounded border border-input px-2 py-1.5 text-sm">
               <option value="PRIVATE">{{ t('presetVisibilityPrivate') }}</option>
               <option value="PROCESS">{{ t('presetVisibilityProcess') }}</option>
             </select>
           </div>
         </div>
         <div>
-          <label for="preset-desc" class="block text-xs font-medium mb-1">{{ t('presetDescription') }}</label>
+          <label for="preset-desc" class="mb-1 block text-xs font-medium">{{ t('presetDescription') }}</label>
           <input
             id="preset-desc"
             v-model="description"
-            class="w-full px-2 py-1.5 border border-input rounded text-sm"
+            class="h-9 w-full rounded border border-input px-2 py-1.5 text-sm"
           />
         </div>
-        <div class="text-xs text-muted-foreground font-mono">
+        <div class="font-mono text-xs text-muted-foreground">
           {{ targetKind }}{{ targetRef ? ` · ${targetRef}` : '' }}
         </div>
 
-        <VariablesEditor v-model="variables" />
+        <VariablesEditor v-model="variables" id-prefix="pe" />
 
-        <div v-if="conflict" class="border border-amber-400 rounded-md p-3 bg-amber-50/50 dark:bg-amber-950/20 space-y-2">
+        <div v-if="conflict" class="space-y-2 rounded-md border border-amber-400 bg-amber-50/50 p-3 dark:bg-amber-950/20">
           <p role="alert" class="text-sm text-amber-700 dark:text-amber-300">{{ t('presetVersionConflict') }}</p>
           <button
             type="button"
-            class="px-3 py-1.5 text-xs border border-border rounded-md hover:bg-muted"
+            class="h-8 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
             @click="reloadLatest"
           >
             {{ t('presetReloadLatest') }}
@@ -377,45 +428,47 @@ function historyJson(vars: PresetVariable[] | null): string {
         </div>
         <p v-if="saveError && !conflict" role="alert" class="text-sm text-red-500">{{ saveError }}</p>
         <p v-else-if="formError" class="text-xs text-muted-foreground">{{ formError }}</p>
+      </template>
+      </div>
 
-        <div class="flex items-center justify-between pt-2">
+      <div class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border bg-card px-4 py-3">
           <div>
             <button
               v-if="isEdit && !duplicateName"
               type="button"
-              class="px-3 py-1.5 text-xs text-red-500 hover:underline"
+              class="h-8 px-3 py-1.5 text-xs text-red-500 hover:underline"
               @click="remove"
             >
               {{ confirmDelete ? t('presetConfirmDelete') : t('presetDelete') }}
             </button>
             <button
-              v-if="isEdit && !duplicateName"
+              v-if="isEdit && !duplicateName && view !== 'history'"
               type="button"
-              class="px-3 py-1.5 text-xs text-primary hover:underline"
+              class="h-8 px-3 py-1.5 text-xs text-primary hover:underline"
               @click="openHistory"
             >
               {{ t('presetHistory') }}
             </button>
           </div>
-          <div class="flex justify-end gap-2">
+          <div class="flex flex-wrap justify-end gap-2">
             <button
               v-if="isEdit && !duplicateName"
               type="button"
-              class="px-3 py-1.5 text-xs border border-border rounded-md hover:bg-muted"
+              class="h-8 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
               @click="toggleVisibility"
             >
               {{ shareLabel }}
             </button>
             <button
               type="button"
-              class="px-4 py-1.5 text-sm border border-border rounded-md hover:bg-muted"
-              @click="emit('close')"
+              class="h-9 rounded-md border border-border px-4 py-1.5 text-sm hover:bg-muted"
+              @click="requestClose"
             >
               {{ t('cancel') }}
             </button>
             <button
               type="button"
-              class="px-4 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
+              class="h-9 rounded-md bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
               :disabled="!!formError || saving"
               @click="save"
             >
@@ -423,7 +476,6 @@ function historyJson(vars: PresetVariable[] | null): string {
             </button>
           </div>
         </div>
-      </template>
     </div>
   </div>
 </template>

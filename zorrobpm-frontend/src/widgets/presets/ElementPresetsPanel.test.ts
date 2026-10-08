@@ -62,25 +62,32 @@ describe('ElementPresetsPanel', () => {
     expect(mockList).toHaveBeenCalledWith({ key: 'k', kind: 'USER_TASK', ref: 't1' })
   })
 
-  it('existing presets render rows with edit/duplicate/delete', async () => {
+  it('existing presets render cards with ⋯ menu (edit/duplicate/export/delete inside)', async () => {
     mockList.mockResolvedValue([{ ...PRESET }])
     const w = render()
     await flushPromises()
     expect(w.text()).toContain('case-a')
+    // WO-VT-3: действия уехали под ⋯ — в закрытом виде их нет.
+    expect(w.text()).not.toContain('presetEdit')
+    await w.find('[data-testid="preset-card"] [data-testid="row-menu-button"]').trigger('click')
+    await flushPromises()
     expect(w.text()).toContain('presetEdit')
     expect(w.text()).toContain('presetDuplicate')
+    expect(w.text()).toContain('presetExport')
     expect(w.text()).toContain('presetCreateNew')
   })
 
-  it('delete needs two clicks, then calls the service', async () => {
+  it('delete via ⋯ menu needs confirm, then calls the service', async () => {
     mockList.mockResolvedValue([{ ...PRESET }])
     const w = render()
     await flushPromises()
-    const delBtn = w.findAll('button').find((b) => b.text().includes('presetDelete'))!
-    await delBtn.trigger('click')
+    await w.find('[data-testid="preset-card"] [data-testid="row-menu-button"]').trigger('click')
+    await flushPromises()
+    const delItem = w.find('[data-testid="row-menu-item-delete"]')
+    await delItem.trigger('click')
     expect(mockDelete).not.toHaveBeenCalled()
-    expect(w.text()).toContain('presetConfirmDelete')
-    await w.findAll('button').find((b) => b.text().includes('presetConfirmDelete'))!.trigger('click')
+    expect(w.text()).toContain('presetDeleteRowConfirm')
+    await w.findAll('button').find((b) => b.text().includes('presetDeleteRowYes'))!.trigger('click')
     await flushPromises()
     expect(mockDelete).toHaveBeenCalledWith('p1')
   })
