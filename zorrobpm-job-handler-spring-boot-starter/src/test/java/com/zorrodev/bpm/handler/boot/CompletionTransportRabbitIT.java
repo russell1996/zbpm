@@ -104,7 +104,8 @@ class CompletionTransportRabbitIT {
         // Durable очереди: переживают destroy соединений (тест рвёт транспорт, не брокер).
         // Auto-delete здесь — та же ошибка, что чиним: очередь исчезала вместе с консьюмером.
         admin.declareQueue(new org.springframework.amqp.core.Queue(JOB_QUEUE, true, false, false));
-        admin.declareQueue(new org.springframework.amqp.core.Queue(COMPLETE_QUEUE, true, false, false));
+        // WO-INT-10: completion идёт через exchange — очередь + identity-биндинг, как прод-топология.
+        CompletionExchangeProbe.bindQueue(admin, COMPLETE_QUEUE);
         admin.purgeQueue(JOB_QUEUE, false);
         admin.purgeQueue(COMPLETE_QUEUE, false);
         // Fail-fast на грязный брокер: stale-сообщения дали бы ложный GREEN по счётчику

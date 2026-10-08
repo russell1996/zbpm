@@ -57,23 +57,32 @@ class RabbitMqProvisioningServiceTest {
     // ==================== Схема permissions ====================
 
     @Test
-    void permissionsFor_singleJob_coversQueueDlqAndCompletions() {
+    void permissionsFor_singleJob_coversQueueDlqPoisonAndCompletionExchange() {
         RabbitMqProvisioningService.Permissions p =
             RabbitMqProvisioningService.permissionsFor(Set.of("billing"));
 
-        assertThat(p.read()).isEqualTo("^zorrobpm\\.jobs\\.(billing)(\\.dlq)?$");
+        assertThat(p.read()).isEqualTo(
+            "(^zorrobpm\\.jobs\\.(billing)(\\.dlq)?$)|(^zorrobpm\\.completion\\.poison$)");
         assertThat(p.configure()).isEqualTo("^zorrobpm\\.jobs\\.(billing)(\\.dlq)?$");
-        assertThat(p.write())
-            .isEqualTo("(^zorrobpm\\.jobs\\.(billing)$)|(^zorrobpm\\.complete-service-task$)");
+        // WO-INT-10: write — только completion-exchange (публикация через него;
+        // имена очередей в write бессмысленны — брокер матчит против exchange).
+        assertThat(p.write()).isEqualTo("^zorrobpm\\.completions$");
 
         // Regex реально матчит то, что должен, — через java.util.regex,
         // тем же движком семантически, что Erlang re на брокере.
         assertThat(Pattern.compile(p.read()).matcher("zorrobpm.jobs.billing").matches()).isTrue();
         assertThat(Pattern.compile(p.read()).matcher("zorrobpm.jobs.billing.dlq").matches()).isTrue();
         assertThat(Pattern.compile(p.read()).matcher("zorrobpm.jobs.other").matches()).isFalse();
-        assertThat(Pattern.compile(p.write()).matcher("zorrobpm.complete-service-task").matches()).isTrue();
-        assertThat(Pattern.compile(p.write()).matcher("zorrobpm.jobs.billing").matches()).isTrue();
+        assertThat(Pattern.compile(p.read()).matcher("zorrobpm.completion.poison").matches()).isTrue();
+        assertThat(Pattern.compile(p.read()).matcher("zorrobpm.complete-service-task").matches()).isFalse();
+        // WO-INT-10: write матчит РОВНО имя exchange — не очередь, не amq.default,
+        // не чужой exchange.
+        assertThat(Pattern.compile(p.write()).matcher("zorrobpm.completions").matches()).isTrue();
+        assertThat(Pattern.compile(p.write()).matcher("amq.default").matches()).isFalse();
+        assertThat(Pattern.compile(p.write()).matcher("zorrobpm.complete-service-task").matches()).isFalse();
+        assertThat(Pattern.compile(p.write()).matcher("zorrobpm.jobs.billing").matches()).isFalse();
         assertThat(Pattern.compile(p.write()).matcher("zorrobpm.jobs.billing.dlq").matches()).isFalse();
+        assertThat(Pattern.compile(p.write()).matcher("zorrobpm.jobs.other").matches()).isFalse();
         assertThat(Pattern.compile(p.configure()).matcher("zorrobpm.jobs.dlx").matches()).isFalse();
     }
 
@@ -83,8 +92,10 @@ class RabbitMqProvisioningServiceTest {
             RabbitMqProvisioningService.permissionsFor(Set.of());
 
         // Verifier HOLD #2: юзер с нулём процессов — deny-all целиком,
-        // включая completions (иначе ковка чужих service-task'ов).
+        // включая completions (иначе ковка чужих service-task'ов) и poison.
         assertThat(Pattern.compile(p.read()).matcher("zorrobpm.jobs.anything").matches()).isFalse();
+        assertThat(Pattern.compile(p.read()).matcher("zorrobpm.completion.poison").matches()).isFalse();
+        assertThat(Pattern.compile(p.write()).matcher("zorrobpm.completions").matches()).isFalse();
         assertThat(Pattern.compile(p.write()).matcher("zorrobpm.complete-service-task").matches()).isFalse();
         assertThat(Pattern.compile(p.write()).matcher("zorrobpm.jobs.anything").matches()).isFalse();
     }

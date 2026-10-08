@@ -88,7 +88,8 @@ class CompletionReliablePublishRabbitIT {
         admin.setAutoStartup(true);
         admin.afterPropertiesSet();
         admin.declareQueue(new org.springframework.amqp.core.Queue(JOB_QUEUE, true, false, false));
-        admin.declareQueue(new org.springframework.amqp.core.Queue(COMPLETE_QUEUE, true, false, false));
+        // WO-INT-10: completion идёт через exchange — очередь + identity-биндинг, как прод-топология.
+        CompletionExchangeProbe.bindQueue(admin, COMPLETE_QUEUE);
         admin.purgeQueue(JOB_QUEUE, false);
         admin.purgeQueue(COMPLETE_QUEUE, false);
         assertThat(serverMessageCount(JOB_QUEUE)).as("вход пуст на старте").isZero();
@@ -194,7 +195,8 @@ class CompletionReliablePublishRabbitIT {
                 .isPositive();
 
             // «Правка маршрута»: объявляем очередь — следующий redelivery доходит.
-            admin.declareQueue(new org.springframework.amqp.core.Queue(NO_SUCH_QUEUE, true, false, false));
+            // WO-INT-10: «правка маршрута» = очередь + identity-биндинг к exchange.
+            CompletionExchangeProbe.bindQueue(admin, NO_SUCH_QUEUE);
             try {
                 awaitCompletionFrom(taskId, NO_SUCH_QUEUE, Duration.ofSeconds(20));
                 Thread.sleep(2000);
@@ -234,7 +236,7 @@ class CompletionReliablePublishRabbitIT {
             private final AtomicBoolean firstSend = new AtomicBoolean(true);
 
             @Override
-            public void convertAndSend(String routingKey, Object object,
+            public void convertAndSend(String exchange, String routingKey, Object object,
                     org.springframework.amqp.core.MessagePostProcessor messagePostProcessor,
                     org.springframework.amqp.rabbit.connection.CorrelationData correlationData) {
                 // POF-правка (P-67): считаем КАЖДУЮ попытку публикации результата.
@@ -247,12 +249,13 @@ class CompletionReliablePublishRabbitIT {
                 completionSendAttempts.incrementAndGet();
                 if (firstSend.compareAndSet(true, false) && correlationData != null) {
                     droppedFirstConfirm.set(true);
-                    super.convertAndSend(routingKey, object, messagePostProcessor,
+                    // WO-INT-10: сигнатура стала 5-арной (exchange первый).
+                    super.convertAndSend(exchange, routingKey, object, messagePostProcessor,
                         new org.springframework.amqp.rabbit.connection.CorrelationData(
                             correlationData.getId() + "-decoy"));
                     return;
                 }
-                super.convertAndSend(routingKey, object, messagePostProcessor, correlationData);
+                super.convertAndSend(exchange, routingKey, object, messagePostProcessor, correlationData);
             }
         };
         flakyTemplate.setMessageConverter(new Jackson2JsonMessageConverter(new ObjectMapper()));

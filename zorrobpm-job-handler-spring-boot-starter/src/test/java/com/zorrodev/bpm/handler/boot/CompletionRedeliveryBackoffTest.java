@@ -90,7 +90,7 @@ class CompletionRedeliveryBackoffTest {
     private void everyConfirmLost() {
         org.mockito.Mockito.lenient().when(handler.handleJob(any())).thenReturn(List.of(outVar()));
         org.mockito.Mockito.lenient().doAnswer(inv -> null).when(rabbitTemplate)
-            .convertAndSend(anyString(), (Object) any(),
+            .convertAndSend(anyString(), anyString(), (Object) any(),
                 any(org.springframework.amqp.core.MessagePostProcessor.class),
                 any(CorrelationData.class));
     }
@@ -280,10 +280,10 @@ class CompletionRedeliveryBackoffTest {
 
         // Успешная публикация: confirm ack, без возврата.
         doAnswer(inv -> {
-            ((CorrelationData) inv.getArgument(3)).getFuture()
+            ((CorrelationData) inv.getArgument(4)).getFuture()
                 .complete(new CorrelationData.Confirm(true, null));
             return null;
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class), any(CorrelationData.class));
         listener.onMessage(msg);
 

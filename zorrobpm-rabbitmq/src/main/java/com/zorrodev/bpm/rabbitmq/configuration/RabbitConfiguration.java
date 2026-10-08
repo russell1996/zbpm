@@ -38,6 +38,26 @@ public class RabbitConfiguration {
     public static final String COMPLETE_DLX = "zorrobpm.complete-service-task.dlx";
     public static final String COMPLETE_DLQ = "zorrobpm.complete-service-task.dlq";
 
+    /**
+     * WO-INT-10: выделенный exchange публикаций completion воркера (direct,
+     * durable). Identity-маршрутизация: routing key равен имени очереди.
+     * Имя — зеркало {@code CompletionTopology.COMPLETION_EXCHANGE} стартера
+     * (стартер не зависит от этого модуля в compile-scope; расхождение ловят
+     * пин-тесты с обеих сторон).
+     */
+    public static final String COMPLETIONS_EXCHANGE = "zorrobpm.completions";
+
+    /**
+     * WO-INT-10: имена очередей poison-парковки воркера. Зеркало публичных
+     * констант стартера {@code CompletionPoisonRetryListener.POISON_QUEUE /
+     * RETRY_DELAY_QUEUE} (та же причина дублирования, что у exchange выше).
+     * Движок объявляет их сам: воркер на per-system кредах declare делать не
+     * вправе (403), а admin-объявление byte-identical аргументами — no-op для
+     * admin-воркеров переходного периода (нет 406).
+     */
+    public static final String COMPLETION_POISON_QUEUE = "zorrobpm.completion.poison";
+    public static final String COMPLETION_RETRY_DELAY_QUEUE = "zorrobpm.completion.retry-delay";
+
     /** Topic exchange for domain events (ADR-7, WO-EVT-2). Routing key = event type. */
     public static final String EVENTS_EXCHANGE = "zorrobpm.events";
 
@@ -97,6 +117,60 @@ public class RabbitConfiguration {
     @Bean
     public Binding completeServiceTaskDlqBinding() {
         return BindingBuilder.bind(completeServiceTaskDlq()).to(completeServiceTaskDlx()).with(COMPLETE_DLQ);
+    }
+
+    /**
+     * WO-INT-10: completion-exchange + identity-биндинги очередей воркерного
+     * контура (complete/poison/delay). Ключ биндинга равен имени очереди —
+     * та же строка, что воркер передаёт routing key (см. {@code sendAndConfirm}
+     * стартера). Биндинги объявляет движок (admin): per-system воркеру
+     * биндить нечем (нет configure-права на exchange).
+     */
+    @Bean
+    public DirectExchange completionsExchange() {
+        return new DirectExchange(COMPLETIONS_EXCHANGE, true, false);
+    }
+
+    @Bean
+    public Binding completionsCompleteBinding() {
+        return BindingBuilder.bind(completeServiceTaskQueue())
+            .to(completionsExchange()).with(COMPLETE_QUEUE);
+    }
+
+    /**
+     * WO-INT-10: poison-очередь объявляет движок (аргументы byte-identical
+     * объявлению стартера {@code declarePoisonTopology} — durable без
+     * аргументов; иначе admin-воркер переходного периода получил бы 406).
+     */
+    @Bean
+    public Queue completionPoisonQueue() {
+        return QueueBuilder.durable(COMPLETION_POISON_QUEUE).build();
+    }
+
+    @Bean
+    public Binding completionsPoisonBinding() {
+        return BindingBuilder.bind(completionPoisonQueue())
+            .to(completionsExchange()).with(COMPLETION_POISON_QUEUE);
+    }
+
+    /**
+     * WO-INT-10: delay-очередь объявляет движок (аргументы byte-identical
+     * {@code declarePoisonTopology}: durable + {@code x-dead-letter-exchange:
+     * ""} + {@code x-dead-letter-routing-key} на poison — возврат копий в
+     * poison через default exchange делает сам брокер, прав воркера не надо).
+     */
+    @Bean
+    public Queue completionRetryDelayQueue() {
+        return QueueBuilder.durable(COMPLETION_RETRY_DELAY_QUEUE)
+            .withArgument("x-dead-letter-exchange", "")
+            .withArgument("x-dead-letter-routing-key", COMPLETION_POISON_QUEUE)
+            .build();
+    }
+
+    @Bean
+    public Binding completionsRetryDelayBinding() {
+        return BindingBuilder.bind(completionRetryDelayQueue())
+            .to(completionsExchange()).with(COMPLETION_RETRY_DELAY_QUEUE);
     }
 
     @Bean

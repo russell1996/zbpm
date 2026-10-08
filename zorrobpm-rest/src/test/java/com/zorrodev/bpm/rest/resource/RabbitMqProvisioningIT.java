@@ -308,9 +308,13 @@ class RabbitMqProvisioningIT {
             .as("read must cover the member process queue")
             .contains("(" + job + ")");
         assertThat(perms.get("write").asText())
-            .as("write must cover the member process queue + completions")
+            .as("write must be the completion-exchange only (WO-INT-10: queue names in write "
+                + "never authorized the publish — broker matches write against the exchange)")
+            .isEqualTo("^zorrobpm\\.completions$");
+        assertThat(perms.get("read").asText())
+            .as("read must cover the member process queue + poison")
             .contains("(" + job + ")")
-            .contains("complete-service-task");
+            .contains("zorrobpm\\.completion\\.poison");
         assertThat(perms.get("configure").asText())
             .as("configure must cover the member process queue + DLQ")
             .contains("(" + job + ")");
@@ -344,8 +348,8 @@ class RabbitMqProvisioningIT {
             .doesNotContain(jobA)
             .contains("(" + jobB + ")");
         assertThat(perms.get("write").asText())
-            .doesNotContain(jobA)
-            .contains("(" + jobB + ")");
+            .as("write is membership-independent (completion-exchange only, WO-INT-10)")
+            .isEqualTo("^zorrobpm\\.completions$");
     }
 
     // ==================== Критерий 5: ротация не трогает permissions ====================

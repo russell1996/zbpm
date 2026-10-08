@@ -89,9 +89,15 @@ class CompletionPoisonRabbitIT {
         admin.afterPropertiesSet();
         admin.declareQueue(new Queue(JOBS_POISON, true, false, false));
         admin.declareQueue(new Queue(JOBS_OK, true, false, false));
-        admin.declareQueue(new Queue(COMPLETE, true, false, false));
+        // WO-INT-10: completion идёт через exchange — очередь + identity-биндинг, как прод-топология.
+        CompletionExchangeProbe.bindQueue(admin, COMPLETE);
         // WO-REL-64: топология парковки — тем же прод-путём, что стартер.
         HandlerAutoConfiguration.declarePoisonTopology(admin);
+        // WO-INT-10: парковка идёт через completion-exchange — очереди +
+        // identity-биндинги, как прод-топология движка (иначе парковочная
+        // публикация unroutable и копия не паркуется никогда).
+        CompletionExchangeProbe.bindExisting(admin, CompletionPoisonRetryListener.POISON_QUEUE);
+        CompletionExchangeProbe.bindExisting(admin, CompletionPoisonRetryListener.RETRY_DELAY_QUEUE);
         admin.purgeQueue(JOBS_POISON, false);
         admin.purgeQueue(JOBS_OK, false);
         admin.purgeQueue(COMPLETE, false);
@@ -201,7 +207,8 @@ class CompletionPoisonRabbitIT {
 
             // 4. Маршрут починен: очередь под ключом появилась. Повтор из
             // poison отдельным слушателем — доставка ровно один раз.
-            admin.declareQueue(new Queue(BLACKHOLE, true, false, false));
+            // WO-INT-10: «правка маршрута» = очередь + identity-биндинг к exchange.
+            CompletionExchangeProbe.bindQueue(admin, BLACKHOLE);
             CompletionPoisonRetryListener retryListener =
                 new CompletionPoisonRetryListener(workerTemplate(), objectMapper, BLACKHOLE);
             SimpleMessageListenerContainer containerC =

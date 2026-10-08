@@ -100,12 +100,13 @@ class CompletionPoisonParkingTest {
     /** Основная очередь бита (sync-throw), парковочная — жива. */
     private void mainQueueDeadPoisonAlive() {
         doAnswer(inv -> {
-            String routingKey = inv.getArgument(0);
+            // WO-INT-10: аргумент 0 — exchange, аргумент 1 — routing key.
+            String routingKey = inv.getArgument(1);
             if (COMPLETE_QUEUE.equals(routingKey)) {
                 throw new AmqpException("NO_ROUTE");
             }
             return null;
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
     }
@@ -122,7 +123,8 @@ class CompletionPoisonParkingTest {
         assertThat(listener.poisonedCountForTest())
             .as("до потолка — никакой парковки, только горячие переотправки")
             .isZero();
-        verify(rabbitTemplate, never()).convertAndSend(eq(POISON_QUEUE), (Object) any(),
+        verify(rabbitTemplate, never()).convertAndSend(eq(CompletionTopology.COMPLETION_EXCHANGE),
+            eq(POISON_QUEUE), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
     }
@@ -140,7 +142,8 @@ class CompletionPoisonParkingTest {
         assertThat(listener.poisonedCountForTest()).isEqualTo(1L);
 
         ArgumentCaptor<Object> bodyCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(rabbitTemplate, times(1)).convertAndSend(eq(POISON_QUEUE), bodyCaptor.capture(),
+        verify(rabbitTemplate, times(1)).convertAndSend(eq(CompletionTopology.COMPLETION_EXCHANGE),
+            eq(POISON_QUEUE), bodyCaptor.capture(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
         assertThat(bodyCaptor.getValue()).isInstanceOf(ServiceTaskCompleteData.class);
@@ -148,7 +151,8 @@ class CompletionPoisonParkingTest {
         // P-67: assert на КОНКРЕТНОЕ значение — тот же completionId, что ушёл в
         // трёх попытках основной отправки (движок дедуплицирует именно по нему).
         ArgumentCaptor<Object> mainBodyCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(rabbitTemplate, times(3)).convertAndSend(eq(COMPLETE_QUEUE), mainBodyCaptor.capture(),
+        verify(rabbitTemplate, times(3)).convertAndSend(eq(CompletionTopology.COMPLETION_EXCHANGE),
+            eq(COMPLETE_QUEUE), mainBodyCaptor.capture(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
         String attemptedId =
@@ -174,7 +178,8 @@ class CompletionPoisonParkingTest {
         listener.onMessage(msg);
 
         ArgumentCaptor<Object> mainBodyCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(rabbitTemplate, times(3)).convertAndSend(eq(COMPLETE_QUEUE), mainBodyCaptor.capture(),
+        verify(rabbitTemplate, times(3)).convertAndSend(eq(CompletionTopology.COMPLETION_EXCHANGE),
+            eq(COMPLETE_QUEUE), mainBodyCaptor.capture(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
         String completionId =
@@ -197,7 +202,8 @@ class CompletionPoisonParkingTest {
                 .isInstanceOf(AmqpException.class);
         }
 
-        verify(rabbitTemplate, never()).convertAndSend(eq(POISON_QUEUE), (Object) any(),
+        verify(rabbitTemplate, never()).convertAndSend(eq(CompletionTopology.COMPLETION_EXCHANGE),
+            eq(POISON_QUEUE), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
         assertThat(listener.poisonedCountForTest()).isZero();
@@ -226,7 +232,7 @@ class CompletionPoisonParkingTest {
         // Обе очереди биты: основная И парковочная.
         doAnswer((Answer<Object>) inv -> {
             throw new AmqpException("broker down");
-        }).when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+        }).when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
         Message msg = message(jobJson(), "corr-park-fail");
@@ -263,7 +269,8 @@ class CompletionPoisonParkingTest {
 
         assertThat(listener.poisonedCountForTest()).isEqualTo(1L);
         ArgumentCaptor<Object> bodyCaptor = ArgumentCaptor.forClass(Object.class);
-        verify(rabbitTemplate, times(1)).convertAndSend(eq(POISON_QUEUE), bodyCaptor.capture(),
+        verify(rabbitTemplate, times(1)).convertAndSend(eq(CompletionTopology.COMPLETION_EXCHANGE),
+            eq(POISON_QUEUE), bodyCaptor.capture(),
             any(org.springframework.amqp.core.MessagePostProcessor.class),
             any(CorrelationData.class));
         assertThat(((ServiceTaskCompleteData) bodyCaptor.getValue()).getCompletionId())
