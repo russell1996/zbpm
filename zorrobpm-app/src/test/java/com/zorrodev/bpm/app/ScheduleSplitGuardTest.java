@@ -146,6 +146,72 @@ class ScheduleSplitGuardTest {
     }
 
     /**
+     * WO-REL-69 П.2 (инцидент 2026-10-07, пайплайн 176380): ночной schedule-пайплайн
+     * был убит авто-отменой, пока {@code backup:pg} ещё стоял в очереди —
+     * {@code interruptible: false} защищает только СТАРТОВАВШУЮ джобу
+     * (pending-джоба по документации GitLab всегда interruptible, режим
+     * {@code conservative} отменяет весь старый пайплайн, если ни одна
+     * non-interruptible джоба ещё не стартовала).
+     *
+     * <p>Защита: {@code workflow:auto_cancel} со scoping для schedule-источника —
+     * schedule-пайплайны не отменяются новыми коммитами вообще
+     * ({@code on_new_commit: none}), остальные — как раньше
+     * ({@code conservative}, дефолт GitLab). Правила — только scoping
+     * авто-отмены (записи {@code if:} + {@code auto_cancel:}, без {@code when:}):
+     * создание пайплайнов не меняется, push/MR-набор джоб — тоже.
+     *
+     * <p>Механизм подтверждён докой инстанса (GitLab 19.3.3, Free tier —
+     * {@code workflow:auto_cancel} GA с 16.10) и живым {@code POST /ci/lint}.
+     */
+    @Test
+    void schedulePipelinesAreExemptFromAutoCancel_pushAndMrUnchanged() {
+        String yaml = read(".gitlab-ci.yml");
+        assertThat(yaml).as(".gitlab-ci.yml must exist").isNotNull();
+
+        String workflow = workflowBlock(yaml);
+        assertThat(workflow).as("top-level `workflow:` block must exist").isNotNull();
+
+        // Дефолт для всех — conservative (как вел себя инстанс до правки).
+        assertThat(workflow)
+            .as("workflow must set a conservative auto-cancel default "
+                + "(otherwise the schedule exemption below changes push/MR behavior)")
+            .containsPattern(
+                Pattern.compile("(?m)^\\s*auto_cancel:\\s*$[\\s\\S]*?^\\s*on_new_commit:\\s*conservative\\s*$"));
+
+        // Первая workflow-запись — scoping для schedule (rules match top-down).
+        List<String> entries = workflowRuleEntries(workflow);
+        assertThat(entries)
+            .as("workflow:rules must carry a schedule entry")
+            .anySatisfy(e -> assertThat(e).contains("$CI_PIPELINE_SOURCE == \"schedule\""));
+        String scheduleEntry = entries.stream()
+            .filter(e -> e.contains("$CI_PIPELINE_SOURCE == \"schedule\""))
+            .findFirst().orElseThrow();
+        assertThat(scheduleEntry)
+            .as("schedule entry must disable auto-cancel (pending backup:pg "
+                + "survives pushes — incident 2026-10-07)")
+            .contains("on_new_commit: none");
+        assertThat(scheduleEntry)
+            .as("schedule entry must be auto-cancel scoping only — no `when:` "
+                + "(a `when: never` here would stop creating schedule pipelines)")
+            .doesNotContain("when:");
+
+        // Push/MR-записи — без auto_cancel-переопределений (поведение как раньше).
+        for (String e : entries) {
+            if (e.contains("$CI_PIPELINE_SOURCE == \"schedule\"")) {
+                continue;
+            }
+            assertThat(e)
+                .as("non-schedule workflow entry must not override auto-cancel: " + e.trim())
+                .doesNotContain("auto_cancel:");
+            assertThat(e)
+                .as("non-schedule workflow entries must stay (MR + branch): " + e.trim())
+                .satisfiesAnyOf(
+                    x -> assertThat(x).contains("merge_request_event"),
+                    x -> assertThat(x).contains("$CI_COMMIT_BRANCH"));
+        }
+    }
+
+    /**
      * Первая rules-запись — schedule-исключение: условие на
      * {@code $CI_PIPELINE_SOURCE == "schedule"} и в следующих строках (до
      * следующей {@code - if:} или конца блока) {@code when: never}.
@@ -204,6 +270,45 @@ class ScheduleSplitGuardTest {
                 "test:backend", "test:chaos", "test:e2e-login", "test:frontend",
                 "test:gate", "test:pg", "test:rabbit");
         return blocks;
+    }
+
+    /** Блок `workflow:` верхнего уровня (до следующего ключа колонки 0). */
+    private static String workflowBlock(String yaml) {
+        Matcher m = Pattern.compile("(?m)^workflow:\\s*(#.*)?$").matcher(yaml);
+        if (!m.find()) {
+            return null;
+        }
+        int bodyStart = m.end();
+        Matcher next = TOP_LEVEL_KEY.matcher(yaml);
+        int bodyEnd = yaml.length();
+        while (next.find()) {
+            if (next.start() >= bodyStart) {
+                bodyEnd = next.start();
+                break;
+            }
+        }
+        return yaml.substring(m.start(), bodyEnd);
+    }
+
+    /** Записи `- if:` внутри `workflow:rules:` (каждая — до следующей записи). */
+    private static List<String> workflowRuleEntries(String workflow) {
+        List<String> entries = new ArrayList<>();
+        String[] lines = workflow.split("\n");
+        StringBuilder current = null;
+        for (String line : lines) {
+            if (line.matches("\\s*-\\s*if:.*")) {
+                if (current != null) {
+                    entries.add(current.toString());
+                }
+                current = new StringBuilder(line).append("\n");
+            } else if (current != null) {
+                current.append(line).append("\n");
+            }
+        }
+        if (current != null) {
+            entries.add(current.toString());
+        }
+        return entries;
     }
 
     /** Текст после `rules:` внутри блока джобы; алиас `*anchor` резолвится в тело якоря. */
