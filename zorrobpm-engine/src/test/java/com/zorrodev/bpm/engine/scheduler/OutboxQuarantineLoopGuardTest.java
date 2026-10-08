@@ -82,6 +82,11 @@ class OutboxQuarantineLoopGuardTest {
         // Публикация падает (транспорт) на последней попытке.
         org.mockito.Mockito.doThrow(new RuntimeException("NO_ROUTE"))
             .when(publisher).publishEvent(any());
+        // WO-REL-69 П.1: attempts=4 = ceiling → условный UPDATE не применяется,
+        // карантинный путь attempts не трогает.
+        when(outboxRepository.incrementAttempts(eq(entry.getId()), any(), eq(4)))
+            .thenReturn(0);
+        when(outboxRepository.findAttemptsById(entry.getId())).thenReturn(4);
 
         processor.processBatch();
 
@@ -95,6 +100,10 @@ class OutboxQuarantineLoopGuardTest {
     void deliveryResultPath_quarantineNotification_droppedNotQuarantined() throws Exception {
         OutboxEntry entry = notificationEntry();
         when(outboxRepository.findById(entry.getId())).thenReturn(Optional.of(entry));
+        // WO-REL-69 П.1: attempts=4 = ceiling → UPDATE не применяется.
+        when(outboxRepository.incrementAttempts(eq(entry.getId()), any(), eq(4)))
+            .thenReturn(0);
+        when(outboxRepository.findAttemptsById(entry.getId())).thenReturn(4);
 
         listener.on(new OutboxDeliveryResult(
             entry.getId().toString(), false, "unroutable: 312 NO_ROUTE"));
@@ -117,6 +126,11 @@ class OutboxQuarantineLoopGuardTest {
         when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(entry));
         org.mockito.Mockito.doThrow(new RuntimeException("NO_ROUTE"))
             .when(publisher).publishEvent(any());
+        // WO-REL-69 П.1: attempts=4 = ceiling → UPDATE не применяется,
+        // карантинный путь attempts не трогает.
+        when(outboxRepository.incrementAttempts(eq(entry.getId()), any(), eq(4)))
+            .thenReturn(0);
+        when(outboxRepository.findAttemptsById(entry.getId())).thenReturn(4);
         when(outboxRepository.markFailed(entry.getId())).thenReturn(1);
 
         processor.processBatch();
@@ -139,6 +153,10 @@ class OutboxQuarantineLoopGuardTest {
         entry.setAttempts(4);
         entry.setStatus(com.zorrodev.bpm.engine.entity.OutboxStatus.PENDING);
         when(outboxRepository.findById(entry.getId())).thenReturn(Optional.of(entry));
+        // WO-REL-69 П.1: attempts=4 = ceiling → UPDATE не применяется.
+        when(outboxRepository.incrementAttempts(eq(entry.getId()), any(), eq(4)))
+            .thenReturn(0);
+        when(outboxRepository.findAttemptsById(entry.getId())).thenReturn(4);
         when(outboxRepository.markFailed(entry.getId())).thenReturn(1);
 
         listener.on(new OutboxDeliveryResult(
