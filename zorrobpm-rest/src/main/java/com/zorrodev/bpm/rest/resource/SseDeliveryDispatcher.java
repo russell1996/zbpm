@@ -32,15 +32,28 @@ public final class SseDeliveryDispatcher {
     private final SseAuthzGate authzGate;
     private final UiUserLookupService uiUserLookupService;
     private final CloseAction closeAction;
+    // WO-AUDIT-7: транзитный пин живых курсоров для events-retention
+    // (nullable — unit-scope shape: без трекера advance молчит, поведение —
+    // как раньше).
+    private final com.zorrodev.bpm.engine.event.SseLiveCursorTracker cursorTracker;
 
     public SseDeliveryDispatcher(SseSessionRegistry sessionRegistry,
             SseAuthzGate authzGate,
             UiUserLookupService uiUserLookupService,
             CloseAction closeAction) {
+        this(sessionRegistry, authzGate, uiUserLookupService, closeAction, null);
+    }
+
+    public SseDeliveryDispatcher(SseSessionRegistry sessionRegistry,
+            SseAuthzGate authzGate,
+            UiUserLookupService uiUserLookupService,
+            CloseAction closeAction,
+            com.zorrodev.bpm.engine.event.SseLiveCursorTracker cursorTracker) {
         this.sessionRegistry = sessionRegistry;
         this.authzGate = authzGate;
         this.uiUserLookupService = uiUserLookupService;
         this.closeAction = closeAction;
+        this.cursorTracker = cursorTracker;
     }
 
     /**
@@ -214,5 +227,12 @@ public final class SseDeliveryDispatcher {
             // решение под локом клиента, одним шагом — окно потери закрыто).
             // AuthZ-гейты выше (credential/rights) уже пройдены.
             client.enqueueLive(SseWireProtocol.buildLiveEvent(cursor, eventType, envelope), envelope, cursor);
+            // WO-AUDIT-7: клиент увидел позицию (очередь pump'а/BUFFERING —
+            // drain решит дубль/новое по границе catchup'а): пин двигается
+            // вперёд max-merge'ем. Строка свежая (только прибыла live), cutoff
+            // её всё равно держит — раннее продвижение безопасно.
+            if (cursorTracker != null && cursor > 0) {
+                cursorTracker.advance(client.clientId(), cursor);
+            }
     }
 }
