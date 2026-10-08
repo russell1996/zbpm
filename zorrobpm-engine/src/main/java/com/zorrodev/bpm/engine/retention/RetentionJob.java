@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.engine.retention;
 
+import com.zorrodev.bpm.engine.event.SseLiveCursorTracker;
 import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,14 +30,136 @@ public class RetentionJob {
     private final RetentionBatchProcessor batchProcessor;
     // WO-REL-50: stuck-row visibility (gauge) — the loop owner reports per-pass failures.
     private final BpmMetrics bpmMetrics;
+    // WO-AUDIT-7: пин живых SSE-курсоров для events-прохода (транзитный:
+    // не удалять назначенные строки выше минимального активного курсора —
+    // гонка catchup-vs-retention). Пустой трекер = пина нет.
+    private final SseLiveCursorTracker cursorTracker;
 
     @Scheduled(fixedDelayString = "${zorrobpm.engine.retention.poll-interval-ms:3600000}")
     public void run() {
-        if (config.getTtlDays() <= 0) {
+        if (config.getTtlDays() <= 0
+                && config.getEventsTtlDays() <= 0
+                && config.getOutboxTtlDays() <= 0) {
             return; // disabled
         }
 
-        Instant cutoff = Instant.now().minus(Duration.ofDays(config.getTtlDays()));
+        Instant passNow = Instant.now();
+        long deadlineNanos = config.getPassBudgetMs() > 0
+            ? System.nanoTime() + config.getPassBudgetMs() * 1_000_000L
+            : Long.MAX_VALUE;
+
+        if (config.getTtlDays() > 0) {
+            runInstancePass(passNow, deadlineNanos);
+        }
+        if (config.getEventsTtlDays() > 0) {
+            runEventsPass(passNow, deadlineNanos);
+        }
+        if (config.getOutboxTtlDays() > 0) {
+            runOutboxPass(passNow, deadlineNanos);
+        }
+    }
+
+    /**
+     * WO-AUDIT-7: events-проход. Dry-run — считает тем же предикатом
+     * (включая пин) и логирует, удаляет 0. Иначе — батчи до пустого claim'а
+     * с проверкой дедлайна и паузой между батчами.
+     */
+    private void runEventsPass(Instant passNow, long deadlineNanos) {
+        Instant cutoff = passNow.minus(Duration.ofDays(config.getEventsTtlDays()));
+        if (config.isDryRun()) {
+            long would = batchProcessor.countEligibleEvents(cutoff, cursorTracker.minActiveCursor());
+            log.warn("Retention dry-run: would delete {} events rows older than {} — deleting 0 "
+                + "(dry-run covers events/outbox passes only; instance/submission/orphan passes "
+                + "are unaffected)", would, cutoff);
+            return;
+        }
+        Instant passStart = Instant.now();
+        int batches = 0;
+        int rows = 0;
+        while (true) {
+            RetentionBatchProcessor.EventsBatch done = batchProcessor.claimAndDeleteEventsBatch(
+                cutoff, config.getBatchSize(), cursorTracker.minActiveCursor());
+            if (done.sequences().isEmpty()) break; // last batch
+            batches++;
+            rows += done.rowsDeleted();
+            bpmMetrics.retentionEventsDeleted(done.rowsDeleted());
+            if (!pauseBetweenBatches()) break; // interrupted
+            if (System.nanoTime() >= deadlineNanos) {
+                log.info("Retention: events pass budget exhausted after {} batches — continuing next run",
+                    batches);
+                break;
+            }
+        }
+        bpmMetrics.recordRetentionPassDuration(Duration.between(passStart, Instant.now()));
+        if (rows > 0) {
+            log.info("Retention: deleted {} events rows in {} batches", rows, batches);
+        }
+    }
+
+    /**
+     * WO-AUDIT-7: outbox-проход. Терминальные (опубликованные + карантинные)
+     * старше TTL; активные предикат не видит ни при каком TTL.
+     */
+    private void runOutboxPass(Instant passNow, long deadlineNanos) {
+        Instant cutoff = passNow.minus(Duration.ofDays(config.getOutboxTtlDays()));
+        if (config.isDryRun()) {
+            long would = batchProcessor.countEligibleOutbox(cutoff);
+            log.warn("Retention dry-run: would delete {} outbox rows older than {} — deleting 0 "
+                + "(dry-run covers events/outbox passes only; instance/submission/orphan passes "
+                + "are unaffected)", would, cutoff);
+            return;
+        }
+        Instant passStart = Instant.now();
+        int batches = 0;
+        int rows = 0;
+        while (true) {
+            RetentionBatchProcessor.OutboxBatch done =
+                batchProcessor.claimAndDeleteOutboxBatch(cutoff, config.getBatchSize());
+            if (done.ids().isEmpty()) break; // last batch
+            batches++;
+            rows += done.rowsDeleted();
+            bpmMetrics.retentionOutboxDeleted(done.rowsDeleted());
+            if (!pauseBetweenBatches()) break; // interrupted
+            if (System.nanoTime() >= deadlineNanos) {
+                log.info("Retention: outbox pass budget exhausted after {} batches — continuing next run",
+                    batches);
+                break;
+            }
+        }
+        bpmMetrics.recordRetentionPassDuration(Duration.between(passStart, Instant.now()));
+        if (rows > 0) {
+            log.info("Retention: deleted {} outbox rows in {} batches", rows, batches);
+        }
+    }
+
+    /**
+     * WO-AUDIT-7: пауза между батчами новых проходов. {@code false} —
+     * прервано: вызывающий останавливает проход (прогресс закоммиченных
+     * батчей не теряется).
+     */
+    private boolean pauseBetweenBatches() {
+        long pause = config.getBatchPauseMs();
+        if (pause <= 0) {
+            return true;
+        }
+        try {
+            Thread.sleep(pause);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Retention: batch pause interrupted — stopping this pass");
+            return false;
+        }
+    }
+
+    /**
+     * Исторический instance/submission/orphan-проход — побайтово прежняя
+     * логика (WO-REL-54 пачки, WO-PERF-3 orphans, WO-ACL-3 submissions,
+     * WO-REL-50 stuck-gauge). Вызывается только при {@code ttlDays > 0},
+     * как раньше (ранний return покрывал все три).
+     */
+    private void runInstancePass(Instant passNow, long deadlineNanos) {
+        Instant cutoff = passNow.minus(Duration.ofDays(config.getTtlDays()));
         log.info("Retention: looking for terminal instances completed before {} (TTL={}d)", cutoff, config.getTtlDays());
 
         int totalDeleted = 0;
@@ -47,11 +170,7 @@ public class RetentionJob {
         // вместо batchSize штук, DELETEs — IN (:ids) вместо поштучных.
         // TTL-DISTINCT — раз за прогон (loadDistinctTtls), не на каждую пачку.
         // Дедлайн — между пачками: начатая пачка коммитится целиком.
-        long deadlineNanos = config.getPassBudgetMs() > 0
-            ? System.nanoTime() + config.getPassBudgetMs() * 1_000_000L
-            : Long.MAX_VALUE;
         List<Integer> distinctTtls = batchProcessor.loadDistinctTtls();
-        Instant passNow = Instant.now();
         int instancesDeleted = 0;
         while (true) {
             // WO-ENG-17: cutoff по каждому определению (собственный TTL или

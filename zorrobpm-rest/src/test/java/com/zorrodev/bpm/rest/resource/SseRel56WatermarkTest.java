@@ -63,7 +63,8 @@ class SseRel56WatermarkTest {
         lenient().when(eventQueryService.eventSequenceExists(anyLong())).thenReturn(true);
         BpmMetrics metrics = registry == null ? null : new BpmMetrics(registry);
         SseEventStreamService svc = new SseEventStreamService(eventQueryService,
-            eventAuthzResolver, null, new tools.jackson.databind.ObjectMapper(), null, null, metrics);
+            eventAuthzResolver, null, new tools.jackson.databind.ObjectMapper(), null, null, metrics,
+            new com.zorrodev.bpm.engine.event.SseLiveCursorTracker());
         services.add(svc);
         return svc;
     }

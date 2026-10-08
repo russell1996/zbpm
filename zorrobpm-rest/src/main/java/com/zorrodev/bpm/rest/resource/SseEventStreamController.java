@@ -62,6 +62,18 @@ public class SseEventStreamController {
             String clientId = sseEventStreamService.registerBufferedClient(
                 emitter, principal, type, processInstanceId, processDefinitionKey);
 
+            // WO-AUDIT-7: пин catchup-курсора ДО чтения catchup — окно
+            // register→read закрыто: проход retention, стартовавший между
+            // регистрацией и чтением, увидит пин. Без заголовка — не
+            // трекается (клиенту нужны только новые строки).
+            if (lastEventId != null && !lastEventId.isBlank()) {
+                try {
+                    sseEventStreamService.trackCatchupCursor(clientId, Long.parseLong(lastEventId));
+                } catch (NumberFormatException e) {
+                    log.warn("Invalid Last-Event-ID: {}", lastEventId);
+                }
+            }
+
             // Send catchup events if Last-Event-ID is provided (cursor+pages, WO-REL-37)
             long boundary = 0;
             if (lastEventId != null && !lastEventId.isBlank()) {

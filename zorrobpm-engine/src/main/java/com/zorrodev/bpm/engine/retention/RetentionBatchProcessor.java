@@ -341,4 +341,120 @@ public class RetentionBatchProcessor {
             "DELETE FROM process_submission WHERE id = :id",
             new MapSqlParameterSource("id", submissionId));
     }
+
+    // ==================== WO-AUDIT-7: чистка events/outbox ====================
+    //
+    // Инвариант SSE-курсора (см. SseLiveCursorTracker): удаляются только
+    // назначенные строки (feed_position IS NOT NULL — consumer невидимые
+    // строки не трогаем) с позицией НЕ ВЫШЕ минимального активного курсора
+    // (транзитный пин против гонки catchup-vs-retention) и СТРОГО НИЖЕ
+    // текущей максимальной позиции (якорь монотонности счётчика
+    // FeedPositionAssigner: пустая таблица обнуляет MAX, и следующий тик
+    // джоба назначил бы уже выданные позиции заново — дубль в ленте).
+    // Пин собирается вызывающим (RetentionJob — из трекера) и приходит
+    // параметром: процессор остаётся чистой SQL-машиной (тот же резон, что
+    // selectEligiblePerDefinition выше — plain-Timestamp сравнения, ноль
+    // диалектного риска; H2 принимает FOR UPDATE SKIP LOCKED — см. REL-33).
+    // Пустой пин (нет живых трекаемых подписчиков) = предиката нет.
+
+    /** Результат одного батча чистки events: какие sequence забраны и сколько строк ушло. */
+    public record EventsBatch(List<Long> sequences, int rowsDeleted) {
+    }
+
+    /** Результат одного батча чистки outbox: какие id забраны и сколько строк ушло. */
+    public record OutboxBatch(List<UUID> ids, int rowsDeleted) {
+    }
+
+    /**
+     * Claim+delete ОДНОГО батча events в ОДНОЙ короткой транзакции — тот же
+     * SKIP LOCKED-механизм, что {@link #claimAndDeleteBatch}: SELECT ...
+     * LIMIT :batch FOR UPDATE SKIP LOCKED + DELETE IN в той же транзакции.
+     * Пустой батч — eligible нет.
+     */
+    @Transactional
+    public EventsBatch claimAndDeleteEventsBatch(Instant cutoff, int batchSize,
+            java.util.OptionalLong minActiveCursor) {
+        Long maxFp = jdbc.queryForObject(
+            "SELECT COALESCE(MAX(feed_position), 0) FROM events",
+            new MapSqlParameterSource(), Long.class);
+        long ceiling = maxFp == null ? 0L : maxFp;
+        StringBuilder sql = new StringBuilder(
+            "SELECT sequence FROM events " +
+            "WHERE occurred_at < :cutoff " +
+            "AND feed_position IS NOT NULL " +
+            "AND feed_position < :ceiling ");
+        MapSqlParameterSource params = new MapSqlParameterSource("cutoff", Timestamp.from(cutoff))
+            .addValue("ceiling", ceiling)
+            .addValue("limit", batchSize);
+        if (minActiveCursor.isPresent()) {
+            sql.append("AND feed_position <= :pin ");
+            params.addValue("pin", minActiveCursor.getAsLong());
+        }
+        sql.append("ORDER BY occurred_at ASC LIMIT :limit FOR UPDATE SKIP LOCKED");
+        List<Long> picked = jdbc.queryForList(sql.toString(), params, Long.class);
+        if (picked.isEmpty()) {
+            return new EventsBatch(List.of(), 0);
+        }
+        int rows = jdbc.update("DELETE FROM events WHERE sequence IN (:ids)",
+            new MapSqlParameterSource("ids", picked));
+        return new EventsBatch(List.copyOf(picked), rows);
+    }
+
+    /**
+     * Claim+delete ОДНОГО батча outbox в ОДНОЙ короткой транзакции.
+     * Терминальные = опубликованные (любым статусом) + карантинные
+     * ({@code status = 'FAILED'}); активные/ретраящиеся
+     * ({@code published = false AND status = 'PENDING'}) предикат не видит
+     * ни при каком TTL — их забирает только поллер. Пустой батч — eligible нет.
+     */
+    @Transactional
+    public OutboxBatch claimAndDeleteOutboxBatch(Instant cutoff, int batchSize) {
+        String sql = "SELECT id FROM outbox " +
+            "WHERE created_at < :cutoff " +
+            "AND (published = true OR status = 'FAILED') " +
+            "ORDER BY created_at ASC LIMIT :limit FOR UPDATE SKIP LOCKED";
+        List<UUID> picked = jdbc.queryForList(sql,
+            new MapSqlParameterSource("cutoff", Timestamp.from(cutoff)).addValue("limit", batchSize),
+            UUID.class);
+        if (picked.isEmpty()) {
+            return new OutboxBatch(List.of(), 0);
+        }
+        int rows = jdbc.update("DELETE FROM outbox WHERE id IN (:ids)",
+            new MapSqlParameterSource("ids", picked));
+        return new OutboxBatch(List.copyOf(picked), rows);
+    }
+
+    /**
+     * WO-AUDIT-7 dry-run: сколько строк events ушло бы при этом cutoff и
+     * пине — те же предикаты, что {@link #claimAndDeleteEventsBatch}, без
+     * LIMIT и без удаления.
+     */
+    @Transactional(readOnly = true)
+    public long countEligibleEvents(Instant cutoff, java.util.OptionalLong minActiveCursor) {
+        StringBuilder sql = new StringBuilder(
+            "SELECT COUNT(*) FROM events " +
+            "WHERE occurred_at < :cutoff " +
+            "AND feed_position IS NOT NULL " +
+            "AND feed_position < (SELECT COALESCE(MAX(feed_position), 0) FROM events) ");
+        MapSqlParameterSource params = new MapSqlParameterSource("cutoff", Timestamp.from(cutoff));
+        if (minActiveCursor.isPresent()) {
+            sql.append("AND feed_position <= :pin ");
+            params.addValue("pin", minActiveCursor.getAsLong());
+        }
+        Long n = jdbc.queryForObject(sql.toString(), params, Long.class);
+        return n == null ? 0L : n;
+    }
+
+    /**
+     * WO-AUDIT-7 dry-run: сколько строк outbox ушло бы при этом cutoff —
+     * те же предикаты, что {@link #claimAndDeleteOutboxBatch}, без удаления.
+     */
+    @Transactional(readOnly = true)
+    public long countEligibleOutbox(Instant cutoff) {
+        Long n = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM outbox WHERE created_at < :cutoff " +
+            "AND (published = true OR status = 'FAILED')",
+            new MapSqlParameterSource("cutoff", Timestamp.from(cutoff)), Long.class);
+        return n == null ? 0L : n;
+    }
 }

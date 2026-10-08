@@ -47,13 +47,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code BOOT-INF/classes/} (zorrobpm-app, 70 ключей) и лежащие внутри
  * {@code BOOT-INF/lib/zorrobpm-engine-*.jar} / {@code zorrobpm-rest-*.jar}. Spring Boot грузит
  * {@code classpath:/application.properties} как ОДИН ресурс — первый на classpath, то есть
- * app-файл. 24 ключа движка с плейсхолдером «переменная окружения, иначе умолчание» в
+ * app-файл. 28 ключей движка с плейсхолдером «переменная окружения, иначе умолчание» в
  * задеплоенном приложении ОТСУТСТВОВАЛИ в Environment, значения оператора игнорировались —
  * без ошибки и без предупреждения. Проверено на реальном собранном jar, а не чтением
- * исходников. Числа сходятся так: 24 engine-only ключа = 23 с операторским именем переменной
- * (они в {@link #CONTAINER_ENV}) + {@code spring.rabbitmq.host}, имя переменной у которого
+ * исходников. Числа сходятся так: 28 engine-only ключей = 27 с операторским именем переменной
+ * (они в {@link #CONTAINER_ENV}: 23 исходных + dispatch-phase-stamping и
+ * completion-dedup.ttl-seconds из WO-C8-36 + 4 ручки WO-AUDIT-7) +
+ * {@code spring.rabbitmq.host}, имя переменной у которого
  * ({@code RABBITMQ_HOST}) общее с app-файлом, хотя сам ключ там не объявлен — там
- * {@code spring.rabbitmq.addresses}. Всего в файле движка 31 плейсхолдер = 23 + 1 + 7, где 7 —
+ * {@code spring.rabbitmq.addresses}. Всего в файле движка 35 плейсхолдеров = 27 + 1 + 7, где 7 —
  * объявленные ещё и в app-файле (DB_URL, DB_USERNAME, DB_PASSWORD,
  * RABBITMQ_USERNAME/PASSWORD/PORT, APP_FILES_DIR).
  *
@@ -61,7 +63,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code @SpringBootTest(classes = APP.class)} — тем же классом, что и в проде, с тем же
  * {@code BOOT-INF/classes/application.properties} на classpath и тем же набором модулей в
  * classpath, что и в fat-jar. Импорт проверяется не «есть ли строка в файле», а тем, дошло ли
- * значение до НАСТОЯЩЕГО бина (у всех 24 ключей потребитель найден на диске — см. ссылки в
+ * значение до НАСТОЯЩЕГО бина (у всех 28 ключей потребитель найден на диске — см. ссылки в
  * {@link #everyEngineKeyEnvVar_reachesItsBean()}).
  *
  * <p><b>Почему окружение эмулируется через {@link SystemEnvironmentPropertySource}.</b> В
@@ -161,6 +163,12 @@ class Cfg1EnginePropertiesEnvBindingTest {
         CONTAINER_ENV.put("SERVICETASK_WATCHDOG_BATCH_SIZE", "17");
         CONTAINER_ENV.put("ZORROBPM_ENGINE_DISPATCH_PHASE_STAMPING", "true");
         CONTAINER_ENV.put("ZORROBPM_ENGINE_COMPLETION_DEDUP_TTL_SECONDS", "4321");
+        // WO-AUDIT-7: четыре ручки retention events/outbox (значения отличны
+        // от дефолтов 0/0/false/0 — иначе ассерт прошёл бы и без связки).
+        CONTAINER_ENV.put("ZORROBPM_ENGINE_RETENTION_EVENTS_TTL_DAYS", "45");
+        CONTAINER_ENV.put("ZORROBPM_ENGINE_RETENTION_OUTBOX_TTL_DAYS", "60");
+        CONTAINER_ENV.put("ZORROBPM_ENGINE_RETENTION_DRY_RUN", "true");
+        CONTAINER_ENV.put("ZORROBPM_ENGINE_RETENTION_BATCH_PAUSE_MS", "50");
     }
 
     @Autowired
@@ -277,9 +285,10 @@ class Cfg1EnginePropertiesEnvBindingTest {
     // ------------------------------------------------------- ключ → значение → бин
 
     /**
-     * Ядро критерия 3: все 24 engine-only ключа — от первого в списке
+     * Ядро критерия 3: все 28 engine-only ключей — от первого в списке
      * ({@code zorrobpm.engine.retention.ttl-days}) до добавленного C8-36
-     * ({@code zorrobpm.engine.completion-dedup.ttl-seconds}) — доводят значение из
+     * ({@code zorrobpm.engine.completion-dedup.ttl-seconds}) и четырёх ручек
+     * WO-AUDIT-7 — доводят значение из
      * env-имени до своего НАСТОЯЩЕГО потребителя.
      *
      * <p>Потребители найдены на диске, а не выдуманы; ссылки в комментариях указывают файл и
@@ -309,6 +318,26 @@ class Cfg1EnginePropertiesEnvBindingTest {
             .as("zorrobpm.engine.retention.batch-size=${RETENTION_BATCH_SIZE} → "
                 + "RetentionConfig.batchSize (RetenantJob читает config.getBatchSize())")
             .isEqualTo(7);
+
+        // WO-AUDIT-7: четыре ручки retention events/outbox — те же
+        // @ConfigurationProperties-поля (retention/RetentionConfig.java),
+        // значения из env-имён выше (отличны от дефолтов).
+        assertThat(retention.getEventsTtlDays())
+            .as("zorrobpm.engine.retention.events-ttl-days="
+                + "${ZORROBPM_ENGINE_RETENTION_EVENTS_TTL_DAYS} → RetentionConfig.eventsTtlDays")
+            .isEqualTo(45);
+        assertThat(retention.getOutboxTtlDays())
+            .as("zorrobpm.engine.retention.outbox-ttl-days="
+                + "${ZORROBPM_ENGINE_RETENTION_OUTBOX_TTL_DAYS} → RetentionConfig.outboxTtlDays")
+            .isEqualTo(60);
+        assertThat(retention.isDryRun())
+            .as("zorrobpm.engine.retention.dry-run=${ZORROBPM_ENGINE_RETENTION_DRY_RUN} → "
+                + "RetentionConfig.dryRun")
+            .isTrue();
+        assertThat(retention.getBatchPauseMs())
+            .as("zorrobpm.engine.retention.batch-pause-ms="
+                + "${ZORROBPM_ENGINE_RETENTION_BATCH_PAUSE_MS} → RetentionConfig.batchPauseMs")
+            .isEqualTo(50L);
 
         // OutboxBatchProcessor — @Value на полях (scheduler/OutboxBatchProcessor.java:55,68).
         assertThat(readField(outbox, "batchSize"))
@@ -481,13 +510,14 @@ class Cfg1EnginePropertiesEnvBindingTest {
         }
 
         // Число плейсхолдеров в файле движка — контроль на то, что переименование файла
-        // ничего в нём не изменило (31 = 23 операторских + spring.rabbitmq.host + 7 общих с
+        // ничего в нём не изменило (35 = 23 операторских + spring.rabbitmq.host + 7 общих с
         // app-файлом: DB_URL, DB_USERNAME, DB_PASSWORD, RABBITMQ_USERNAME/PASSWORD/PORT,
-        // APP_FILES_DIR).
+        // APP_FILES_DIR + 4 ручки WO-AUDIT-7: events-ttl-days, outbox-ttl-days,
+        // dry-run, batch-pause-ms).
         assertThat(declared)
-            .as("в zorrobpm-engine.properties 31 ${ENV}-плейсхолдер — расхождение означает, что "
+            .as("в zorrobpm-engine.properties 35 ${ENV}-плейсхолдер — расхождение означает, что "
                 + "переименование файла изменило его содержимое (ключи терять нельзя, WO-CFG-1)")
-            .hasSize(31);
+            .hasSize(35);
     }
 
     // ------------------------------------------------------------------ инфраструктура
