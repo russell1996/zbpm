@@ -69,6 +69,10 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
     private final BpmMetrics bpmMetrics;
     // WO-PERF-1 N4: single thread-safe Jackson 3 ObjectMapper instance (replaces per-message new)
     private final tools.jackson.databind.ObjectMapper objectMapper;
+    // WO-AUDIT-7: транзитный пин живых курсоров для events-retention
+    // (nullable — тот же unit-scope shape, что SEC-67/мок-коллабораторы выше:
+    // хуки молчат без трекера, поведение без него — как раньше).
+    private final com.zorrodev.bpm.engine.event.SseLiveCursorTracker cursorTracker;
 
     @Autowired
     public SseEventStreamService(EventQueryService eventQueryService,
@@ -77,7 +81,8 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
                                     tools.jackson.databind.ObjectMapper objectMapper,
                                     UiUserLookupService uiUserLookupService,
                                     ApiKeyService apiKeyService,
-                                    @Lazy @Autowired(required = false) BpmMetrics bpmMetrics) {
+                                    @Lazy @Autowired(required = false) BpmMetrics bpmMetrics,
+                                    com.zorrodev.bpm.engine.event.SseLiveCursorTracker cursorTracker) {
         this.eventQueryService = eventQueryService;
         this.eventAuthzResolver = eventAuthzResolver;
         this.rabbitAdmin = rabbitAdmin;
@@ -85,13 +90,14 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
         this.uiUserLookupService = uiUserLookupService;
         this.apiKeyService = apiKeyService;
         this.bpmMetrics = bpmMetrics;
+        this.cursorTracker = cursorTracker;
         this.sessionRegistry = new SseSessionRegistry(
             () -> maxClients, () -> maxClientsPerSubject, () -> heartbeatIntervalMs,
             this::scheduleHeartbeat);
         this.authzGate = new SseAuthzGate(eventAuthzResolver, uiUserLookupService, apiKeyService,
             (session, reason) -> closeRevokedClient(session.clientId(), reason));
         this.deliveryDispatcher = new SseDeliveryDispatcher(sessionRegistry, authzGate,
-            uiUserLookupService, this::closeRevokedClient);
+            uiUserLookupService, this::closeRevokedClient, cursorTracker);
         this.cursorSequencer = new SseCursorSequencer(eventQueryService, deliveryDispatcher,
             this::closeLiveClientsForGap, objectMapper, bpmMetrics,
             new SseCursorSequencer.DeferScheduling(this::retryLane, () -> deferredCursorDelayMs));
@@ -111,7 +117,7 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
                                     UiUserLookupService uiUserLookupService,
                                     ApiKeyService apiKeyService) {
         this(eventQueryService, eventAuthzResolver, rabbitAdmin, objectMapper,
-            uiUserLookupService, apiKeyService, null);
+            uiUserLookupService, apiKeyService, null, null);
     }
 
     /** Connected SSE clients: registry of sessions (WO-AUDIT-9 шаг 3). */
@@ -231,9 +237,23 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
     /** Max retry attempts per arming (100ms × 50 = ~5s, one send-timeout window). */
     private static final int PUMP_RETRY_MAX_ATTEMPTS = 50;
 
+    /**
+     * WO-AUDIT-8 (A-NEW4-10): размер retry-lane — настройка, а не хардкод 1.
+     * Дефолт 1 = поведение не меняется; ручка по правилам CFG-1 (relaxed
+     * binding: {@code ZORROBPM_SSE_RETRY_LANE_SIZE}, тест привязки —
+     * {@code SseRetryLaneConfigTest}). Fail-fast на &lt;1 — как у соседних
+     * script-ручек (P-41): новая ручка проходит ту же проверку, а не обходит.
+     */
+    @Value("${zorrobpm.sse.retry-lane-size:1}")
+    private int retryLaneSize = 1;
+
     public synchronized java.util.concurrent.ScheduledExecutorService retryLane() {
         java.util.concurrent.ScheduledExecutorService lane = retryScheduler;
         if (lane == null || lane.isShutdown()) {
+            if (retryLaneSize < 1) {
+                throw new IllegalArgumentException(
+                    "zorrobpm.sse.retry-lane-size must be >= 1, got " + retryLaneSize);
+            }
             java.util.concurrent.ThreadFactory factory = r -> {
                 Thread t = new Thread(r);
                 t.setName("sse-retry-" + t.getId());
@@ -241,13 +261,18 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
                 return t;
             };
             java.util.concurrent.ScheduledThreadPoolExecutor fresh =
-                new java.util.concurrent.ScheduledThreadPoolExecutor(1, factory);
+                new java.util.concurrent.ScheduledThreadPoolExecutor(retryLaneSize, factory);
             fresh.setRemoveOnCancelPolicy(true);
             fresh.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
             fresh.allowCoreThreadTimeOut(true);
             fresh.setKeepAliveTime(60L, TimeUnit.SECONDS);
             retryScheduler = fresh;
             lane = fresh;
+        }
+        // WO-AUDIT-8 (A-NEW4-10): глубина очереди retry-lane видна оператору
+        // (порог в алерте — рядом с Saturated-warn'ами этого же файла).
+        if (lane instanceof java.util.concurrent.ScheduledThreadPoolExecutor stpe && bpmMetrics != null) {
+            bpmMetrics.setSseRetryQueueDepth(stpe.getQueue().size());
         }
         return lane;
     }
@@ -474,6 +499,13 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
      */
     private void removeClientState(String clientId) {
         SseClientSession known = sessionRegistry.get(clientId);
+        // WO-AUDIT-7: сессия закрыта любым путём — пин снимается (транзитный
+        // пин не залипает: emitter-timeout/F-13 закрывают протухшие сессии
+        // принудительно; худший эффект пропущенного снятия — задержка
+        // удаления, никогда — удаление чужого).
+        if (cursorTracker != null) {
+            cursorTracker.untrack(clientId);
+        }
         if (known == null) {
             return;
         }
@@ -551,6 +583,25 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
             return;
         }
         client.drainToLive(catchupBoundary);
+        // WO-AUDIT-7: catchup прочитан до границы — пин отпускает всё, что
+        // клиент уже получил (advance — max-merge: граница ниже текущего
+        // курсора — no-op).
+        if (cursorTracker != null) {
+            cursorTracker.advance(clientId, catchupBoundary);
+        }
+    }
+
+    /**
+     * WO-AUDIT-7: зарегистрировать курсор catchup'а клиента (зовёт
+     * контроллер ДО чтения catchup — окно register→read закрыто: проход
+     * retention, стартовавший между регистрацией и чтением, увидит пин).
+     * Без заголовка (since &lt;= 0) — не трекается: клиенту нужны только
+     * новые строки, старые ему не нужны.
+     */
+    public void trackCatchupCursor(String clientId, long since) {
+        if (cursorTracker != null) {
+            cursorTracker.track(clientId, since);
+        }
     }
 
     /**
