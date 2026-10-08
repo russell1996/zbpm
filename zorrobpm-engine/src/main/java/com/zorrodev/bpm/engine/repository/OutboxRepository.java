@@ -27,9 +27,33 @@ public interface OutboxRepository extends JpaRepository<OutboxEntry, UUID> {
     @Query("UPDATE OutboxEntry o SET o.published = true WHERE o.id = :id AND o.published = false")
     int markPublished(@Param("id") UUID id);
 
-    @Modifying
-    @Query("UPDATE OutboxEntry o SET o.attempts = :attempts, o.lastError = :error WHERE o.id = :id")
-    int recordFailure(@Param("id") UUID id, @Param("attempts") int attempts, @Param("error") String error);
+    /**
+     * WO-REL-69 П.1: атомарный инкремент счётчика попыток (замена неатомарного
+     * read-modify-write {@code findById → recordFailure(id, attempts+1)}, который
+     * терял обновления при конкурентных результатах одной записи: K параллельных
+     * nack читали одно {@code attempts} и все писали {@code +1} от него).
+     *
+     * <p>Инкремент УСЛОВНЫЙ: строка меняется только пока {@code attempts < ceiling},
+     * где {@code ceiling = maxRetries - 1}. Возврат 1 = инкремент применён
+     * (итог читается отдельным select в той же транзакции — JPQL не умеет
+     * {@code RETURNING}); 0 = потолок уже достигнут, писать нечего (карантинный
+     * переход attempts не трогает — пин семантики WO-INT-5/WO-REL-19). Раз ветка
+     * «потолок достигнут» ничего не пишет, терять там нечего — lost updates
+     * закрыты по построению, а не вероятностью.
+     *
+     * <p>{@code clearAutomatically} — тот же резон, что у {@code markFailed} ниже:
+     * bulk-UPDATE обходит persistence context, позже в той же транзакции сущность
+     * читается свежо, а не из кэша.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("UPDATE OutboxEntry o SET o.attempts = o.attempts + 1, o.lastError = :error "
+        + "WHERE o.id = :id AND o.attempts < :ceiling")
+    int incrementAttempts(@Param("id") UUID id, @Param("error") String error,
+        @Param("ceiling") int ceiling);
+
+    /** WO-REL-69 П.1: свежее значение счётчика после {@link #incrementAttempts}. */
+    @Query("SELECT o.attempts FROM OutboxEntry o WHERE o.id = :id")
+    Integer findAttemptsById(@Param("id") UUID id);
 
     /**
      * WO-REL-22 (B3): conditional — returns 1 only on the FIRST transition to FAILED.

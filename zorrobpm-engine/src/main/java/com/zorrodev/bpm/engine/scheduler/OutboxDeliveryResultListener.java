@@ -82,8 +82,32 @@ public class OutboxDeliveryResultListener {
             log.warn("Outbox delivery result for unknown entry {}: {}", outboxId, result.getCause());
             return;
         }
-        int nextAttempt = entry.getAttempts() + 1;
         String errorSummary = truncate(result.getCause(), 500);
+        // WO-REL-69 П.1: атомарный инкремент вместо read-modify-write
+        // (findById → recordFailure(id, attempts+1) терял обновления при
+        // конкурентных результатах одной записи). Потолок = maxRetries - 1:
+        // карантинный переход attempts не трогает (пин WO-INT-5/WO-REL-19).
+        // UPDATE берёт строковую блокировку и считает от последнего
+        // закоммиченного значения, поэтому итог читаем свежо — снимок entry
+        // для арифметики не годится (между нашим SELECT и UPDATE чужой коммит
+        // мог уже сдвинуть счётчик).
+        int ceiling = maxRetries - 1;
+        int nextAttempt;
+        if (outboxRepository.incrementAttempts(outboxId, errorSummary, ceiling) == 1) {
+            Integer fresh = outboxRepository.findAttemptsById(outboxId);
+            if (fresh == null) {
+                log.warn("Outbox entry {} vanished after incrementing attempts", outboxId);
+                return;
+            }
+            nextAttempt = fresh;
+        } else {
+            Integer current = outboxRepository.findAttemptsById(outboxId);
+            if (current == null) {
+                log.warn("Outbox delivery result for unknown entry {}: {}", outboxId, result.getCause());
+                return;
+            }
+            nextAttempt = current + 1;
+        }
         if (nextAttempt >= maxRetries) {
             // WO-REL-66 (B): a quarantine notification that itself was not
             // delivered (NO_ROUTE) must NOT be quarantined (that re-emits
@@ -113,7 +137,8 @@ public class OutboxDeliveryResultListener {
             log.error("Outbox entry {} quarantined after {} failed deliveries (max={}): {}",
                 outboxId, nextAttempt, maxRetries, errorSummary);
         } else {
-            outboxRepository.recordFailure(outboxId, nextAttempt, errorSummary);
+            // WO-REL-69 П.1: инкремент уже применён условным UPDATE выше —
+            // здесь только учёт и лог, второй записи нет.
             // WO-OBS-1: broker-level failure (NACK) — distinct from permanent quarantine above.
             bpmMetrics.rabbitPublishFailed();
             log.warn("Outbox entry {} delivery failed (attempt {}/{}): {}",
