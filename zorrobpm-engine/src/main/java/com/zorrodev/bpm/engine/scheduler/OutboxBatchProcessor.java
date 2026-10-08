@@ -146,6 +146,14 @@ public class OutboxBatchProcessor {
             int nextAttempt = entry.getAttempts() + 1;
             String errorSummary = truncate(e.getMessage(), 500);
             if (nextAttempt >= maxRetries) {
+                // WO-REL-66 (B): a quarantine notification that itself cannot
+                // be delivered must NOT be quarantined (that re-emits the
+                // loop) — drop with accounting instead.
+                if (QuarantineNotificationGuard.isQuarantineNotification(
+                        entry.getKind(), entry.getPayload(), objectMapper)) {
+                    QuarantineNotificationGuard.dropUndeliverable(entry, outboxRepository, bpmMetrics);
+                    return;
+                }
                 // WO-REL-22 (B3): emit only on the FIRST transition (markFailed is
                 // conditional) — duplicate marks must not re-emit.
                 if (outboxRepository.markFailed(entry.getId()) == 1) {
