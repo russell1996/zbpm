@@ -105,10 +105,13 @@ function longPreset(i: number): VariablePreset {
     targetRef: null,
     name: `Очень длинное название шаблона номер ${i} которое не влезает`,
     description: null,
+    ownerUserId: 'u1',
     visibility: i % 2 ? 'PROCESS' : 'PRIVATE',
     variables: FIVE,
-    version: 1,
     favorite: false,
+    createdAt: '2026-10-09T00:00:00',
+    updatedAt: '2026-10-09T00:00:00',
+    version: 1,
   }
 }
 
@@ -149,11 +152,16 @@ function attachHost(width: number, dark = false): HTMLElement {
   return host
 }
 
-function mountAt(comp: unknown, props: Record<string, unknown>, width: number, opts: { dark?: boolean; locale?: string } = {}) {
+function mountAt(
+  comp: unknown,
+  props: Record<string, unknown>,
+  width: number,
+  opts: { dark?: boolean; locale?: string } = {},
+) {
   const i18n = makeI18n(opts.locale ?? 'ru')
-  const wrapper = mount(comp as never, {
+  const wrapper = mount(comp as object, {
     attachTo: attachHost(width, opts.dark),
-    props,
+    props: props as never,
     global: { plugins: [createPinia(), i18n] },
   }) as unknown as VueWrapper
   mounted.push(wrapper)
@@ -175,18 +183,13 @@ function overflowing(root: Element): string[] {
     // truncate+ellipsis — задуманное поведение; настоящий дефект виден на
     // уровне строки-контейнера (li/div вылезает за панель).
     if (h.classList.contains('truncate')) continue
-    // Поля ввода/селекты скроллятся ВНУТРИ по замыслу (длинный UUID виден
-    // частично — это нормально); их дефект — схлопывание бокса, а не
-    // внутренний скролл: он ловится отдельными тестами (имя ≥160px,
-    // JSON ≥8 строк, кнопка внутри карточки).
-    if (h.tagName === 'INPUT' || h.tagName === 'SELECT') continue
-    // truncate+ellipsis — задуманное поведение; настоящий дефект виден на
-    // уровне строки-контейнера (li/div вылезает за панель).
-    if (h.classList.contains('truncate')) continue
     // Визуально скрытые подписи (sr-only, 1px): их scrollWidth — текст,
     // который никто не видит; не дефект.
     if (h.className?.toString?.().split(' ').includes('sr-only')) continue
     if (h.getAttribute('data-audit-scroll') === '1') continue
+    // Внутренний скролл по замыслу (overflow-x:auto, контейнер влезает в
+    // хост — таблица менеджера): содержимое скроллится внутри, страница цела.
+    if (getComputedStyle(h).overflowX === 'auto' && h.clientWidth <= (root as HTMLElement).clientWidth + 1) continue
     if (h.scrollWidth > h.clientWidth + 1) {
       const cls = (h.className?.toString?.() ?? '').split(' ').slice(0, 3).join('.')
       out.push(`${h.tagName.toLowerCase()}.${cls} scroll=${h.scrollWidth} client=${h.clientWidth}`)
@@ -214,19 +217,33 @@ describe('WO-VT-3 audit: VariablesEditor', () => {
     }
   })
 
-  it.each([360, 520, 960])('FIVE @%ipx: «Удалить» внутри карточки', async (w) => {
-    mountAt(VariablesEditor, { modelValue: FIVE }, w)
+  it.each([360, 520, 960])('FIVE @%ipx: удаление — меню ⋯ и inline-подтверждение внутри карточки', async (w) => {
+    const wrapper = mountAt(VariablesEditor, { modelValue: FIVE }, w)
     await flushPromises()
-    const cards = [...document.querySelectorAll('.grid')] as HTMLElement[]
-    expect(cards.length).toBeGreaterThan(0)
-    for (const card of cards) {
-      const btn = card.querySelector('button[aria-label]') as HTMLElement | null
-      if (!btn) continue
-      const c = card.getBoundingClientRect()
-      const b = btn.getBoundingClientRect()
-      expect(b.right).toBeLessThanOrEqual(c.right + 1)
-      expect(b.left).toBeGreaterThanOrEqual(c.left - 1)
-    }
+    // WO-VT-3: кнопки «Удалить» в строке больше нет — удаление через ⋯.
+    const cards = [...document.querySelectorAll('[data-testid="ve-card"]')] as HTMLElement[]
+    expect(cards.length).toBe(5)
+    const first = cards[0]
+    const menu = first.querySelector('[data-testid="ve-row-menu"]') as HTMLElement
+    expect(menu, 'row ⋯ menu button exists').toBeTruthy()
+    const mc = first.getBoundingClientRect()
+    const mb = menu.getBoundingClientRect()
+    expect(mb.right).toBeLessThanOrEqual(mc.right + 1)
+    // Открываем меню, жмём «Удалить» — inline-подтверждение внутри карточки.
+    ;(menu as HTMLButtonElement).click()
+    await flushPromises()
+    const delItem = first.querySelector('[data-testid="ve-row-menu-delete"]') as HTMLButtonElement
+    expect(delItem).toBeTruthy()
+    delItem.click()
+    await flushPromises()
+    const confirmBox = first.querySelector('[data-testid="ve-delete-confirm"]') as HTMLElement
+    expect(confirmBox).toBeTruthy()
+    const cc = first.getBoundingClientRect()
+    const cb = confirmBox.getBoundingClientRect()
+    expect(cb.right).toBeLessThanOrEqual(cc.right + 1)
+    expect(cb.left).toBeGreaterThanOrEqual(cc.left - 1)
+    expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+    wrapper.unmount()
   })
 
   it('JSON 60КБ @960: поле видно ≥8 строк', async () => {
@@ -242,7 +259,7 @@ describe('WO-VT-3 audit: VariablesEditor', () => {
     mountAt(VariablesEditor, { modelValue: NAME_60 }, 360)
     await flushPromises()
     // Скриншот ДО переделки — снимаем до ассертов, чтобы артефакт был и на RED.
-    await page.screenshot({ path: SHOT("before-ve-name60-360-light") })
+    await page.screenshot({ path: SHOT("after-ve-name60-360-light") })
     expect(overflowing(document.body)).toEqual([])
   })
 
@@ -329,7 +346,7 @@ describe('WO-VT-3 audit: PresetEditorDialog', () => {
     )
     await flushPromises()
     expect(document.querySelector('[role="dialog"]')).toBeTruthy()
-    await page.screenshot({ path: SHOT(`before-editor-five-${w}`) })
+    await page.screenshot({ path: SHOT(`after-editor-five-${w}`) })
     expect(overflowing(document.body)).toEqual([])
   })
 
@@ -368,8 +385,22 @@ describe('WO-VT-3 audit: ElementPresetsPanel', () => {
     ;(listPresets as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([longPreset(1), longPreset(2)])
     mountAt(ElementPresetsPanel, { processKey: 'orderProcess', targetKind: 'START', targetRef: null }, w)
     await flushPromises()
-    if (w === 280) await page.screenshot({ path: SHOT("before-panel-280") })
+    await flushPromises()
+    if (w === 280) await page.screenshot({ path: SHOT("after-panel-280") })
     expect(overflowing(document.body)).toEqual([])
+  })
+
+  it('видимость показана переводом, сырых PROCESS/PRIVATE нет', async () => {
+    ;(listPresets as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
+      { ...longPreset(1), visibility: 'PROCESS' },
+      { ...longPreset(2), visibility: 'PRIVATE' },
+    ])
+    mountAt(ElementPresetsPanel, { processKey: 'orderProcess', targetKind: 'START', targetRef: null }, 360)
+    await flushPromises()
+    await flushPromises()
+    const body = document.body.textContent ?? ''
+    expect(body).not.toContain('PROCESS')
+    expect(body).not.toContain('PRIVATE')
   })
 })
 
@@ -429,8 +460,12 @@ describe('WO-VT-3 audit: PresetManagerPanel + message/snapshot', () => {
     await w.find('#preset-name').setValue('t1')
     await flushPromises()
     const save = w.findAll('button').find((b) => /Сохранить/.test(b.text()))!
-    await save.trigger('click')
-    await save.trigger('click')
+    // Настоящий даблклик: два события подряд БЕЗ await между ними (второй
+    // обработчик стартует, пока первый ещё в полёте — guard saving ловит).
+    const p1 = save.trigger('click')
+    const p2 = save.trigger('click')
+    await p1
+    await p2
     await flushPromises()
     expect(createMock.mock.calls.length).toBe(1)
   })
@@ -447,6 +482,39 @@ describe('WO-VT-3 audit: PresetManagerPanel + message/snapshot', () => {
     // presetVisibilityPrivate/Process уже есть в локалях).
     expect(body).not.toContain('PRIVATE')
     expect(body).not.toContain('PROCESS')
+  })
+
+  it('PresetManagerPanel: колонки «Где применяется»/«Элемент», why-строка есть', async () => {
+    ;(listPresets as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
+      { ...longPreset(1), targetKind: 'USER_TASK', targetRef: 'taskA' },
+      { ...longPreset(2), targetKind: 'START', targetRef: null },
+    ])
+    mountAt(PresetManagerPanel, { processKey: 'orderProcess' }, 520)
+    await flushPromises()
+    await flushPromises()
+    // Реальный ru-i18n: сверяем ПЕРЕВЕДЁННЫЕ строки из словаря, не ключи.
+    const body = document.body.textContent ?? ''
+    expect(body).toContain(ru.presetWhereUsed)
+    expect(body).toContain(ru.presetElementName)
+    expect(body).not.toContain('Вид места')
+    // START без ref — «Запуск процесса», а не «—».
+    expect(body).toContain(ru.presetStartTargetRef)
+    // Why-строка блока.
+    expect(body).toContain(ru.presetWhyManager)
+  })
+
+  it('InstanceMessagePanel и SnapshotPanel объясняют себя (why-строки)', async () => {
+    mountAt(InstanceMessagePanel, { processKey: 'orderProcess' }, 520)
+    await flushPromises()
+    mountAt(
+      InstanceSnapshotPanel,
+      { processKey: 'orderProcess', instanceVariables: [{ name: 'a', type: 'LONG', value: '1' }] },
+      520,
+    )
+    await flushPromises()
+    const body = document.body.textContent ?? ''
+    expect(body).toContain(ru.presetWhyMessage)
+    expect(body).toContain(ru.presetWhySnapshot)
   })
 
   it('InstanceSnapshotPanel диалог @320: без переполнения', async () => {
@@ -470,7 +538,7 @@ describe('WO-VT-3 audit: тёмная тема + консоль + i18n', () => {
   it('FIVE @360 dark: без переполнения', async () => {
     mountAt(VariablesEditor, { modelValue: FIVE }, 360, { dark: true })
     await flushPromises()
-    await page.screenshot({ path: SHOT("before-editor-five-360-dark") })
+    await page.screenshot({ path: SHOT("after-editor-five-360-dark") })
     expect(overflowing(document.body)).toEqual([])
   })
 

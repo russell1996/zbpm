@@ -78,18 +78,19 @@ async function saveSnapshot() {
 
 <template>
   <div class="border border-border rounded-lg p-4 bg-card space-y-3">
-    <div class="flex items-center justify-between">
+    <div class="flex items-center justify-between gap-2 flex-wrap">
       <h3 class="text-sm font-bold">{{ t('presetSnapshotTitle') }}</h3>
       <button
         type="button"
-        class="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
+        class="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50 h-8"
         :disabled="!instanceVariables.length"
         @click="openDialog"
       >
         {{ t('presetSnapshotSave', { count: instanceVariables.length }) }}
       </button>
     </div>
-    <p class="text-xs text-muted-foreground">{{ t('presetSnapshotHint') }}</p>
+    <!-- WO-VT-3 Дополнение №2 п.2: строка «зачем это» (до решения по IA). -->
+    <p class="text-xs text-muted-foreground">{{ t('presetWhySnapshot') }}</p>
     <div
       v-if="showDialog"
       class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
