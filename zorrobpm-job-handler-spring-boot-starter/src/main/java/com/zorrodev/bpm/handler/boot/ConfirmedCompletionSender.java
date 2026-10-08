@@ -52,18 +52,32 @@ final class ConfirmedCompletionSender {
      * Отправляет результат и — при {@code waitForConfirm} — дожидается
      * брокерского confirm этой отправки и проверяет возврат (unroutable).
      *
+     * <p>WO-INT-10: публикация идёт через ВЫДЕЛЕННЫЙ exchange
+     * ({@code CompletionTopology.COMPLETION_EXCHANGE}), routing key равен
+     * имени очереди (identity-биндинги объявляет движок). Голый
+     * {@code convertAndSend(queue, …)} через default exchange здесь запрещён:
+     * брокер проверяет write-право против {@code amq.default}, и воркеру
+     * такое право давать нельзя (см. {@code CompletionTopology}).
+     *
+     * @param exchange exchange публикации (прод — completion-exchange)
+     * @param routingKey ключ маршрутизации (прод — имя целевой очереди)
      * @param extraHeaders дополнительные AMQP-заголовки поверх базовых
      *     (correlationId/trace из тела) — например счётчик poison-попыток;
      *     null — только базовые
      * @param expirationMs per-message TTL в мс (для delay-очереди) — null без TTL
      * @param unroutableCounter счётчик пойманных возвратов — null не считать
+     * @throws CompletionPublishDeniedException брокер отказал в публикации
+     *     (403/access_refused — неверные права воркера, НЕ транспорт):
+     *     вызыватель обязан отреагировать иначе, чем на транспорт
+     *     (см. {@code JobCompletionListener.handleSendFailure})
      * @throws AmqpException NACK/timeout/interrupt/unroutable — вход НЕ
      *     подтверждать, результат восстанавливается переотправкой
      * @throws IllegalStateException у тела нет completionId — вызывающий обязан
      *     назначить его ДО отправки (стабильность на redelivery)
      */
     static void sendAndConfirm(RabbitTemplate rabbitTemplate,
-            String queueName,
+            String exchange,
+            String routingKey,
             ServiceTaskCompleteData completeData,
             Map<String, Object> extraHeaders,
             String expirationMs,
@@ -96,7 +110,17 @@ final class ConfirmedCompletionSender {
             }
             return m;
         };
-        rabbitTemplate.convertAndSend(queueName, completeData, headers, correlationData);
+        try {
+            rabbitTemplate.convertAndSend(exchange, routingKey, completeData, headers, correlationData);
+        } catch (RuntimeException e) {
+            // WO-INT-10 (Q3): синхронный 403 — неверные права воркера, не
+            // транспорт. Отдельный тип: вызыватель паркует сразу, а не крутит
+            // вечный backoff-redelivery без инцидента.
+            if (isAccessRefused(e)) {
+                throw new CompletionPublishDeniedException(exchange, routingKey, completionId, e);
+            }
+            throw e;
+        }
         if (!waitForConfirm) {
             return;
         }
@@ -105,6 +129,17 @@ final class ConfirmedCompletionSender {
                 correlationData.getFuture().get(confirmTimeoutMs,
                     java.util.concurrent.TimeUnit.MILLISECONDS);
             if (!confirm.isAck()) {
+                // WO-INT-10 (Q3): async-форма того же 403 — брокер убил канал
+                // отказом, confirm пришёл NACK с текстом отказа в reason
+                // (живой прогон: reply-code=403 ACCESS_REFUSED на amq.default).
+                // Тоже misconfig, не транспорт.
+                if (confirm.getReason() != null
+                    && confirm.getReason().toUpperCase(java.util.Locale.ROOT)
+                        .contains("ACCESS_REFUSED")) {
+                    throw new CompletionPublishDeniedException(
+                        exchange, routingKey, completionId,
+                        new AmqpException("broker NACKed publish: " + confirm.getReason()));
+                }
                 throw new AmqpException("Completion " + completionId
                     + " was NACKed by broker: " + confirm.getReason()
                     + " — will be redelivered");
@@ -136,5 +171,36 @@ final class ConfirmedCompletionSender {
                 + returnedMessage.getReplyCode() + " " + returnedMessage.getReplyText()
                 + " — will be redelivered");
         }
+    }
+
+    /**
+     * WO-INT-10 (Q3): это отказ прав (403/access_refused) или транспорт?
+     *
+     * <p>Сигналы брокера: {@code ShutdownSignalException} с reply-code 403
+     * (канал закрыт отказом — типичный синхронный ответ на publish без
+     * write-права) либо текст {@code ACCESS_REFUSED} в цепочке причин
+     * (Spring оборачивает по-разному на разных путях). Голый 403 без ключевых
+     * слов — НЕ denial (не гадаем).
+     */
+    static boolean isAccessRefused(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (c instanceof com.rabbitmq.client.ShutdownSignalException sse) {
+                Object reason = sse.getReason();
+                if (reason instanceof com.rabbitmq.client.AMQP.Channel.Close channelClose
+                    && channelClose.getReplyCode() == 403) {
+                    return true;
+                }
+                if (reason instanceof com.rabbitmq.client.AMQP.Connection.Close connectionClose
+                    && connectionClose.getReplyCode() == 403) {
+                    return true;
+                }
+            }
+            String message = c.getMessage();
+            if (message != null
+                && message.toUpperCase(java.util.Locale.ROOT).contains("ACCESS_REFUSED")) {
+                return true;
+            }
+        }
+        return false;
     }
 }

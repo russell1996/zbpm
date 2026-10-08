@@ -314,7 +314,7 @@ class HandlerAutoConfigurationTest {
         v.setType("STRING");
         when(handlerA.handleJob(any())).thenReturn(java.util.List.of(v));
         org.mockito.Mockito.doThrow(new org.springframework.amqp.AmqpException("broker down"))
-            .when(rabbitTemplate).convertAndSend(anyString(), (Object) any(),
+            .when(rabbitTemplate).convertAndSend(anyString(), anyString(), (Object) any(),
                 any(org.springframework.amqp.core.MessagePostProcessor.class),
                 any(org.springframework.amqp.rabbit.connection.CorrelationData.class));
 
