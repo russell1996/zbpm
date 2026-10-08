@@ -15,6 +15,7 @@ import com.zorrodev.bpm.engine.entity.VariablePresetVisibility;
 import com.zorrodev.bpm.engine.repository.VariablePresetFavoriteRepository;
 import com.zorrodev.bpm.engine.repository.VariablePresetHistoryRepository;
 import com.zorrodev.bpm.engine.repository.VariablePresetRepository;
+import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
 import lombok.RequiredArgsConstructor;
@@ -61,6 +62,7 @@ public class VariablePresetService {
     private final VariablePresetHistoryRepository historyRepository;
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
+    private final UiUserRepository userRepository;
 
 /* WO-VT-1: граница WO-DEBT-7 — ресурс в zorrobpm-rest НЕ импортирует
  * engine.entity/* (ловит RestRepositoryBoundaryTest), поэтому сервис принимает
@@ -148,6 +150,15 @@ public class VariablePresetService {
         errors.addAll(vars.errors());
         failOnErrors(errors);
         UUID owner = actorUserId(principal);
+        // WO-VT-1 раунд 2 (Б-2): лимит ≤200 на (ключ, владелец) проверяется
+        // count-pre-check — под гонкой два создания видят один счёт и оба
+        // проходят (204>200 живьём у красной команды, тот же TOCTOU-класс, что
+        // Б-1). Сериализуем создания владельца построчной блокировкой его же
+        // строки ui_users в той же транзакции (санкция CTO на этот WO; shape —
+        // UiUserRepository.findByIdForUpdate, WO-REL-39). Строка владельца есть
+        // на всех достижимых путях (аутентифицированный пользователь; владелец
+        // живого ключа); блокировка берётся ДО count — иначе она декоративна.
+        userRepository.findByIdForUpdate(owner);
         if (presetRepository.countByOwnerUserIdAndProcessDefinitionKey(
                 owner, payload.processDefinitionKey()) >= VariablePresetValidator.MAX_PRESETS_PER_KEY_OWNER) {
             throw new ApiException(HttpStatus.CONFLICT, "PRESET_LIMIT_EXCEEDED",
@@ -188,7 +199,11 @@ public class VariablePresetService {
     @Transactional
     public VariablePresetDTO update(Principal principal, UUID id, UpdatePresetDTO dto) {
         requireAuth(principal);
-        VariablePresetEntity entity = presetRepository.findById(id)
+        // WO-VT-1 раунд 2 (Б-1): чтение под запись (SELECT ... FOR UPDATE) —
+        // два update с одной версией сериализуются: проигравший ждёт коммита
+        // победителя, видит свежую версию и уходит в 409 ниже, а не затирает
+        // чужую правку. Обычный findById здесь давал 200/200 с потерей (20/20).
+        VariablePresetEntity entity = presetRepository.findByIdForUpdate(id)
             .orElseThrow(VariablePresetService::notFound);
         if (!canRead(principal, entity)) {
             throw notFound();
@@ -287,7 +302,10 @@ public class VariablePresetService {
     @Transactional
     public VariablePresetDTO changeVisibility(Principal principal, UUID id, String visibility) {
         requireAuth(principal);
-        VariablePresetEntity entity = presetRepository.findById(id)
+        // WO-VT-1 раунд 2 (Б-1, та же причина, что в update): видимость тоже
+        // бампит версию — чтение под запись, иначе конкурентный PUT со
+        // stale-версией молча теряет смену видимости вместо 409.
+        VariablePresetEntity entity = presetRepository.findByIdForUpdate(id)
             .orElseThrow(VariablePresetService::notFound);
         if (!canRead(principal, entity)) {
             throw notFound();

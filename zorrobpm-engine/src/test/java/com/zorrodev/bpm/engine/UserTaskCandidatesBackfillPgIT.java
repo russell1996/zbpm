@@ -32,14 +32,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * нужен: без него все задачи, созданные до деплоя, исчезли бы из фильтров кандидата.
  *
  * <p>Схема прокручивается дважды, и это ключевая часть проверки: сначала ПОЛНЫЙ мастер-чанжлог
- * (чтобы узнать, сколько changeset'ов всего), потом схема пересоздаётся и мастер применяется
- * заново на {@code N-2} changeset'ах — ровно до наших двух. Только после этого в таблицу кладутся
- * легаси-строки и changeset'ы доезжают. SQL бэкфилла в тесте не написан ни разу: его выполняет
- * Liquibase (G-N/G9 — вычеркни changeset, и тест упадёт на отсутствии таблицы, а не останется
- * «зелёным»).
+ * (чтобы узнать позицию наших changeset'ов по их id в {@code databasechangelog}), потом схема
+ * пересоздаётся и мастер применяется заново ровно до changeset'а 20261006-118. Только после этого
+ * в таблицу кладутся легаси-строки и changeset'ы доезжают. SQL бэкфилла в тесте не написан ни
+ * разу: его выполняет Liquibase (G-N/G9 — вычеркни changeset, и тест упадёт на отсутствии таблицы,
+ * а не останется «зелёным»).
  *
- * <p>Точка остановки проверяется явно (user_tasks есть, user_task_candidates ещё нет): если бы
- * счёт changeset'ов разошёлся, тест упал бы с внятным сообщением, а не «прошёл бы мимо».
+ * <p>Точка остановки — поиском по id (WO-VT-1 раунд 2, Б-3), а не «первые N-2»: когда в мастер
+ * встали 120/121 после 119, счёт разошёлся и класс покраснел в полном test:pg. Точка проверяется
+ * явно (user_tasks есть, user_task_candidates ещё нет): если бы позиция разошлась, тест упал бы
+ * с внятным сообщением, а не «прошёл бы мимо».
  *
  * <p>Изоляция: своя схема {@value #SCHEMA}, создаётся и сносится на каждый тест. Общая
  * {@code public}-схема и любые чужие базы не трогаются.
@@ -104,13 +106,6 @@ class UserTaskCandidatesBackfillPgIT {
         }
     }
 
-    /** Полный прогон + число записанных changeset'ов: столько нужно отнять, чтобы остановиться
-     *  ровно перед двумя нашими. */
-    private int fullRunAndCount() throws Exception {
-        runMaster();
-        return recordedChangeSets();
-    }
-
     /** Вычёркивает отметку о выполнении бэкфилла, чтобы следующий update выполнил его ЗАНОВО. */
     private void forgetBackfillChangeset() throws Exception {
         try (Connection c = open(); Statement s = c.createStatement()) {
@@ -119,14 +114,13 @@ class UserTaskCandidatesBackfillPgIT {
     }
 
     /**
-     * Останавливает мастер-чанжлог на {@code N-2} changeset'ах — на двух наших.
+     * Останавливает мастер-чанжлог ровно ПЕРЕД changeset'ом с данным id.
      *
-     * <p>ЗАВИСИМОСТЬ, которую надо знать: наши два changeset'а обязаны быть ПОСЛЕДНИМИ в
-     * master-чанжлоге (includeAll сортирует по имени файла, а наши имена — самые новые). Если
-     * появится более поздняя миграция, счёт разойдётся. Падение будет ГРОМКИМ и понятным, а не
-     * тихим: следующая проверка требует, чтобы {@code user_task_candidates} ещё НЕ существовала,
-     * и при лишнем changeset'е она не сойдётся. Фикс на будущее — искать позицию своих
-     * changeset'ов по id, а не по «последние два».
+     * <p>WO-VT-1 раунд 2 (Б-3): позиция — поиском по id в {@code databasechangelog}
+     * полного прогона, а не «первые N-2». Прежняя зависимость «наши два — последние»
+     * (includeAll сортирует по имени, имена были самыми новыми) разошлась, как только
+     * в мастер встали 120/121, и уронила класс в полном test:pg. Id — константы,
+     * инъекции нет.
      */
     private void runMasterUpTo(int changesToRun) throws Exception {
         try (Connection c = open()) {
@@ -134,11 +128,21 @@ class UserTaskCandidatesBackfillPgIT {
         }
     }
 
-    private int recordedChangeSets() throws Exception {
+    private void runMasterUpToBefore(String changeSetId) throws Exception {
+        runMaster();
+        int stopAt = orderOf(changeSetId) - 1;
+        createOwnSchema();
+        runMasterUpTo(stopAt);
+    }
+
+    private int orderOf(String changeSetId) throws Exception {
         try (Connection c = open(); Statement s = c.createStatement();
-             ResultSet rs = s.executeQuery("SELECT count(*) FROM " + SCHEMA + ".databasechangelog")) {
-            rs.next();
-            return rs.getInt(1);
+             ResultSet rs = s.executeQuery("SELECT orderexecuted FROM " + SCHEMA
+                 + ".databasechangelog WHERE id = '" + changeSetId + "'")) {
+            assertThat(rs.next()).as("changeset %s записан в databasechangelog", changeSetId).isTrue();
+            int order = rs.getInt(1);
+            assertThat(rs.next()).as("changeset %s записан ровно один раз", changeSetId).isFalse();
+            return order;
         }
     }
 
@@ -155,10 +159,7 @@ class UserTaskCandidatesBackfillPgIT {
 
     @Test
     void backfill_copiesEveryLegacyGroupWithAuthorizationTrimAndSkipsBlankOnes() throws Exception {
-        int total = fullRunAndCount();
-
-        createOwnSchema();
-        runMasterUpTo(total - 2);
+        runMasterUpToBefore("20261006-118");
 
         assertThat(tableExists("user_tasks")).as("остановились ПОСЛЕ создания user_tasks").isTrue();
         assertThat(tableExists("user_task_candidates"))
@@ -186,10 +187,7 @@ class UserTaskCandidatesBackfillPgIT {
      */
     @Test
     void backfill_isRerunnable_withoutFailingOrDuplicating() throws Exception {
-        int total = fullRunAndCount();
-
-        createOwnSchema();
-        runMasterUpTo(total - 2);
+        runMasterUpToBefore("20261006-118");
         seedLegacyRows();
         runMaster();
 
@@ -212,10 +210,7 @@ class UserTaskCandidatesBackfillPgIT {
      */
     @Test
     void backfill_neverInventsCandidateUsers() throws Exception {
-        int total = fullRunAndCount();
-
-        createOwnSchema();
-        runMasterUpTo(total - 2);
+        runMasterUpToBefore("20261006-118");
         seedLegacyRows();
         runMaster();
 
