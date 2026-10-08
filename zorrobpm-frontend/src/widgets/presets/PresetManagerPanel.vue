@@ -14,6 +14,11 @@ import { useToast } from '@/composables/useToast'
  */
 const props = defineProps<{
   processKey: string
+  /**
+   * WO-VT-3 раунд 2 (решение CTO п.4): id элемента → имя из схемы.
+   * Неизвестный ref — id как fallback (см. refLabel).
+   */
+  elementNames?: Record<string, string>
 }>()
 
 const { t } = useI18n()
@@ -40,12 +45,13 @@ function visibilityLabel(visibility: string): string {
   return visibility === 'PROCESS' ? t('presetVisibilityProcess') : t('presetVisibilityPrivate')
 }
 
-// WO-VT-3 Дополнение №2 п.2: «Привязка» → «Элемент»: имя элемента из схемы
-// недоступно менеджеру (только targetRef=id), поэтому показываем ref как есть,
-// а для START — «Запуск процесса» вместо «—».
+// WO-VT-3 Дополнение №2 п.2 + решение CTO п.4 (раунд 2): «Привязка» →
+// «Элемент»: имя элемента из схемы, неизвестный ref — id как fallback,
+// для START — «Запуск процесса» вместо «—».
 function refLabel(p: VariablePreset): string {
   if (p.targetKind === 'START') return t('presetStartTargetRef')
-  return p.targetRef || '—'
+  if (!p.targetRef) return '—'
+  return props.elementNames?.[p.targetRef] || p.targetRef
 }
 
 async function load() {

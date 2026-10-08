@@ -731,5 +731,12 @@
   "presetHistoryAction_CREATE": "Created",
   "presetHistoryAction_UPDATE": "Updated",
   "presetWhereUsed": "Applies to",
-  "presetElementName": "Element"
+  "presetElementName": "Element",
+  "presetSendMessage": "Send message…",
+  "presetSendMessageTitle": "Send message",
+  "presetSaveSnapshotMenu": "Save variables as template",
+  "presetOpenManager": "Process templates →",
+  "presetInstanceActions": "Instance actions",
+  "presetSnapshotDialogTitle": "Save variables as template",
+  "presetOpenTemplate": "Open template"
 }

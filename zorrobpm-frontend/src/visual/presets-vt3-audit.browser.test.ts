@@ -19,6 +19,7 @@ import ElementPresetsPanel from '@/widgets/presets/ElementPresetsPanel.vue'
 import PresetManagerPanel from '@/widgets/presets/PresetManagerPanel.vue'
 import InstanceMessagePanel from '@/widgets/presets/InstanceMessagePanel.vue'
 import InstanceSnapshotPanel from '@/widgets/presets/InstanceSnapshotPanel.vue'
+import PageInstanceDetail from '@/pages/processes/ProcessInstanceDetail.vue'
 import type { PresetVariable, VariablePreset } from '@/types/presets'
 import en from '@/locales/en.json'
 import ru from '@/locales/ru.json'
@@ -46,6 +47,29 @@ vi.mock('@/services/formService', () => ({
 }))
 vi.mock('@/services/instanceService', () => ({
   startProcessInstance: vi.fn().mockResolvedValue({ id: 'inst-1' }),
+  getProcessInstance: vi.fn().mockResolvedValue({ id: 'pi-1', processDefinitionId: 'pd-1', processKey: 'test', processVersion: 1, startedAt: '2026-01-01', completedAt: null }),
+  getProcessInstanceActivities: vi.fn().mockResolvedValue([]),
+  getProcessInstanceActivitiesPaged: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
+  getProcessInstances: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
+  cancelProcessInstance: vi.fn().mockResolvedValue({ id: 'pi-1' }),
+}))
+vi.mock('@/services/variableService', () => ({
+  getVariables: vi.fn().mockResolvedValue({ data: [] }),
+}))
+vi.mock('@/services/taskService', () => ({
+  completeUserTask: vi.fn().mockResolvedValue(undefined),
+  completeServiceTask: vi.fn().mockResolvedValue(undefined),
+  getServiceTasks: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
+  getUserTasks: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
+  getUserTask: vi.fn().mockResolvedValue(null),
+}))
+vi.mock('@/services/incidentService', () => ({
+  resolveIncident: vi.fn().mockResolvedValue(undefined),
+  getIncidents: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
+  getIncident: vi.fn().mockResolvedValue(null),
+}))
+vi.mock('@/services/adminService', () => ({
+  listMembers: vi.fn().mockResolvedValue([]),
 }))
 vi.mock('@/services/messagePublishService', () => ({
   publishMessage: vi.fn().mockResolvedValue({}),
@@ -559,5 +583,78 @@ describe('WO-VT-3 audit: тёмная тема + консоль + i18n', () => {
     const body = document.body.textContent ?? ''
     expect(body).not.toMatch(/preset[A-Z]\w*/)
     expect(errs.filter((e) => !e.includes('scrollIntoView'))).toEqual([])
+  })
+})
+
+describe('WO-VT-3 round 2 IA (CTO E-VT3-1): message bare, names, snapshot title', () => {
+  it('InstanceMessagePanel bare @360: без карточки, публикация цела, без переполнения', async () => {
+    const w = mountAt(InstanceMessagePanel, { processKey: 'orderProcess', bare: true }, 360)
+    await flushPromises()
+    // RED: пропа bare нет — карточная обёртка и заголовок на месте.
+    expect(w.find('[data-testid="message-panel-bare"]').exists()).toBe(true)
+    expect(w.find('[data-testid="message-panel-card"]').exists()).toBe(false)
+    // Публикация доступна: имя + кнопка на месте.
+    expect(w.find('#msg-name').exists()).toBe(true)
+    expect(overflowing(document.body)).toEqual([])
+  })
+
+  it('PresetManagerPanel elementNames: ИМЯ из схемы, неизвестный ref — id как fallback', async () => {
+    ;(listPresets as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([
+      { ...longPreset(1), targetKind: 'USER_TASK', targetRef: 'taskA' },
+      { ...longPreset(2), targetKind: 'USER_TASK', targetRef: 'unknownX' },
+    ])
+    mountAt(
+      PresetManagerPanel,
+      { processKey: 'orderProcess', elementNames: { taskA: 'Согласование заявки' } },
+      520,
+    )
+    await flushPromises()
+    await flushPromises()
+    const body = document.body.textContent ?? ''
+    // RED: elementNames не поддержан — виден сырой id taskA.
+    expect(body).toContain('Согласование заявки')
+    expect(body).toContain('unknownX')
+    expect(overflowing(document.body)).toEqual([])
+    await page.screenshot({ path: SHOT('after-manager-names-520') })
+  })
+
+  it('InstanceSnapshotPanel: диалог переименован «Сохранить переменные как шаблон»', async () => {
+    // RED: ключа presetSnapshotDialogTitle нет в ru.json.
+    expect(ru.presetSnapshotDialogTitle).toBeTruthy()
+    const w = mountAt(
+      InstanceSnapshotPanel,
+      { processKey: 'orderProcess', instanceVariables: [{ name: 'a', type: 'LONG', value: '1' }] },
+      520,
+    )
+    await flushPromises()
+    const openBtn = hosts[0].querySelector('button') as HTMLElement
+    openBtn.click()
+    await flushPromises()
+    expect(document.querySelector('[role="dialog"]')).toBeTruthy()
+    expect(document.body.textContent ?? '').toContain(ru.presetSnapshotDialogTitle)
+    expect(overflowing(document.body)).toEqual([])
+    w.unmount()
+  })
+})
+
+describe('WO-VT-3 round 2 IA (CTO E-VT3-1): actions menu fits the header', () => {
+  it('header actions @360: menu button inside the header row, no page overflow', async () => {
+    await page.viewport(360, 800)
+    mountAt(PageInstanceDetail, {}, 360)
+    await flushPromises()
+    await flushPromises()
+    const menu = document.querySelector('[data-testid="instance-actions-menu"]') as HTMLElement | null
+    expect(menu, 'actions menu renders in the header').toBeTruthy()
+    // Меню — в шапке (рядом с кнопками Обновить/Диагностика), не отдельным рядом.
+    const header = menu!.closest('div.flex.items-center.gap-2') as HTMLElement
+    expect(header).toBeTruthy()
+    expect(menu!.compareDocumentPosition(header) & Node.DOCUMENT_POSITION_CONTAINS).toBeTruthy()
+    // Кнопка-меню не вылезает за хост 360px; страница — по общей мерке сьюта.
+    const hb = menu!.getBoundingClientRect()
+    const hostEl = hosts[hosts.length - 1]
+    const rb = hostEl.getBoundingClientRect()
+    expect(overflowing(document.body)).toEqual([])
+    await page.screenshot({ path: SHOT('after-instance-actions-360') })
+    void hb; void rb
   })
 })

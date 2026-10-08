@@ -20,12 +20,20 @@ import { useRoute, useRouter } from 'vue-router'
  */
 export type InstanceTabId =
   | 'bpmn' | 'variables' | 'tasks' | 'serviceTasks'
-  | 'incidents' | 'history' | 'subprocesses' | 'presets'
+  | 'incidents' | 'history' | 'subprocesses'
 
 export const INSTANCE_TABS: readonly InstanceTabId[] = [
   'bpmn', 'variables', 'tasks', 'serviceTasks',
-  'incidents', 'history', 'subprocesses', 'presets',
+  'incidents', 'history', 'subprocesses',
 ]
+
+// WO-VT-3 раунд 2 (E-VT3-1, пересадка на UI-25): вкладки «Шаблоны» на инстансе
+// больше нет — старый ?tab=presets редиректим на ?tab=variables (остальные
+// параметры адреса не теряем). UI-25: «мусор в query → дефолт»; VT-3:
+// редирект на variables — побеждает VT-3 (решение CTO по пересадке).
+const LEGACY_TAB_REDIRECTS: Record<string, InstanceTabId> = {
+  presets: 'variables',
+}
 
 const DEFAULT_TAB: InstanceTabId = 'bpmn'
 
@@ -52,9 +60,25 @@ export function useInstanceViewState() {
   function readFromQuery(): void {
     const q = route.query ?? {}
     const t = singleParam(q.tab)
-    tab.value = t !== null && (INSTANCE_TABS as readonly string[]).includes(t)
-      ? (t as InstanceTabId)
-      : DEFAULT_TAB
+    if (t !== null && !(INSTANCE_TABS as readonly string[]).includes(t)) {
+      // Устаревшая вкладка (напр. ?tab=presets после WO-VT-3): редирект на
+      // замену БЕЗ потери остальных параметров (?element/?plane/?page целы).
+      const target = LEGACY_TAB_REDIRECTS[t]
+      tab.value = target ?? DEFAULT_TAB
+      if (target) {
+        const replace = (router as Partial<typeof router>).replace
+        if (typeof replace === 'function') {
+          writing = true
+          void replace
+            .call(router, { query: { ...q, tab: target } })
+            .finally(() => {
+              writing = false
+            })
+        }
+      }
+    } else {
+      tab.value = t !== null ? (t as InstanceTabId) : DEFAULT_TAB
+    }
     element.value = singleParam(q.element)
     plane.value = singleParam(q.plane)
     const p = singleParam(q.page)

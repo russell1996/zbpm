@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
@@ -24,7 +24,8 @@ import TabsBar from '@/widgets/shared/TabsBar.vue'
 import PresetPicker from '@/widgets/presets/PresetPicker.vue'
 import InstanceMessagePanel from '@/widgets/presets/InstanceMessagePanel.vue'
 import InstanceSnapshotPanel from '@/widgets/presets/InstanceSnapshotPanel.vue'
-import PresetManagerPanel from '@/widgets/presets/PresetManagerPanel.vue'
+import VariableRowMenu from '@/widgets/presets/VariableRowMenu.vue'
+import { onCtrlEnter, usePresetModal } from '@/composables/usePresetModal'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { buildDiagnosticJson } from '@/shared/lib/diagnostic'
@@ -67,6 +68,10 @@ const viewPlane = viewState.plane
 // WO-UI-17 F24: no `as const` — TabsBar takes a mutable TabItem[].
 // WO-UI-25: литеральный союз вкладок живёт в useInstanceViewState
 // (InstanceTabId); activeTab IS viewState.tab, selectTab пишет в ?tab=.
+// WO-VT-3 раунд 2 (E-VT3-1): вкладки «Шаблоны» больше нет — сообщение ушло в
+// модалку из меню «Действия», снимок — на вкладку «Переменные», менеджер —
+// на страницу определения. Из InstanceTabId 'presets' убран здесь же
+// (см. useInstanceViewState.ts).
 const instanceTabs = computed(() => [
   { id: 'bpmn', label: t('bpmnFlow') },
   { id: 'variables', label: t('variables') },
@@ -75,7 +80,6 @@ const instanceTabs = computed(() => [
   { id: 'incidents', label: t('incidentsTab') },
   { id: 'history', label: t('history') },
   { id: 'subprocesses', label: t('subprocesses') },
-  { id: 'presets', label: t('presetTabTitle') },
 ])
 
 // TabsBar emits `string`, but only ever one of our own tab ids — narrow it
@@ -278,6 +282,38 @@ function openResolveModal(incidentId: string) {
   completePresetRef.value =
     incidentStore.incidents?.data.find((inc) => inc.id === incidentId)?.bpmnElementId ?? null
   showCompleteModal.value = true
+}
+
+// WO-VT-3 раунд 2 (E-VT3-1, мокап А): публикация сообщения — действие над
+// инстансом в модалке из меню «Действия», а не блок вкладки. Пикер «Из
+// шаблона» живёт внутри InstanceMessagePanel.
+const showMessageModal = ref(false)
+const messageModalRef = ref<HTMLElement | null>(null)
+const showMessageModalRef = computed(() => showMessageModal.value)
+usePresetModal(showMessageModalRef, messageModalRef, () => {
+  showMessageModal.value = false
+})
+
+function openTemplatesOnDefinition() {
+  const defId = processStore.currentInstance?.processDefinitionId
+  if (defId) void router.push({ name: 'process-definition-detail', params: { id: defId } })
+}
+
+// WO-VT-3 раунд 2: меню «Действия ▾» в шапке — точка входа «Отправить
+// сообщение…», дубль «Сохранить переменные как шаблон» и ссылка на менеджер.
+const snapshotOnVariablesRef = ref<InstanceType<typeof InstanceSnapshotPanel> | null>(null)
+
+async function onInstanceMenuAction(id: string) {
+  if (id === 'send') {
+    showMessageModal.value = true
+  } else if (id === 'snapshot') {
+    activeTab.value = 'variables'
+    await nextTick()
+    await nextTick()
+    snapshotOnVariablesRef.value?.openDialog()
+  } else if (id === 'templates') {
+    openTemplatesOnDefinition()
+  }
 }
 
 async function confirmComplete() {
@@ -596,6 +632,9 @@ async function init(id: string) {
   // членство приедет (до этого — скрыта, fail-closed).
   void loadMembers()
   await loadBpmnXml()
+  // WO-VT-3 раунд 2: редирект ?tab=presets → ?tab=variables живёт в
+  // useInstanceViewState.readFromQuery (с сохранением ?element/?plane/?page),
+  // здесь дублировать нечего.
 }
 
 // WO-ACL-22: члены процесса для проверки права отмены (тот же источник, что
@@ -641,7 +680,10 @@ watch(activeTab, onTabChange)
         </RouterLink>
         <div class="flex flex-col gap-0.5 flex-1 min-w-0">
           <!-- Row 1: Экземпляры процессов · UUID -->
-          <div class="flex items-center gap-2">
+          <!-- WO-VT-3 раунд 2: flex-wrap — на 360px крошки+UUID+кнопки не
+               влезали (pre-existing 551px, замерено живым Chromium); на
+               десктопе всё в одну строку как раньше. -->
+          <div class="flex items-center gap-2 flex-wrap">
             <span class="text-sm text-muted-foreground whitespace-nowrap">{{ t('processInstances') }}</span>
             <span class="text-foreground/80 text-xs">·</span>
             <span class="text-sm text-muted-foreground/80"><CopyableId :value="processStore.currentInstance.id" /></span>
@@ -683,6 +725,18 @@ watch(activeTab, onTabChange)
               />
               {{ t(liveIndicatorKey) }}
             </span>
+            <!-- WO-VT-3 раунд 2 (E-VT3-1): «Действия ▾» — отправка сообщения,
+                 снимок переменных, ссылка на шаблоны процесса. -->
+            <VariableRowMenu
+              data-testid="instance-actions-menu"
+              :label="t('presetInstanceActions')"
+              :items="[
+                { id: 'send', label: t('presetSendMessage') },
+                { id: 'snapshot', label: t('presetSaveSnapshotMenu') },
+                { id: 'templates', label: t('presetOpenManager') },
+              ]"
+              @select="onInstanceMenuAction($event)"
+            />
           </div>
           <!-- Row 2: Name · v2 · Status · date — center-aligned -->
           <div class="flex items-center gap-2 flex-wrap -mt-1">
@@ -820,7 +874,8 @@ watch(activeTab, onTabChange)
           <div v-else class="p-6 text-sm text-muted-foreground">{{ t('bpmnNotAvailable') }}</div>
         </div>
 
-        <div v-if="activeTab === 'variables'" class="border border-border rounded-lg overflow-hidden">
+        <div v-if="activeTab === 'variables'" class="space-y-4">
+        <div class="border border-border rounded-lg overflow-hidden">
           <table class="w-full text-sm">
             <thead class="bg-muted">
               <tr>
@@ -858,6 +913,17 @@ watch(activeTab, onTabChange)
               </tr>
             </tbody>
           </table>
+        </div>
+        <!-- WO-VT-3 раунд 2 (E-VT3-1, мокап Б): «Сохранить переменные как
+             шаблон» рядом с таблицей переменных; после сохранения — тост со
+             ссылкой на менеджер страницы определения. -->
+        <InstanceSnapshotPanel
+          v-if="processStore.currentInstance"
+          ref="snapshotOnVariablesRef"
+          :process-key="processStore.currentInstance.processKey ?? ''"
+          :process-definition-id="processStore.currentInstance.processDefinitionId"
+          :instance-variables="processStore.currentVariables"
+        />
         </div>
 
         <div v-if="activeTab === 'tasks'" class="border border-border rounded-lg overflow-hidden">
@@ -1046,20 +1112,40 @@ watch(activeTab, onTabChange)
           </table>
         </div>
 
-        <!-- WO-VT-1 (фронт, VT-4): шаблоны инстанса — сообщение, снимок, менеджер -->
-        <div v-if="activeTab === 'presets' && processStore.currentInstance" class="space-y-4">
-          <InstanceMessagePanel
-            :process-key="processStore.currentInstance.processKey ?? ''"
-            :process-instance-id="processStore.currentInstance.id"
-          />
-          <InstanceSnapshotPanel
-            :process-key="processStore.currentInstance.processKey ?? ''"
-            :instance-variables="processStore.currentVariables"
-          />
-          <PresetManagerPanel :process-key="processStore.currentInstance.processKey ?? ''" />
-        </div>
+        <!-- WO-VT-3 раунд 2 (E-VT3-1): вкладка «Шаблоны» убрана — сообщение в
+             модалке из меню «Действия», снимок на вкладке «Переменные»,
+             менеджер на странице определения. -->
       </template>
     </template>
+
+    <!-- WO-VT-3 раунд 2 (E-VT3-1, мокап А): модалка «Отправить сообщение». -->
+    <div
+      v-if="showMessageModal && processStore.currentInstance"
+      class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      data-testid="send-message-modal"
+      @click.self="showMessageModal = false"
+    >
+      <div
+        ref="messageModalRef"
+        class="bg-card rounded-lg shadow-lg w-full max-w-2xl p-6 space-y-4 max-h-[90dvh] overflow-y-auto"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="t('presetSendMessageTitle')"
+      >
+        <div class="flex items-center justify-between gap-2">
+          <h2 class="text-lg font-bold">{{ t('presetSendMessageTitle') }}</h2>
+          <button class="text-xs text-muted-foreground hover:text-foreground h-8 px-2" @click="showMessageModal = false">{{ t('close') }}</button>
+        </div>
+        <InstanceMessagePanel
+          bare
+          :process-key="processStore.currentInstance.processKey ?? ''"
+          :process-instance-id="processStore.currentInstance.id"
+        />
+        <div class="flex justify-end">
+          <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted h-9" @click="showMessageModal = false">{{ t('close') }}</button>
+        </div>
+      </div>
+    </div>
 
     <div
       v-if="showCompleteModal"

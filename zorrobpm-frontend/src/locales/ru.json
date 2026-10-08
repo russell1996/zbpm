@@ -731,5 +731,12 @@
   "presetHistoryAction_CREATE": "Создан",
   "presetHistoryAction_UPDATE": "Обновлён",
   "presetWhereUsed": "Где применяется",
-  "presetElementName": "Элемент"
+  "presetElementName": "Элемент",
+  "presetSendMessage": "Отправить сообщение…",
+  "presetSendMessageTitle": "Отправить сообщение",
+  "presetSaveSnapshotMenu": "Сохранить переменные как шаблон",
+  "presetOpenManager": "Шаблоны процесса →",
+  "presetInstanceActions": "Действия с инстансом",
+  "presetSnapshotDialogTitle": "Сохранить переменные как шаблон",
+  "presetOpenTemplate": "Открыть шаблон"
 }

@@ -18,6 +18,11 @@ import { useToast } from '@/composables/useToast'
 const props = defineProps<{
   processKey: string
   processInstanceId?: string | null
+  /**
+   * WO-VT-3 раунд 2 (E-VT3-1, мокап А): голый режим для модалки «Отправить
+   * сообщение» — без карточки и заголовка (их даёт диалог), только форма.
+   */
+  bare?: boolean
 }>()
 
 const { t } = useI18n()
@@ -65,8 +70,8 @@ async function publish() {
 </script>
 
 <template>
-  <div class="border border-border rounded-lg p-4 bg-card space-y-3">
-    <h3 class="text-sm font-bold">{{ t('presetPublishMessage') }}</h3>
+  <div :class="bare ? 'space-y-3' : 'border border-border rounded-lg p-4 bg-card space-y-3'" :data-testid="bare ? 'message-panel-bare' : 'message-panel-card'">
+    <h3 v-if="!bare" class="text-sm font-bold">{{ t('presetPublishMessage') }}</h3>
     <!-- WO-VT-3 Дополнение №2 п.2: строка «зачем это» (до решения по IA). -->
     <p class="text-xs text-muted-foreground">{{ t('presetWhyMessage') }}</p>
     <div class="grid grid-cols-1 min-[560px]:grid-cols-2 gap-3">

@@ -731,5 +731,12 @@
   "presetHistoryAction_CREATE": "Жасалды",
   "presetHistoryAction_UPDATE": "Жаңартылды",
   "presetWhereUsed": "Қайда қолданылады",
-  "presetElementName": "Элемент"
+  "presetElementName": "Элемент",
+  "presetSendMessage": "Хабар жіберу…",
+  "presetSendMessageTitle": "Хабар жіберу",
+  "presetSaveSnapshotMenu": "Айнымалыларды үлгі ретінде сақтау",
+  "presetOpenManager": "Процесс үлгілері →",
+  "presetInstanceActions": "Инстанс әрекеттері",
+  "presetSnapshotDialogTitle": "Айнымалыларды үлгі ретінде сақтау",
+  "presetOpenTemplate": "Үлгіні ашу"
 }

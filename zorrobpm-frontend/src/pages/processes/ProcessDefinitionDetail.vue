@@ -115,6 +115,8 @@ async function onMemberAdded() {
 }
 
 // WO-ACL-14 criteria 1-3: ONE tab component (TabsBar) — the local tab strip is gone.
+// WO-VT-3 раунд 2 (E-VT3-1, В1): менеджер шаблонов живёт здесь, на странице
+// определения (своя вкладка), с именами элементов из схемы.
 const definitionTabs = computed(() => [
   { id: 'model', label: t('bpmnProcess') },
   { id: 'structure', label: t('bpmnStructure') },
@@ -122,7 +124,16 @@ const definitionTabs = computed(() => [
   { id: 'schemas', label: t('elementSchemas') },
   { id: 'members', label: t('members') },
   { id: 'versions', label: t('versions') },
+  { id: 'presets', label: t('presetManagerTitle') },
 ])
+
+// WO-VT-3 раунд 2 (решение CTO п.4): id элемента → имя из схемы для колонки
+// «Элемент» менеджера; без имени — id как fallback.
+const presetElementNames = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {}
+  for (const n of allNodes.value) map[n.id] = n.name || n.id
+  return map
+})
 
 const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
@@ -141,6 +152,7 @@ const pickerInvalid = ref(false)
 // is gone — it was a second implementation of the same action (WO-ACL-10 defect).
 import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
 import PresetPicker from '@/widgets/presets/PresetPicker.vue'
+import PresetManagerPanel from '@/widgets/presets/PresetManagerPanel.vue'
 
 const showDeployDialog = ref(false)
 
@@ -720,6 +732,15 @@ async function downloadBpmn() {
             {{ t('noDataYet') }}
           </p>
         </div>
+      </div>
+
+      <!-- Tab: Templates — WO-VT-3 раунд 2 (E-VT3-1, В1): менеджер шаблонов
+           живёт на странице определения, с именами элементов из схемы. -->
+      <div v-if="activeTab === 'presets' && store.currentDefinition">
+        <PresetManagerPanel
+          :process-key="store.currentDefinition.key"
+          :element-names="presetElementNames"
+        />
       </div>
 
     </template>
