@@ -695,5 +695,6 @@
   "presetKind_ADHOC_JOB": "Ad-hoc job",
   "presetBooleanTrue": "true",
   "presetBooleanFalse": "false",
-  "presetFavoriteStar": " ★"
+  "presetFavoriteStar": " ★",
+  "presetImportTooLarge": "Template file is too large (max 1 MB)"
 }

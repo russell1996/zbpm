@@ -54,13 +54,30 @@ function pickerVariables(): ProcessVariable[] {
   }))
 }
 
+/**
+ * WO-VT-1 раунд 2 (Б-1): единый источник переменных для экшенов. Когда пикер
+ * смонтирован — переменные из него (ручной ввод или шаблон с развёрнутыми
+ * плейсхолдерами); когда пикера нет (presetKey пуст — fetchDefinition упал /
+ * нет processDefinitionId) — из legacy-редактора editableVars, который в этом
+ * случае и рендерится. До раунда 2 экшены слали только pickerVariables() = []
+ * без пикера — пользователь правил переменные, завершение уходило пустым.
+ */
+function actionVariables(): ProcessVariable[] {
+  if (pickerRef.value) return pickerVariables()
+  return editableVars.value.map((v) => ({
+    name: v.name,
+    type: v.type as ProcessVariable['type'],
+    value: v.value,
+  }))
+}
+
 function onPickerChange() {
   askMissing.value = pickerRef.value?.missingAsk ?? []
   pickerInvalid.value = pickerRef.value?.hasErrors ?? false
 }
 
 async function complete() {
-  await store.completeServiceTask(route.params.id as string, pickerVariables())
+  await store.completeServiceTask(route.params.id as string, actionVariables())
   if (!store.error) {
     toast.success('Service task completed')
     router.push('/service-tasks')
@@ -71,7 +88,7 @@ async function complete() {
 
 /** WO-VT-1: «ошибка» service task с переменными из шаблона элемента. */
 async function fail() {
-  await store.failServiceTask(route.params.id as string, failMessage.value, pickerVariables())
+  await store.failServiceTask(route.params.id as string, failMessage.value, actionVariables())
   if (!store.error) {
     toast.success(t('serviceTaskFailed'))
     router.push('/service-tasks')
@@ -83,7 +100,7 @@ async function fail() {
 /** WO-VT-1: throw error с переменными из шаблона элемента. */
 async function throwError() {
   if (!errorCode.value.trim()) return
-  await store.throwServiceTaskError(route.params.id as string, errorCode.value.trim(), pickerVariables())
+  await store.throwServiceTaskError(route.params.id as string, errorCode.value.trim(), actionVariables())
   if (!store.error) {
     toast.success(t('serviceTaskErrorThrown'))
     router.push('/service-tasks')
