@@ -525,15 +525,13 @@ class PresetResourceIT {
 
         for (int i = 0; i < 200; i++) {
             presetService.create(principal, new VariablePresetService.PresetPayload(
-                processKey, com.zorrodev.bpm.engine.entity.VariablePresetTargetKind.START,
-                null, "lim-" + i, null, "[{\"name\":\"a\",\"type\":\"STRING\",\"value\":\"1\"}]",
-                com.zorrodev.bpm.engine.entity.VariablePresetVisibility.PRIVATE));
+                processKey, "START",
+                null, "lim-" + i, null, vars(stringVar("a", "1")),
+                null));
         }
         assertThatThrownBy(() -> presetService.create(principal,
-            new VariablePresetService.PresetPayload(processKey,
-                com.zorrodev.bpm.engine.entity.VariablePresetTargetKind.START,
-                null, "lim-overflow", null, "[{\"name\":\"a\",\"type\":\"STRING\",\"value\":\"1\"}]",
-                com.zorrodev.bpm.engine.entity.VariablePresetVisibility.PRIVATE)))
+            new VariablePresetService.PresetPayload(processKey, "START",
+                null, "lim-overflow", null, vars(stringVar("a", "1")), null)))
             .as("201-й шаблон — PRESET_LIMIT_EXCEEDED")
             .matches(e -> e instanceof com.zorrodev.bpm.contract.exception.ApiException api
                 && "PRESET_LIMIT_EXCEEDED".equals(api.getCode()));
