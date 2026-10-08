@@ -15,8 +15,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * WO-VT-1 п.6 (урок C8-36 F-7): env-имя {@code ZORROBPM_UI_VARIABLE_PRESETS_ENABLED}
- * обязано доезжать до флага через relaxed binding, а ключ — лежать в ОБОИХ
- * файлах (rest-properties перекрывается app-файлом в fat-jar).
+ * обязано доезжать до флага через relaxed binding, а ключ — лежать в
+ * zorrobpm-rest.properties (в app-файл НЕ дублируется — иначе G15).
  *
  * <p>Мутации, которые обязаны ронять этот тест: переименовать env-имя;
  * убрать ключ из app-файла; убрать {@code @Value} с флага.
