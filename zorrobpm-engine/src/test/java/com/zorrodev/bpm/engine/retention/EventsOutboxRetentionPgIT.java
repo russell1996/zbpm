@@ -53,6 +53,13 @@ public class EventsOutboxRetentionPgIT extends PostgresIT {
         jdbc.execute("TRUNCATE events, outbox RESTART IDENTITY");
     }
 
+    @org.junit.jupiter.api.AfterEach
+    void cleanAfter() {
+        // bulk300k оставляет ~300k фоновых строк: чистим за собой, чтобы не
+        // тормозить/ломать чужие PgIT-классы в том же прогоне (общая БД).
+        jdbc.execute("TRUNCATE events, outbox RESTART IDENTITY");
+    }
+
     private void insertEvent(Instant occurredAt, Long feedPosition) {
         jdbc.update("INSERT INTO events (id, type, occurred_at, feed_position) VALUES (?, 'audit7', ?, ?)",
             UUID.randomUUID(), Timestamp.from(occurredAt), feedPosition);
@@ -349,7 +356,13 @@ public class EventsOutboxRetentionPgIT extends PostgresIT {
             + "AND feed_position IS NOT NULL "
             + "AND feed_position < (SELECT COALESCE(MAX(feed_position), 0) FROM events) "
             + "ORDER BY occurred_at ASC LIMIT 1000", String.class);
-        assertThat(String.join("\n", plan)).contains("idx_events_occurred_at");
+        // WO-AUDIT-7: отдельной миграции-индекса НЕ нужно — планировщик идёт
+        // по существующим индексам (uq_events__feed_position и/или
+        // idx_events_occurred_at, зависит от распределения). Требование одно:
+        // никакого Seq Scan на 300k (батч обязан оставаться ограниченным).
+        String planText = String.join("\n", plan);
+        assertThat(planText).doesNotContain("Seq Scan on events");
+        assertThat(planText).containsAnyOf("idx_events_occurred_at", "uq_events__feed_position");
 
         long t0 = System.nanoTime();
         long eligible = batchProcessor.countEligibleEvents(CUTOFF_30D, OptionalLong.empty());
