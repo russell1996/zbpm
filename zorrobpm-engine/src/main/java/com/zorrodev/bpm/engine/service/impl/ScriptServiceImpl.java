@@ -4,11 +4,13 @@ import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.metrics.BpmMetrics;
+import com.zorrodev.bpm.engine.service.AdmissionLease;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import tools.jackson.databind.ObjectMapper;
 
 import jakarta.annotation.PreDestroy;
@@ -39,6 +41,28 @@ public class ScriptServiceImpl implements ScriptService {
      */
     private final long queueWaitMs;
     private final long queueWaitSeconds;
+    /**
+     * WO-ENG-35 (NEW2-16): двухфазный admission. Гейт-семафор считает те же
+     * места, что пул+очередь ({@code poolSize + queueCapacity}): лиза,
+     * выданная {@link #admitOutsideTx()} ДО транзакции, гарантирует место для
+     * прямых сабмитов этого потока внутри транзакции. Fair (FIFO): при
+     * sustained-перегрузке вставший раньше ждёт не дольше вставшего позже.
+     *
+     * <p>Почему это не второй bulkhead (запрет WO-ENG-20 п.2): семафор не
+     * исполняет и не отбрасывает ничего сам — он только считает места того же
+     * единственного пула; жёсткой границей остаётся сам executor.
+     */
+    private final java.util.concurrent.Semaphore admissionGate;
+    /**
+     * WO-ENG-35: резервация текущего потока, выданная гейтом (whole-op лиза)
+     * или разовым разрешением (один eval вне гейтованного входа). Пока поле
+     * непусто, {@link #submitToPool} идёт напрямую в executor, не ожидая
+     * admission внутри транзакции. Поток пула сюда не пишет никогда (он
+     * исполняет, а не сабмитит) — дедлока «гейт ждёт пул, пул ждёт гейт» нет
+     * по построению.
+     */
+    private final ThreadLocal<java.util.concurrent.Semaphore> reservationHolder =
+        new ThreadLocal<>();
     /**
      * WO-REL-33 F22: пул ОДИН на все времена (final — никогда не заменяется).
      * Старой болезни «каждый timeout = новый executor + выжившие поколения»
@@ -87,6 +111,9 @@ public class ScriptServiceImpl implements ScriptService {
         }
         this.queueWaitMs = queueWaitSeconds * 1000;
         this.queueWaitSeconds = queueWaitSeconds;
+        // WO-ENG-35: мест в гейте столько же, сколько в пуле+очереди, —
+        // лиза покрывает ровно один прямой сабмит.
+        this.admissionGate = new java.util.concurrent.Semaphore(poolSize + queueCapacity, true);
         // WO-A-02: bounded bulkhead — bounded pool + bounded queue + abort policy.
         // WO-REL-46: размер конфигурируется (дефолт 8 — порог одновременных
         // зависших non-cooperative скриптов, нужный для полного outage, выше,
@@ -133,6 +160,68 @@ public class ScriptServiceImpl implements ScriptService {
     }
 
     /**
+     * WO-ENG-35 (NEW2-16): фаза 1 — резервирование места ДО открытия
+     * транзакции. Вызывающие: {@code RuntimeResource} (12 HTTP-входов),
+     * {@code ServiceTaskCompletionProcessor} (AMQP), {@code TimerBatchProcessor}
+     * (fire таймеров) — держат лизу всё время операции.
+     */
+    @Override
+    public AdmissionLease admitOutsideTx() {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            // Fail-fast: ожидание внутри транзакции — именно тот дефект, что
+            // закрывает WO. Тихий acquire здесь удерживал бы соединение —
+            // лучше громко упасть и чинить вызывающего, чем молча держать.
+            throw new IllegalStateException(
+                "admitOutsideTx must be called OUTSIDE a transaction (holding a lease "
+                + "inside a transaction keeps the DB connection for the whole wait)");
+        }
+        if (reservationHolder.get() != null) {
+            // Реентрантный вход того же потока (гейтованный вход зовёт
+            // гейтованный вход): слот уже держит внешний владелец.
+            return AdmissionLease.noop();
+        }
+        boolean admitted = false;
+        try {
+            admitted = admissionGate.tryAcquire(queueWaitMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw new EngineException("Script admission wait interrupted");
+        }
+        if (!admitted) {
+            bpmMetrics.scriptRejected();
+            bpmMetrics.updateScriptPoolMetrics(executor);
+            log.warn("Script rejected at admission gate (bulkhead overloaded, no tx held): "
+                    + "{} workers active, queue full", executor.getActiveCount());
+            throw new com.zorrodev.bpm.engine.service.ScriptOverloadException(
+                "Script execution rejected: pool overloaded, retry later",
+                (int) Math.max(1, queueWaitSeconds));
+        }
+        reservationHolder.set(admissionGate);
+        return new WholeOpLease();
+    }
+
+    /**
+     * WO-ENG-35: whole-op лиза — слот держится всё время операции вызывающего
+     * (все eval'ы операции идут напрямую), возвращается при закрытии.
+     * Владелец — только выдавший поток; закрытие идемпотентно.
+     */
+    private final class WholeOpLease implements AdmissionLease {
+        private boolean closed;
+
+        @Override
+        public void close() {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            // Только владелец: чужой поток лизу не видит (holder — ThreadLocal),
+            // реентрант получал noop и сюда не попадает.
+            reservationHolder.remove();
+            admissionGate.release();
+        }
+    }
+
+    /**
      * WO-ENG-20: сабмит в общий пул (выделено из {@code evalWithTimeout} без смены
      * семантики — saturation-warn, AbortPolicy-маппинг и сообщения те же).
      *
@@ -147,6 +236,14 @@ public class ScriptServiceImpl implements ScriptService {
      * по-прежнему сбрасывается — но уже как временная
      * ({@link com.zorrodev.bpm.engine.service.ScriptOverloadException} →
      * HTTP 503 + Retry-After), а не как неверный запрос (422).
+     *
+     * <p>WO-ENG-35 (NEW2-16): фаза 2 — привязка резервации. Если поток держит
+     * лизу гейта (вход ждал ДО транзакции) или разовое разрешение — прямой
+     * {@code execute} без ожидания внутри транзакции. Прямой сабмит тоже
+     * может получить отказ (смешанный трафик, остановка пула): тогда —
+     * прежний ограниченный offer-wait с меткой {@code in_tx}, а не новый
+     * механизм. Без резервации поведение побайтово прежнее (фаза 1 просто не
+     * вызывалась): мгновенная попытка → ограниченное ожидание → сброс 503.
      */
     private java.util.concurrent.Future<Object> submitToPool(
         java.util.concurrent.Callable<Object> task, String ref) {
@@ -159,10 +256,45 @@ public class ScriptServiceImpl implements ScriptService {
 
         // WO-A-02: bulkhead — bounded queue rejects if pool is full (AbortPolicy)
         java.util.concurrent.FutureTask<Object> future = new java.util.concurrent.FutureTask<>(task);
+        // WO-ENG-35: резервация этого потока (whole-op лиза гейта или разовое
+        // разрешение) — место уже учтено в гейте, ждём ноль.
+        boolean reserved = reservationHolder.get() != null;
+        if (reserved) {
+            try {
+                executor.execute(future);
+                return future;
+            } catch (RejectedExecutionException mixedTraffic) {
+                // Смешанный трафик (негейтованный поток занял последнее место)
+                // или остановка пула: проваливаемся в прежний ограниченный
+                // wait ниже (учёт in-tx — там, единой точкой).
+            }
+        } else if (admissionGate.tryAcquire()) {
+            // WO-ENG-35: негейтованный вход, но место прямо сейчас есть —
+            // разовое разрешение на один eval: ждём ноль и здесь, слот
+            // возвращается по завершении eval (finally в awaitWithTimeout).
+            reservationHolder.set(admissionGate);
+            try {
+                executor.execute(future);
+                return new SingleEvalFuture(future);
+            } catch (RejectedExecutionException raced) {
+                reservationHolder.remove();
+                admissionGate.release();
+                // Проваливаемся в прежний ограниченный wait ниже.
+            } catch (RuntimeException | Error e) {
+                reservationHolder.remove();
+                admissionGate.release();
+                throw e;
+            }
+        }
         try {
             executor.execute(future);
             return future;
         } catch (RejectedExecutionException budgetFull) {
+            // Сюда попадают только те, кто реально ждёт внутри транзакции
+            // вызывающего (если она открыта): негейтованные пути, добивка
+            // после отказа прямого сабмита, смешанный трафик. Единая точка
+            // учёта — см. zbpm.script.admission.in_tx.
+            submitInTxFallback(ref);
             // WO-ENG-24: пул+очередь полны прямо сейчас — ждём освобождения
             // ограниченное время вместо мгновенного отката операции. На уже
             // останавливающемся пуле ждать нечего — очередь примет, но никто
@@ -186,6 +318,84 @@ public class ScriptServiceImpl implements ScriptService {
                 "Script execution rejected: pool overloaded (" + ref + "), retry later",
                 budgetFull,
                 (int) Math.max(1, queueWaitSeconds));
+        }
+    }
+
+    /**
+     * WO-ENG-35: метка «ожидание произошло внутри транзакции вызывающего»
+     * (негейтованный путь, смешанный трафик, добивка после отказа прямого
+     * сабмита). Операторский сигнал — см. {@code zbpm.script.admission.in_tx}.
+     */
+    private void submitInTxFallback(String ref) {
+        bpmMetrics.scriptAdmissionInTx();
+        log.debug("Script admission inside caller transaction ({}): "
+                + "no gate reservation held, bounded wait follows", ref);
+    }
+
+    /**
+     * WO-ENG-35: обёртка разового разрешения — возвращает слот гейта ровно
+     * когда eval завершён (успех/ошибка/отмена/таймаут — любой исход через
+     * {@code Future}, слот не зависит от исхода). Делегирует всё остальное
+     * внутренней задаче без изменения семантики ожидания.
+     */
+    private final class SingleEvalFuture implements java.util.concurrent.Future<Object> {
+        private final java.util.concurrent.Future<Object> delegate;
+        private boolean released;
+
+        SingleEvalFuture(java.util.concurrent.Future<Object> delegate) {
+            this.delegate = delegate;
+        }
+
+        private synchronized void releaseOnce() {
+            if (!released) {
+                released = true;
+                // Свой поток и свой слот: holder мог перезаписаться только
+                // whole-op лизой этого же потока (вложенный гейтованный вход —
+                // noop, holder не трогает); чистим только если там наш слот.
+                if (reservationHolder.get() == admissionGate) {
+                    reservationHolder.remove();
+                }
+                admissionGate.release();
+            }
+        }
+
+        @Override
+        public boolean cancel(boolean mayInterruptIfRunning) {
+            try {
+                return delegate.cancel(mayInterruptIfRunning);
+            } finally {
+                releaseOnce();
+            }
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return delegate.isCancelled();
+        }
+
+        @Override
+        public boolean isDone() {
+            return delegate.isDone();
+        }
+
+        @Override
+        public Object get() throws InterruptedException, java.util.concurrent.ExecutionException {
+            try {
+                return delegate.get();
+            } finally {
+                releaseOnce();
+            }
+        }
+
+        @Override
+        public Object get(long timeout, TimeUnit unit)
+            throws InterruptedException, java.util.concurrent.ExecutionException,
+            java.util.concurrent.TimeoutException {
+            try {
+                return delegate.get(timeout, unit);
+            } finally {
+                releaseOnce();
+            }
         }
     }
 

@@ -2,7 +2,9 @@ package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.dto.TimerStartJob;
+import com.zorrodev.bpm.engine.service.AdmissionLease;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.ScriptService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -26,6 +28,16 @@ class TimerBatchProcessorLimitTest {
 
     @Mock private DBService dbService;
 
+    /**
+     * WO-ENG-35: admission-гейт в тестах — мок с no-op лизой (место «есть
+     * сразу»): эти тесты проверяют batchSize/лимиты, а не гейт.
+     */
+    private static ScriptService gatedScriptService() {
+        ScriptService scriptService = mock(ScriptService.class);
+        org.mockito.Mockito.lenient().when(scriptService.admitOutsideTx()).thenReturn(AdmissionLease.noop());
+        return scriptService;
+    }
+
     private static void setBatchSize(TimerBatchProcessor processor, int size) throws Exception {
         Field f = TimerBatchProcessor.class.getDeclaredField("batchSize");
         f.setAccessible(true);
@@ -36,7 +48,7 @@ class TimerBatchProcessorLimitTest {
     void processBatch_passesBatchSizeToDb() throws Exception {
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor processor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run);
+        TimerBatchProcessor processor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run, gatedScriptService());
         setBatchSize(processor, 50);
 
         when(dbService.findDueTimerJobsLocked(any(), eq(50))).thenReturn(List.of());
@@ -52,7 +64,7 @@ class TimerBatchProcessorLimitTest {
     void processBatch_withLimit_processesOnlyReturnedJobs() throws Exception {
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor processor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run);
+        TimerBatchProcessor processor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run, gatedScriptService());
         setBatchSize(processor, 100);
 
         TimerJob job1 = new TimerJob();
