@@ -27,9 +27,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * наружу без обёртки → контейнерный retry переигрывает то же сообщение
  * (юнит {@code ServiceTaskCompleteListenerTraceTest.qw5_...}, QW-5). Устойчивая
  * перегрузка (retry-лимит контейнера исчерпан — воркер сдаётся) → reject с
- * {@code requeue=false} → брокер паркует тело в
- * {@code zorrobpm.complete-service-task.dlq}, а не роняет и не крутит вечно.
- * Возврат — вручную (Management UI → republish в основную очередь;
+ * {@code requeue=false} → брокер паркует тело в DLQ, а не роняет и не крутит
+ * вечно. Возврат — вручную (Management UI → republish в основную очередь;
  * идемпотентность держат дедуп C8-36 + replay-guard A-NEW4-15 — см.
  * {@code docs/guides/integration-quickstart.md}, раздел DLQ).
  *
@@ -39,8 +38,29 @@ import static org.assertj.core.api.Assertions.assertThat;
  * P-10: publish и consume на ОДНОМ канале (basicPublish асинхронен — get на
  * другом соединении гоняется с ним и видит пустую очередь).
  *
+ * <p>Изоляция (пост-мерж дефект, CI pipeline 176843 job 560518): очередь и DLQ
+ * УНИКАЛЬНЫ на запуск (суффикс), а не общие {@code COMPLETE_QUEUE}/{@code
+ * COMPLETE_DLQ}. Причина: в той же failsafe-JVM раньше идут Spring-IT на
+ * {@code TestMain} (напр. {@code RabbitOutboxConfirmIT},
+ * {@code RabbitMqMgmtPathPrefixRabbitIT}), чей закэшированный контекст
+ * сканирует {@code com.zorrodev.bpm.rabbitmq} и держит ЖИВОЙ
+ * {@code ServiceTaskListener @RabbitListener} на общей очереди — он забирает
+ * наше сообщение раньше нашего {@code basicGet} (в логе:
+ * {@code Service task to complete message received} + {@code
+ * ConditionalRejectingErrorHandler: Execution of Rabbit message listener
+ * failed} прямо перед RED). {@code @DirtiesContext} здесь бесполезен: у этого
+ * класса контекста нет, а чужой закэшированный им не трогается; останавливать
+ * чужие контейнеры из plain-JUnit теста недоступно. Аргументы очереди (DLX)
+ * при этом КОПИРУЮТСЯ из настоящего прод-бина (не инлайн) — G-N сохранён:
+ * мутант без DLX по-прежнему даёт RED таймаутом. Общий durable DLX-exchange
+ * переиспользуется (idempotent declare); routing-key и DLQ — уникальны, чужих
+ * копий в общей DLQ быть не может. Бонус: teardown больше НЕ удаляет общие
+ * прод-очереди, о которые спотыкаются чужие живые контейнеры.
+ *
  * <p>Запуск: {@code RABBITMQ_PORT=5674 ...} + прогон failsafe {@code -Dgroups=rabbit}
  * (CI — {@code ci/run-rabbit-tests.sh}; модуль zorrobpm-rest входит в его -pl).
+ * Урок (hard-constrain): новый Rabbit-IT проверяется ПОЛНЫМ прогоном
+ * {@code run-rabbit-tests.sh}, не одиночным классом.
  */
 @Tag("rabbit")
 class CompleteOverloadDlqRabbitIT {
@@ -52,6 +72,11 @@ class CompleteOverloadDlqRabbitIT {
 
     private CachingConnectionFactory cf;
     private RabbitAdmin admin;
+
+    /** Уникальные имена топологии этого запуска (изоляция от чужих контейнеров). */
+    private String queue;
+    private String dlq;
+    private String routingKey;
 
     private static String cfg(String key, String dflt) {
         String v = System.getenv(key);
@@ -76,28 +101,37 @@ class CompleteOverloadDlqRabbitIT {
         admin.afterPropertiesSet();
 
         // G-N: топология — из НАСТОЯЩЕГО прод-бина (тот же вызов, что Spring
-        // делает при старте движка), не копия аргументов.
+        // делает при старте движка), не копия аргументов. Имена — уникальны на
+        // запуск (см. шапку: изоляция от живых @RabbitListener чужих
+        // контекстов); аргументы очереди (в т.ч. DLX) — КОПИЯ карты настоящего
+        // прод-бина с подменой только routing-key на уникальный: прод-мутант
+        // без DLX по-прежнему даёт RED таймаутом. Общий durable DLX-exchange
+        // переиспользуется (declare идемпотентен).
         RabbitConfiguration prod = new RabbitConfiguration();
+        String runId = UUID.randomUUID().toString().substring(0, 8);
+        queue = RabbitConfiguration.COMPLETE_QUEUE + ".probe-" + runId;
+        routingKey = "audit8-probe-" + runId;
+        dlq = queue + ".dlq";
+        java.util.Map<String, Object> queueArgs =
+            new java.util.LinkedHashMap<>(prod.completeServiceTaskQueue().getArguments());
+        queueArgs.put("x-dead-letter-routing-key", routingKey);
         admin.declareExchange(prod.completeServiceTaskDlx());
-        admin.declareQueue(prod.completeServiceTaskQueue());
-        admin.declareQueue(prod.completeServiceTaskDlq());
-        admin.declareBinding(prod.completeServiceTaskDlqBinding());
-        admin.purgeQueue(RabbitConfiguration.COMPLETE_QUEUE, false);
-        try {
-            admin.purgeQueue(RabbitConfiguration.COMPLETE_DLQ, false);
-        } catch (Exception e) {
-            // Осознанно: DLQ существует только потому, что её объявляет прод-бин.
-            // Если прод-код перестанет её объявлять (POF-мутант), setup не должен
-            // маскировать это под ошибку подготовки — parked-тест ниже обязан
-            // упасть поведенчески (таймаут ожидания DLQ = сообщение потеряно).
-        }
+        admin.declareQueue(new org.springframework.amqp.core.Queue(queue, true, false, false, queueArgs));
+        admin.declareQueue(new org.springframework.amqp.core.Queue(dlq, true, false, false));
+        admin.declareBinding(new org.springframework.amqp.core.Binding(dlq,
+            org.springframework.amqp.core.Binding.DestinationType.QUEUE,
+            RabbitConfiguration.COMPLETE_DLX, routingKey, null));
+        admin.purgeQueue(queue, false);
+        admin.purgeQueue(dlq, false);
     }
 
     @AfterEach
     void teardown() {
         try {
-            admin.deleteQueue(RabbitConfiguration.COMPLETE_QUEUE);
-            admin.deleteQueue(RabbitConfiguration.COMPLETE_DLQ);
+            // Только СВОИ уникальные очереди — общие прод-очереди не трогаем
+            // (их слушают живые контейнеры чужих контекстов).
+            admin.deleteQueue(queue);
+            admin.deleteQueue(dlq);
         } catch (Exception ignored) {
         }
         if (cf != null) {
@@ -116,20 +150,20 @@ class CompleteOverloadDlqRabbitIT {
         raw.setUsername(user);
         raw.setPassword(password);
         try (Connection conn = raw.newConnection(); Channel ch = conn.createChannel()) {
-            ch.basicPublish("", RabbitConfiguration.COMPLETE_QUEUE, null, completion);
+            ch.basicPublish("", queue, null, completion);
             // Контейнерные ретраи при sustained-перегрузке: переиграли дважды,
             // перегрузка не ушла — воркер сдаётся финальным reject без requeue.
             for (int i = 0; i < 2; i++) {
-                GetResponse got = ch.basicGet(RabbitConfiguration.COMPLETE_QUEUE, false);
+                GetResponse got = ch.basicGet(queue, false);
                 assertThat(got).as("completion consumable, retry %d", i).isNotNull();
                 assertThat(got.getBody()).as("body intact across redeliveries").isEqualTo(completion);
                 ch.basicReject(got.getEnvelope().getDeliveryTag(), true);
             }
-            GetResponse last = ch.basicGet(RabbitConfiguration.COMPLETE_QUEUE, false);
+            GetResponse last = ch.basicGet(queue, false);
             assertThat(last).as("completion consumable for the final attempt").isNotNull();
             ch.basicReject(last.getEnvelope().getDeliveryTag(), false);
 
-            assertThat(ch.basicGet(RabbitConfiguration.COMPLETE_QUEUE, true))
+            assertThat(ch.basicGet(queue, true))
                 .as("main queue drained — nothing redelivered forever").isNull();
 
             // Dead-letter hop — внутренний переход брокера, не в FIFO-потоке
@@ -137,9 +171,9 @@ class CompleteOverloadDlqRabbitIT {
             // Потеря (нет DLX) → таймаут → чистый RED, не флейк.
             GetResponse parked = Awaitility.await().atMost(Duration.ofSeconds(10))
                 .pollInterval(Duration.ofMillis(100))
-                .until(() -> ch.basicGet(RabbitConfiguration.COMPLETE_DLQ, false), g -> g != null);
+                .until(() -> ch.basicGet(dlq, false), g -> g != null);
             assertThat(parked.getBody()).as("parked body intact — completion not lost").isEqualTo(completion);
-            assertThat(ch.basicGet(RabbitConfiguration.COMPLETE_DLQ, true))
+            assertThat(ch.basicGet(dlq, true))
                 .as("DLQ holds exactly one copy").isNull();
         }
     }
@@ -155,11 +189,11 @@ class CompleteOverloadDlqRabbitIT {
         raw.setUsername(user);
         raw.setPassword(password);
         try (Connection conn = raw.newConnection(); Channel ch = conn.createChannel()) {
-            ch.basicPublish("", RabbitConfiguration.COMPLETE_QUEUE, null, good);
-            GetResponse got = ch.basicGet(RabbitConfiguration.COMPLETE_QUEUE, false);
+            ch.basicPublish("", queue, null, good);
+            GetResponse got = ch.basicGet(queue, false);
             assertThat(got).isNotNull();
             ch.basicAck(got.getEnvelope().getDeliveryTag(), false);
-            assertThat(ch.basicGet(RabbitConfiguration.COMPLETE_DLQ, true))
+            assertThat(ch.basicGet(dlq, true))
                 .as("ACKed completion must not reach the DLQ").isNull();
         }
     }
