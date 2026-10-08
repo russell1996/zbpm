@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
@@ -302,6 +303,11 @@ public class EventsOutboxRetentionPgIT extends PostgresIT {
         }
         ExecutorService pool = Executors.newFixedThreadPool(2);
         CountDownLatch start = new CountDownLatch(1);
+        // WO-AUDIT-7 флейк-фикс: гонка обязана БЫТЬ — барьер на каждой
+        // итерации заставляет оба потока одновременно ходить за батчами.
+        // Таймаут await'а лишь освобождает поток, когда второй уже вышел из
+        // цикла (пустой батч); на ассерты это не влияет.
+        java.util.concurrent.CyclicBarrier rendezvous = new java.util.concurrent.CyclicBarrier(2);
         AtomicReference<List<Long>> seenA = new AtomicReference<>(List.of());
         AtomicReference<List<Long>> seenB = new AtomicReference<>(List.of());
         try {
@@ -309,6 +315,7 @@ public class EventsOutboxRetentionPgIT extends PostgresIT {
                 start.await(10, TimeUnit.SECONDS);
                 List<Long> all = new java.util.ArrayList<>();
                 while (true) {
+                    try { rendezvous.await(10, TimeUnit.SECONDS); } catch (Exception ignored) { /* собеседник завершился */ }
                     var b = batchProcessor.claimAndDeleteEventsBatch(
                         CUTOFF_30D, 7, OptionalLong.empty());
                     if (b.sequences().isEmpty()) break;
@@ -321,6 +328,7 @@ public class EventsOutboxRetentionPgIT extends PostgresIT {
                 start.await(10, TimeUnit.SECONDS);
                 List<Long> all = new java.util.ArrayList<>();
                 while (true) {
+                    try { rendezvous.await(10, TimeUnit.SECONDS); } catch (Exception ignored) { /* собеседник завершился */ }
                     var b = batchProcessor.claimAndDeleteEventsBatch(
                         CUTOFF_30D, 7, OptionalLong.empty());
                     if (b.sequences().isEmpty()) break;
@@ -335,9 +343,16 @@ public class EventsOutboxRetentionPgIT extends PostgresIT {
         } finally {
             pool.shutdownNow();
         }
+        System.out.println("AUDIT7-CONCURRENT-CLAIM split: A=" + seenA.get().size()
+            + " B=" + seenB.get().size());
         // 19 eligible-строк удалены ровно по одному разу (SKIP LOCKED, V6 —
-        // два реальных потока, не sequential-имитация).
-        assertThat(seenA.get()).doesNotContainAnyElementsOf(seenB.get());
+        // два реальных потока, не sequential-имитация). disjoint-проверка
+        // корректна и на границе «один поток забрал всё» (второй список пуст
+        // — допустимый исход гонки, а не дефект, в отличие от
+        // doesNotContainAnyElementsOf, который падает на пустом iterable).
+        assertThat(Collections.disjoint(seenA.get(), seenB.get()))
+            .as("SKIP LOCKED: sequence не должен достаться обоим потокам")
+            .isTrue();
         assertThat(seenA.get().size() + seenB.get().size()).isEqualTo(19);
         assertThat(remainingFeedPositions()).containsExactly(20L);
     }
