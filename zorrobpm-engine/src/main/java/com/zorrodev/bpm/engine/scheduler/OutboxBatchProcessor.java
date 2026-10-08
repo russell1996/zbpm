@@ -143,8 +143,27 @@ public class OutboxBatchProcessor {
             // broker ACK arrives (OutboxDeliveryResultListener), so a lost message can't
             // look "delivered" in the DB.
         } catch (Exception e) {
-            int nextAttempt = entry.getAttempts() + 1;
             String errorSummary = truncate(e.getMessage(), 500);
+            // WO-REL-69 П.1: тот же атомарный условный инкремент, что в
+            // OutboxDeliveryResultListener (та же read-modify-write слабость).
+            // Потолок = maxRetries - 1: карантинный переход attempts не трогает.
+            int ceiling = maxRetries - 1;
+            int nextAttempt;
+            if (outboxRepository.incrementAttempts(entry.getId(), errorSummary, ceiling) == 1) {
+                Integer fresh = outboxRepository.findAttemptsById(entry.getId());
+                if (fresh == null) {
+                    log.warn("Outbox entry {} vanished after incrementing attempts", entry.getId());
+                    return;
+                }
+                nextAttempt = fresh;
+            } else {
+                Integer current = outboxRepository.findAttemptsById(entry.getId());
+                if (current == null) {
+                    log.warn("Outbox entry {} vanished before recording failure", entry.getId());
+                    return;
+                }
+                nextAttempt = current + 1;
+            }
             if (nextAttempt >= maxRetries) {
                 // WO-REL-66 (B): a quarantine notification that itself cannot
                 // be delivered must NOT be quarantined (that re-emits the
@@ -163,7 +182,7 @@ public class OutboxBatchProcessor {
                 log.error("Outbox entry {} quarantined after {} attempts (max={}): {}",
                     entry.getId(), nextAttempt, maxRetries, errorSummary);
             } else {
-                outboxRepository.recordFailure(entry.getId(), nextAttempt, errorSummary);
+                // WO-REL-69 П.1: инкремент уже применён условным UPDATE выше.
                 log.warn("Outbox entry {} failed (attempt {}/{}): {}",
                     entry.getId(), nextAttempt, maxRetries, errorSummary);
             }

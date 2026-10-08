@@ -59,7 +59,7 @@ class OutboxDeliveryResultListenerTest {
         listener.on(new OutboxDeliveryResult(e.getId().toString(), true, null));
 
         verify(outboxRepository).markPublished(e.getId());
-        verify(outboxRepository, never()).recordFailure(any(), anyInt(), anyString());
+        verify(outboxRepository, never()).incrementAttempts(any(), anyString(), anyInt());
         verify(outboxRepository, never()).markFailed(any());
     }
 
@@ -67,23 +67,29 @@ class OutboxDeliveryResultListenerTest {
     void nack_entryStaysPending_andCountsAttempt() {
         OutboxEntry e = entry(0);
         when(outboxRepository.findById(e.getId())).thenReturn(Optional.of(e));
+        // WO-REL-69 П.1: attempts=0 < ceiling(4) → условный UPDATE применяется.
+        when(outboxRepository.incrementAttempts(eq(e.getId()), eq("unroutable: 312 No route"), eq(4)))
+            .thenReturn(1);
+        when(outboxRepository.findAttemptsById(e.getId())).thenReturn(1);
 
         listener.on(new OutboxDeliveryResult(e.getId().toString(), false, "unroutable: 312 No route"));
 
         verify(outboxRepository, never()).markPublished(e.getId());
-        verify(outboxRepository).recordFailure(eq(e.getId()), eq(1), eq("unroutable: 312 No route"));
+        verify(outboxRepository).incrementAttempts(eq(e.getId()), eq("unroutable: 312 No route"), eq(4));
         verify(outboxRepository, never()).markFailed(any());
     }
 
     @Test
     void nack_afterMaxRetries_quarantinesEntry() {
-        OutboxEntry e = entry(4); // next attempt 5 >= maxRetries(5) → FAILED
+        OutboxEntry e = entry(4); // attempts=4 = ceiling(4) → UPDATE не применяется, карантин
         when(outboxRepository.findById(e.getId())).thenReturn(Optional.of(e));
+        when(outboxRepository.incrementAttempts(eq(e.getId()), eq("unroutable"), eq(4)))
+            .thenReturn(0);
+        when(outboxRepository.findAttemptsById(e.getId())).thenReturn(4);
 
         listener.on(new OutboxDeliveryResult(e.getId().toString(), false, "unroutable"));
 
         verify(outboxRepository).markFailed(e.getId());
-        verify(outboxRepository, never()).recordFailure(any(), anyInt(), anyString());
         verify(outboxRepository, never()).markPublished(any());
     }
 
@@ -95,7 +101,7 @@ class OutboxDeliveryResultListenerTest {
         listener.on(new OutboxDeliveryResult(id.toString(), false, "boom"));
 
         verify(outboxRepository, never()).markPublished(any());
-        verify(outboxRepository, never()).recordFailure(any(), anyInt(), anyString());
+        verify(outboxRepository, never()).incrementAttempts(any(), anyString(), anyInt());
         verify(outboxRepository, never()).markFailed(any());
     }
 
@@ -104,15 +110,18 @@ class OutboxDeliveryResultListenerTest {
         listener.on(new OutboxDeliveryResult("not-a-uuid", false, "boom"));
 
         verify(outboxRepository, never()).markPublished(any());
-        verify(outboxRepository, never()).recordFailure(any(), anyInt(), anyString());
+        verify(outboxRepository, never()).incrementAttempts(any(), anyString(), anyInt());
         verify(outboxRepository, never()).markFailed(any());
     }
 
     @Test
     void rel22_firstQuarantine_emitsOutboxQuarantined() {
         // WO-REL-22 (B3): first transition to FAILED emits the alert event.
-        OutboxEntry e = entry(4); // next attempt 5 >= maxRetries(5) → FAILED
+        OutboxEntry e = entry(4); // attempts=4 = ceiling → карантин
         when(outboxRepository.findById(e.getId())).thenReturn(Optional.of(e));
+        when(outboxRepository.incrementAttempts(eq(e.getId()), anyString(), eq(4)))
+            .thenReturn(0);
+        when(outboxRepository.findAttemptsById(e.getId())).thenReturn(4);
         when(outboxRepository.markFailed(e.getId())).thenReturn(1);
 
         listener.on(new OutboxDeliveryResult(e.getId().toString(), false, "unroutable"));
@@ -133,6 +142,9 @@ class OutboxDeliveryResultListenerTest {
         OutboxEntry e = entry(5);
         e.setStatus(com.zorrodev.bpm.engine.entity.OutboxStatus.FAILED);
         when(outboxRepository.findById(e.getId())).thenReturn(Optional.of(e));
+        when(outboxRepository.incrementAttempts(eq(e.getId()), anyString(), eq(4)))
+            .thenReturn(0);
+        when(outboxRepository.findAttemptsById(e.getId())).thenReturn(5);
 
         listener.on(new OutboxDeliveryResult(e.getId().toString(), false, "unroutable"));
 

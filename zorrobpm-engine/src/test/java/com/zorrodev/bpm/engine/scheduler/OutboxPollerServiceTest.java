@@ -45,6 +45,12 @@ class OutboxPollerServiceTest {
         org.springframework.test.util.ReflectionTestUtils.setField(batchProcessor, "maxRetries", 5);
     }
 
+    /** WO-REL-69 П.1: стабы условного инкремента (attempts=0 < ceiling(4) → итог 1). */
+    private void stubAtomicIncrement() {
+        when(outboxRepository.incrementAttempts(any(), anyString(), eq(4))).thenReturn(1);
+        when(outboxRepository.findAttemptsById(any())).thenReturn(1);
+    }
+
     private OutboxEntry entry(String jobId) throws Exception {
         OutboxEntry e = new OutboxEntry();
         e.setId(UUID.randomUUID());
@@ -65,10 +71,12 @@ class OutboxPollerServiceTest {
         when(outboxRepository.findPendingBatch(100)).thenReturn(List.of(entry));
         when(objectMapper.readValue(entry.getPayload(), JobDetailModel.class)).thenReturn(new JobDetailModel());
         doThrow(new RuntimeException("MQ down")).when(publisher).publishEvent(any(ServiceTaskEnqueued.class));
+        stubAtomicIncrement();
 
         poller.pollOnce();
         verify(outboxRepository, never()).markPublished(entry.getId());
-        verify(outboxRepository).recordFailure(eq(entry.getId()), eq(1), anyString());
+        // WO-REL-69 П.1: атомарный условный инкремент (ceiling = maxRetries(5) - 1 = 4).
+        verify(outboxRepository).incrementAttempts(eq(entry.getId()), anyString(), eq(4));
 
         // Second poll: publish succeeds → event published; still NO markPublished from the
         // processor (marking happens only on broker ACK — WO-REL-12 R-02)
@@ -112,12 +120,13 @@ class OutboxPollerServiceTest {
 
         // Simulate MQ failure on first publish
         doThrow(new RuntimeException("MQ down")).when(publisher).publishEvent(any(ServiceTaskEnqueued.class));
+        stubAtomicIncrement();
 
         poller.pollOnce();
 
         // Entry stays pending (not marked published) → next poll will retry
         verify(outboxRepository, never()).markPublished(entry.getId());
-        verify(outboxRepository).recordFailure(eq(entry.getId()), eq(1), anyString());
+        verify(outboxRepository).incrementAttempts(eq(entry.getId()), anyString(), eq(4));
     }
 
     // --- AUD-1: pollOnce delegates to batchProcessor ---
