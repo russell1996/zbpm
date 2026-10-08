@@ -3,8 +3,12 @@ package com.zorrodev.bpm.engine.service;
 import com.zorrodev.bpm.contract.exception.ApiException;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.entity.VariablePresetEntity;
+import com.zorrodev.bpm.engine.entity.VariablePresetHistoryEntity;
+import com.zorrodev.bpm.engine.entity.VariablePresetFavoriteEntity;
 import com.zorrodev.bpm.engine.entity.VariablePresetTargetKind;
 import com.zorrodev.bpm.engine.entity.VariablePresetVisibility;
+import com.zorrodev.bpm.engine.repository.VariablePresetFavoriteRepository;
+import com.zorrodev.bpm.engine.repository.VariablePresetHistoryRepository;
 import com.zorrodev.bpm.engine.repository.VariablePresetRepository;
 import com.zorrodev.bpm.engine.security.AuthorizationService;
 import com.zorrodev.bpm.engine.security.Principal;
@@ -48,6 +52,8 @@ import java.util.UUID;
 public class VariablePresetService {
 
     private final VariablePresetRepository presetRepository;
+    private final VariablePresetFavoriteRepository favoriteRepository;
+    private final VariablePresetHistoryRepository historyRepository;
     private final AuthorizationService authorizationService;
     private final AuditLogService auditLogService;
 
@@ -156,6 +162,7 @@ public class VariablePresetService {
         }
         auditLogService.record(principal, "PRESET_CREATE",
             entity.getProcessDefinitionKey(), entity.getId().toString());
+        recordHistory(principal, entity.getId(), "CREATE", null, entity.getVariables());
         return entity;
     }
 
@@ -203,7 +210,9 @@ public class VariablePresetService {
         if (description != null) {
             entity.setDescription(blankToNull(description));
         }
+        String variablesBefore = null;
         if (newVars != null) {
+            variablesBefore = entity.getVariables();
             entity.setVariables(VariablePresetValidator.toJson(newVars));
         }
         if (visibility != null) {
@@ -218,6 +227,11 @@ public class VariablePresetService {
         }
         auditLogService.record(principal, "PRESET_UPDATE",
             entity.getProcessDefinitionKey(), entity.getId().toString());
+        if (variablesBefore != null) {
+            // История — только когда менялись переменные (смена имени/описания
+            // фиксируется аудитом, снапшоты до/после совпали бы побайтово).
+            recordHistory(principal, entity.getId(), "UPDATE", variablesBefore, entity.getVariables());
+        }
         return entity;
     }
 
@@ -237,6 +251,117 @@ public class VariablePresetService {
         presetRepository.delete(entity);
         auditLogService.record(principal, "PRESET_DELETE",
             entity.getProcessDefinitionKey(), id.toString());
+        // DELETE в history-таблицу не пишется сознательно: строки истории каскадно
+        // умирают вместе с шаблоном (ON DELETE CASCADE), факт удаления — в аудите
+        // выше; эндпоинт истории удалённого шаблона всё равно 404 (§5 WO).
+    }
+
+    /**
+     * WO-VT-1 п.6-бис: смена видимости PRIVATE↔PROCESS без версии (в отличие от
+     * PUT): владелец, админ процесса или SUPER_ADMIN; видимый чужой — 403.
+     * Версия бампится, чтобы конкурентный PUT со stale-версией дал 409, а не
+     * молча потерял смену видимости.
+     */
+    @Transactional
+    public VariablePresetEntity changeVisibility(
+            Principal principal, UUID id, VariablePresetVisibility visibility) {
+        requireAuth(principal);
+        VariablePresetEntity entity = presetRepository.findById(id)
+            .orElseThrow(VariablePresetService::notFound);
+        if (!canRead(principal, entity)) {
+            throw notFound();
+        }
+        if (!canEdit(principal, entity)) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "PRESET_FORBIDDEN",
+                "Only the owner, a process admin or SUPER_ADMIN may change visibility",
+                Map.of("id", id.toString()));
+        }
+        if (visibility == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "PRESET_VALIDATION_FAILED",
+                "Preset validation failed",
+                Map.of("fields", List.of(Map.of("field", "visibility", "message", "visibility is required"))));
+        }
+        entity.setVisibility(visibility);
+        entity.setUpdatedAt(Instant.now());
+        entity.setVersion(entity.getVersion() + 1);
+        entity = presetRepository.saveAndFlush(entity);
+        auditLogService.record(principal, "PRESET_VISIBILITY",
+            entity.getProcessDefinitionKey(), entity.getId().toString());
+        return entity;
+    }
+
+    /**
+     * WO-VT-1 п.6-бис: избранное. Отметить может любой, кто видит шаблон
+     * (canRead — чужой PRIVATE здесь тоже 404). Идемпотентно в обе стороны;
+     * аудит не пишется (критерий 5 WO — только create/update/delete).
+     *
+     * @return текущее состояние отметки после операции
+     */
+    @Transactional
+    public boolean setFavorite(Principal principal, UUID id, boolean favorite) {
+        requireAuth(principal);
+        VariablePresetEntity entity = presetRepository.findById(id)
+            .orElseThrow(VariablePresetService::notFound);
+        if (!canRead(principal, entity)) {
+            throw notFound();
+        }
+        UUID me = actorUserId(principal);
+        if (favorite) {
+            if (!favoriteRepository.existsByUserIdAndPresetId(me, id)) {
+                VariablePresetFavoriteEntity row = new VariablePresetFavoriteEntity();
+                row.setUserId(me);
+                row.setPresetId(id);
+                row.setCreatedAt(Instant.now());
+                try {
+                    favoriteRepository.saveAndFlush(row);
+                } catch (DataIntegrityViolationException e) {
+                    // Гонка двух отметок — PK решает, не pre-check.
+                }
+            }
+            return true;
+        }
+        favoriteRepository.deleteByUserIdAndPresetId(me, id);
+        return false;
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isFavorite(Principal principal, UUID id) {
+        requireAuth(principal);
+        VariablePresetEntity entity = presetRepository.findById(id)
+            .orElseThrow(VariablePresetService::notFound);
+        if (!canRead(principal, entity)) {
+            throw notFound();
+        }
+        return favoriteRepository.existsByUserIdAndPresetId(actorUserId(principal), id);
+    }
+
+    /**
+     * WO-VT-1 п.6-бис: история правок. Права — как на чтение (владелец / админ /
+     * участник для PROCESS; чужой PRIVATE — 404). Возвращает CREATE/UPDATE со
+     * снапшотами; DELETE — только в аудит-логе (см. комментарий в delete()).
+     */
+    @Transactional(readOnly = true)
+    public List<VariablePresetHistoryEntity> history(Principal principal, UUID id) {
+        requireAuth(principal);
+        VariablePresetEntity entity = presetRepository.findById(id)
+            .orElseThrow(VariablePresetService::notFound);
+        if (!canRead(principal, entity)) {
+            throw notFound();
+        }
+        return historyRepository.findByPresetIdOrderByAtAscIdAsc(id);
+    }
+
+    private void recordHistory(Principal principal, UUID presetId, String action,
+            String beforeJson, String afterJson) {
+        VariablePresetHistoryEntity row = new VariablePresetHistoryEntity();
+        row.setId(UUID.randomUUID());
+        row.setPresetId(presetId);
+        row.setAction(action);
+        row.setActorUserId(actorUserId(principal));
+        row.setAt(Instant.now());
+        row.setVariablesBefore(beforeJson);
+        row.setVariablesAfter(afterJson);
+        historyRepository.save(row);
     }
 
     private void requireAuth(Principal principal) {
