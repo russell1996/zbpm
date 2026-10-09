@@ -149,6 +149,78 @@ public class ElementSupport {
         return resolveExpression(raw, processInstanceId);
     }
 
+    /**
+     * WO-IN-4: scope-версия {@link #resolveAssignee} для MI-инстансов.
+     * {@code inputElement} биндится scope-локально ({@code setVariables(pi, scopeId, ...)};
+     * root-контекст его не видит ({@code getVariables(pi)} = только scopeId IS NULL),
+     * поэтому {@code =assigneeEmployeeId} в root-контексте даёт null и колонка
+     * {@code user_tasks.assignee} остаётся NULL — внешняя команда получала total 0.
+     * Контекст здесь — root+scope merge ({@code getVariables(pi, scopeId)}, scoped wins),
+     * тот же, что видит живой FEEL-код инстанса. Остальные resolve-методы ниже
+     * делегируют сюда же через raw-строки (P-24: один механизм, не копии).
+     */
+    public String resolveAssigneeInScope(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
+        return resolveExpressionInScope(extractAssignee(element), processInstanceId, scopeId);
+    }
+
+    public String resolveCandidateGroupsInScope(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getCandidateGroups)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpressionInScope(raw, processInstanceId, scopeId);
+    }
+
+    public String resolveCandidateUsersInScope(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getCandidateUsers)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpressionInScope(raw, processInstanceId, scopeId);
+    }
+
+    /**
+     * WO-IN-4: {@link #resolveExpression} на готовом списке переменных
+     * (root+scope merge от вызывающего). Ветки и контракт неуспеха — те же:
+     * {@code ${var}} → toString значения, {@code =feel} → через feelBudget,
+     * провал → warn + null, литерал → как есть.
+     */
+    public String resolveExpressionInScope(String raw, UUID processInstanceId, List<ProcessVariable> scopeVariables) {
+        if (raw == null || raw.isBlank()) return null;
+        Map<String, Object> vars = toFeelContext(scopeVariables, objectMapper);
+
+        if (raw.startsWith("${") && raw.endsWith("}")) {
+            String varName = raw.substring(2, raw.length() - 1).trim();
+            Object val = vars.get(varName);
+            if (val == null) {
+                log.warn("variable '{}' not found in instance {} scope, returning null", varName, processInstanceId);
+                return null;
+            }
+            return val.toString();
+        }
+
+        if (raw.startsWith("=")) {
+            // WO-ENG-20: через общий бюджет — тот же entry point, что root-версия.
+            EvaluationResult result = feelBudget.evaluateExpression(raw.substring(1), vars);
+            if (!result.isSuccess()) {
+                log.warn("FEEL expression '{}' failed in instance {} scope: {}", raw, processInstanceId, result.failure());
+                return null;
+            }
+            Object val = result.result();
+            return val != null ? val.toString() : null;
+        }
+
+        return raw;
+    }
+
+    /** WO-IN-4: тот же scope-resolve, переменные подтягивает сам (root+scope merge). */
+    public String resolveExpressionInScope(String raw, UUID processInstanceId, UUID scopeId) {
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpressionInScope(raw, processInstanceId, dbService.getVariables(processInstanceId, scopeId));
+    }
+
     public String resolveCandidateGroups(UUID processInstanceId, BpmnElementModel element) {
         String raw = Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getUserTaskExtension)

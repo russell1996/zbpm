@@ -47,6 +47,12 @@ export interface UserTask {
   status: ActivityLifecycleStatus | null
   createdAt: string
   completedAt: string | null
+  /** WO-IN-4: resolved assignee (absent/null when unassigned) — additive. */
+  assignee?: string | null
+  /** WO-IN-4: resolved candidate groups (same rows the ?candidateGroup= filter matches) — additive. */
+  candidateGroups?: string[]
+  /** WO-IN-4: resolved candidate users (same rows the ?candidateUser= filter matches) — additive. */
+  candidateUsers?: string[]
 }
 
 export interface ServiceTask {

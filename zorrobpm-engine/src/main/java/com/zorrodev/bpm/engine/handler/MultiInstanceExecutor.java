@@ -283,11 +283,14 @@ public class MultiInstanceExecutor {
         UUID activityId = dbService.createActivity(processInstanceId, token, element);
         bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index);
         if (element.getType() == BpmnElementType.USER_TASK) {
-            String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, element);
-            String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, element);
+            // WO-IN-4: assignee/кандидатов резолвим в scope инстанса, а не в root:
+            // inputElement живёт scope-локально, root-контекст его не видит —
+            // колонка assignee оставалась NULL и фильтр ?assignee=X давал total 0.
+            String resolvedAssignee = elementSupport.resolveAssigneeInScope(processInstanceId, activityId, element);
+            String resolvedGroups = elementSupport.resolveCandidateGroupsInScope(processInstanceId, activityId, element);
             // WO-IN-3: зеркало прямого пути — MI-инстанс тоже обязан писать кандидатов,
             // иначе задача внутри MI осталась бы невидимой для фильтра по кандидату.
-            String resolvedUsers = elementSupport.resolveCandidateUsers(processInstanceId, element);
+            String resolvedUsers = elementSupport.resolveCandidateUsersInScope(processInstanceId, activityId, element);
             String formKey = element.getExtensions() != null && element.getExtensions().getUserTaskExtension() != null
                 ? element.getExtensions().getUserTaskExtension().getFormKey() : null;
             // WO-C8-22: linked-form id rides its own field into the row (never into formKey).

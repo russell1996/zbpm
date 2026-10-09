@@ -11,7 +11,10 @@ import jakarta.persistence.criteria.CriteriaQuery;
 import jakarta.persistence.criteria.Predicate;
 import jakarta.persistence.criteria.Root;
 import jakarta.persistence.criteria.Subquery;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
@@ -24,6 +27,17 @@ import java.util.List;
 import java.util.UUID;
 
 public interface UserTaskRepository extends JpaRepository<UserTaskEntity, UUID>, JpaSpecificationExecutor<UserTaskEntity> {
+
+    /**
+     * WO-IN-4: paged reads fetch the activity (lifecycle status) as a to-one JOIN in the
+     * SAME statement — one page query, not page + per-row/batched activity lookup.
+     * To-one fetch joins stay pagination-safe (unlike collection fetches, which force
+     * ids+load = two statements). Single-row {@code findById} intentionally keeps NO
+     * graph — {@code UserTaskMapper.toDTO} loads its activity explicitly.
+     */
+    @Override
+    @EntityGraph(attributePaths = "activity")
+    Page<UserTaskEntity> findAll(Specification<UserTaskEntity> spec, Pageable pageable);
 
     static Specification<UserTaskEntity> byProcessDefinitionId(UUID processDefinitionId) {
         return (root, query, criteriaBuilder) -> criteriaBuilder.equal(root.get("processDefinitionId"), processDefinitionId);

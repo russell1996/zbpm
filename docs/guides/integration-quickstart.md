@@ -46,7 +46,16 @@ externalReference="…"/>`. Поэтому реальные C8-модели ид
 Ваш внешний Tasklist/портал:
 1. **Инбокс** — поллинг (webhook «новая задача» пока нет):
    `GET /user-tasks?candidateGroup=hr&state=CREATED&page=0&size=50` (или `?assignee=ivan`). Ответ — страница
-   `UserTask`: `id, processInstanceId, bpmnElementId, name, formKey, assignee, candidateGroups, createdAt`.
+   `UserTask`: `id, processInstanceId, bpmnElementId, name, formKey, assignee, candidateGroups, candidateUsers, createdAt`.
+   `assignee` — строка ровно как вычислило выражение `assignmentDefinition` (числовой employeeId отдаётся
+   без форматирования: `21346`, не `21346.0`); `null` — задача никому не назначена. `candidateGroups` /
+   `candidateUsers` — списки (те же строки, что видят фильтры `?candidateGroup=` / `?candidateUser=` с WO-IN-3);
+   пустой список — кандидатов нет. Новые поля additive: старые клиенты их игнорируют.
+
+   > **Multi-instance: найти экземпляр по сотруднику (WO-IN-4).** Каждый экземпляр MI — отдельная строка
+   > со своим вычисленным `assignee`: `GET /user-tasks?processInstanceId=<P>&assignee=21346` возвращает ровно
+   > его экземпляр(ы) (точное совпадение строки). Важно: `assignee` резолвится в scope инстанса и видит
+   * `inputElement` (до WO-IN-4 колонка оставалась NULL и такой запрос давал `total: 0`).
 
    > **Модель доступа инбокса (WO-ACL-23, решение владельца 2026-10-07, вариант A):** доступ — **на уровне
    > процесса**: участник процесса видит ВСЕ его user task, в том числе чужие. Фильтр `?assignee=<username>`
@@ -56,6 +65,11 @@ externalReference="…"/>`. Поэтому реальные C8-модели ид
    > запроса («кого спросили»), а НЕ граница безопасности — те же строки доступны через `?assignee=`. Решение
    > пересматривается отдельным WO (вариант B, person-level видимость), если появятся процессы
    > с чувствительными данными (зарплаты, HR, ПДн).
+   >
+   > **Multi-instance: найти экземпляр по сотруднику (WO-IN-4).** Каждый экземпляр MI — отдельная строка
+   > со своим вычисленным `assignee`: `GET /user-tasks?processInstanceId=<P>&assignee=21346` возвращает ровно
+   > его экземпляр(ы) (точное совпадение строки). `assignee` резолвится в scope инстанса и видит
+   > `inputElement` (до WO-IN-4 колонка оставалась NULL и такой запрос давал `total: 0`).
 2. **Данные формы** — `GET /variables?processInstanceId=<id>`; какую форму рисовать — по `formKey` (ваш фронт мапит
    ключ на компонент; валидация ввода — через Variable Schema, ниже).
 3. **Завершить** — вернуть результат:
