@@ -254,7 +254,8 @@ export function useRealtimeEvents() {
    * СТАТУС, не тело: 401/403/429/прочий → точный диагноз панели (критерий 23);
    * 200 → рукопожатие живо (обрыв transient — оставляем 'network'); обрыв
    * fetch по нашему таймауту → 'timeout'; сетевая ошибка → 'network'.
-   * Тело при 200 не потребляем (сразу abort — слот maxClients не занимаем).
+   * Тело при 200 не потребляем (сразу cancel+abort — слот maxClients
+   * освобождается тут же, долгого холда нет).
    */
   const HANDSHAKE_PROBE_TIMEOUT_MS = 5000
 
@@ -621,7 +622,7 @@ export function useRealtimeEvents() {
         // в очереди = onPromoted: follower открывает СВОЙ EventSource
         // (ровно один новый; Last-Event-ID подхватит браузер сам) и
         // объявляет себя лидером. Без этого остальные вкладки протухали молча.
-        onPromoted(() => {
+        onPromoted((realRelease) => {
           // WO-UI-26 Н-3: повышение после disconnect — игнор (поколение ушло).
           if (myGeneration !== connectGeneration) return
           if (fanoutUnsubscribe) {
@@ -629,7 +630,10 @@ export function useRealtimeEvents() {
             fanoutUnsubscribe = null
           }
           isLeaderTab = true
-          leadershipRelease = release
+          // Повышенный лидер держит НАСТОЯЩИЙ холд (аргумент), а не no-op
+          // из follower-резолва — иначе disconnect не отпустит лок и цепочка
+          // переизбраний встанет (self-review раунда 2).
+          leadershipRelease = realRelease
           openSource()
         })
       }

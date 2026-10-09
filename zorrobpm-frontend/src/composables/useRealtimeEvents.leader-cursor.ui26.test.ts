@@ -116,6 +116,48 @@ function stubLocksDeferred() {
   return { request, pending }
 }
 
+/**
+ * Честный стаб Web Locks: эксклюзивный холд, FIFO-очередь, release будит
+ * следующего. Единственная модель, на которой видно, отпускается ли лок
+ * после disconnect повышенного лидера (баг self-review раунда 2: повышенный
+ * получал no-op release — лок висел, цепочка переизбраний вставала).
+ */
+function stubLocksFaithful() {
+  let held = false
+  const queue: Array<() => void> = []
+  const pump = () => {
+    if (held) return
+    const next = queue.shift()
+    if (!next) return
+    held = true
+    next()
+  }
+  const request = vi.fn((_n: string, _o: unknown, cb: () => Promise<void>) => {
+    queue.push(() => {
+      // Семантика браузера: лок освобождается, когда сетится промис
+      // колбэка холдера (releaseResolve из sseFanout.release).
+      void cb().then(
+        () => {
+          held = false
+          pump()
+        },
+        () => {
+          held = false
+          pump()
+        },
+      )
+    })
+    pump()
+    return Promise.resolve()
+  })
+  Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true })
+  return {
+    request,
+    /** Лок свободен прямо сейчас (для ассертов освобождения). */
+    isFree: () => !held,
+  }
+}
+
 function envelope(type: string, sequence: number): EventEnvelope {
   return { sequence, id: `e-${sequence}`, type, version: 1, occurredAt: '2026-09-24T00:00:00Z', data: {} }
 }
@@ -176,4 +218,41 @@ describe('useRealtimeEvents лидер-курсор и гонка connect (WO-UI
     expect(rt.isLeaderTab()).toBe(false)
     rt.disconnect()
   })
+
+  it('Н-3/self-review: повышенный лидер отпускает лок — цепочка переизбраний жива', async () => {
+    const locks = stubLocksFaithful()
+    // A — лидер (свободный лок → мгновенный грант).
+    const leader = useRealtimeEvents()
+    leader.connect()
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
+    expect(leader.isLeaderTab()).toBe(true)
+
+    // B — follower (лок занят → очередь; через 1500 мс — follower-резолв).
+    const follower = useRealtimeEvents()
+    follower.connect()
+    await new Promise((r) => setTimeout(r, 1700))
+    await Promise.resolve()
+    expect(follower.isLeaderTab()).toBe(false)
+    expect(FakeEventSource.instances).toHaveLength(1)
+
+    // Смерть A → B повышен (ровно один новый ES).
+    leader.disconnect()
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2))
+    expect(follower.isLeaderTab()).toBe(true)
+
+    // B уходит: лок ОБЯЗАН освободиться (без фикса — no-op release, лок висит).
+    // Освобождение — через промис холдера (микротаски): ждём, не ассертим синхронно.
+    follower.disconnect()
+    expect(FakeEventSource.instances[1].closed).toBe(true)
+    await vi.waitFor(() => expect(locks.isFree()).toBe(true))
+
+    // C — новый кандидат: лок свободен → сразу лидер, без 1500 мс ожидания
+    // и без вечного follower-стояния за призрачным холдом.
+    const next = useRealtimeEvents()
+    next.connect()
+    await vi.waitFor(() => expect(next.isLeaderTab()).toBe(true))
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(3))
+    next.disconnect()
+    leader.disconnect()
+  }, 30000)
 })
