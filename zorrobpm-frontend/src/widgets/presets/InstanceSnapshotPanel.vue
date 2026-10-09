@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Dialog,
-  DialogContent,
+  DialogScrollContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -146,12 +146,13 @@ async function saveSnapshot() {
     <!-- WO-VT-3 Дополнение №2 п.2: строка «зачем это» (до решения по IA). -->
     <p class="text-xs text-muted-foreground">{{ t('presetWhySnapshot') }}</p>
     <Dialog :open="showDialog" @update:open="(v) => { if (!v) showDialog = false }">
-      <DialogContent
-        class="flex flex-col gap-4 p-6"
-        style="width: min(94vw, 560px); max-width: min(94vw, 560px);"
+      <DialogScrollContent
+        class="flex flex-col gap-4 p-6 w-[min(94vw,560px)] max-w-[95vw]"
         :aria-label="t('presetSnapshotDialogTitle')"
-        @keydown="onSnapshotKeydown"
       >
+        <!-- WO-UI-27 BUG-2: @keydown внутрь (display:contents) — на
+             DialogScrollContent слушатель теряется (корень-фрагмент). -->
+        <div class="contents" @keydown="onSnapshotKeydown">
         <DialogHeader>
           <DialogTitle class="text-lg font-bold">{{ t('presetSnapshotDialogTitle') }}</DialogTitle>
           <DialogDescription class="sr-only">{{ t('presetSnapshotDialogTitle') }}</DialogDescription>
@@ -191,7 +192,8 @@ async function saveSnapshot() {
             {{ saving ? t('loading') : t('save') }}
           </Button>
         </DialogFooter>
-      </DialogContent>
+        </div>
+      </DialogScrollContent>
     </Dialog>
   </div>
 </template>

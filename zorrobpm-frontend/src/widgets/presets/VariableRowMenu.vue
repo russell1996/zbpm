@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -26,12 +27,28 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'select', id: string): void
 }>()
+
+const root = ref<HTMLElement | null>(null)
+
+/**
+ * WO-VT-3 RT-3 (сохранено в WO-UI-27): выбор пункта возвращает фокус на
+ * кнопку меню. Сам shadcn-DropdownMenu этого не делает (фокус остаётся в
+ * dismissable-слое) — доводим явно после закрытия.
+ */
+function choose(id: string) {
+  emit('select', id)
+  // Dismissable-слой shadcn закрывается асинхронно и перетягивает фокус;
+  // возвращаем фокус после закрытия (не nextTick — слой живёт дольше).
+  window.setTimeout(() => {
+    root.value?.querySelector<HTMLElement>('[data-testid="row-menu-button"]')?.focus()
+  }, 30)
+}
 </script>
 
 <template>
   <!-- Обёртка несёт внешние attrs (напр. data-testid="instance-actions-menu"):
        корень DropdownMenu ничего не рендерит, без неё attrs теряются. -->
-  <div class="relative shrink-0">
+  <div ref="root" class="relative shrink-0">
     <DropdownMenu>
       <DropdownMenuTrigger as-child>
         <Button
@@ -51,7 +68,7 @@ const emit = defineEmits<{
           :key="item.id"
           :data-testid="`row-menu-item-${item.id}`"
           :class="item.danger ? 'text-red-500' : ''"
-          @select="emit('select', item.id)"
+          @select="choose(item.id)"
         >
           {{ item.label }}
         </DropdownMenuItem>

@@ -119,6 +119,76 @@ describe('PresetEditorDialog', () => {
     expect(w.emitted('saved')).toBeTruthy()
   })
 
+  it('WO-UI-27 BUG-2: Ctrl+Enter inside the dialog saves (keydown reaches content)', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const w = mount(PresetEditorDialog, {
+      attachTo: host,
+      global: { stubs: {} },
+      props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null },
+    })
+    mounted.push(w)
+    await flushPromises()
+    const nameInput = document.querySelector('#preset-name') as HTMLInputElement
+    nameInput.value = 't1'
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    // Ctrl+Enter изнутри диалога (портал) — должен всплыть до onDialogKeydown.
+    // RED: @keydown висел на DialogScrollContent (корень — DialogPortal,
+    // фрагмент) и терялся — save не вызывался.
+    nameInput.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }),
+    )
+    await flushPromises()
+    expect(mockCreate).toHaveBeenCalled()
+  })
+
+  it('WO-UI-27 RT-2b: Ctrl+Enter СНАРУЖИ фулскрина сначала коммитит его, потом сохраняет', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const w = mount(PresetEditorDialog, {
+      attachTo: host,
+      global: { stubs: {} },
+      props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null },
+    })
+    mounted.push(w)
+    await flushPromises()
+    const nameInput = document.querySelector('#preset-name') as HTMLInputElement
+    nameInput.value = 't2'
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    // JSON-строка с пустым значением, затем открываем фулскрин её кнопкой.
+    w.findComponent({ name: 'VariablesEditor' }).vm.$emit('update:modelValue', [
+      { name: 'j', type: 'JSON', value: '{"a":1}', allowEmptyString: null },
+    ])
+    await flushPromises()
+    const fsBtn = [...document.querySelectorAll('button')].find((b) =>
+      (b.textContent ?? '').includes('presetJsonFullscreen'),
+    ) as HTMLButtonElement
+    expect(fsBtn, 'fullscreen button renders').toBeTruthy()
+    fsBtn.click()
+    await flushPromises()
+    const fsArea = document.querySelector('[id$="-jsonfs"]') as HTMLTextAreaElement
+    expect(fsArea, 'fullscreen editor opens').not.toBeNull()
+    // Набираем новое, НЕ нажимая «Применить» — фулскрин остаётся открыт.
+    fsArea.value = '{"a":1,"b":2}'
+    fsArea.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    // Ctrl+Enter по полю имени (снаружи фулскрина) — диалог обязан сначала
+    // закоммитить фулскрин (commitFullscreen), иначе save уйдёт со старым.
+    nameInput.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }),
+    )
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+    // RED-мутация: убрать commitFullscreen из ctrlEnterSave → createPreset
+    // вызван со СТАРЫМ variables ({"a":1}), тест краснеет.
+    expect(mockCreate).toHaveBeenCalledTimes(1)
+    const payload = mockCreate.mock.calls[0][0] as { variables: Array<{ value: string }> }
+    expect(JSON.parse(payload.variables[0].value)).toEqual({ a: 1, b: 2 })
+  })
+
   it('edit: loads the preset and PUTs with version', async () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
@@ -158,7 +228,7 @@ describe('PresetEditorDialog', () => {
     expect(document.body.textContent).not.toContain('presetVersionConflict')
   })
 
-  it('duplicate: prefilled copy name, saved via create (POST)', async () => {
+  it('WO-UI-27 доп.2: edit prefills from server and saves via update (PUT), no duplicate path', async () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
     const w = mount(PresetEditorDialog, {
@@ -166,16 +236,17 @@ describe('PresetEditorDialog', () => {
     global: { stubs: {} },
       props: {
         open: true, processKey: 'k', targetKind: 'USER_TASK', targetRef: 't1',
-        presetId: 'p1', duplicateName: 'Copy of base',
+        presetId: 'p1',
       },
     })
     mounted.push(w)
     await flushPromises()
-    expect((document.querySelector('#preset-name') as HTMLInputElement).value).toBe('Copy of base')
+    expect((document.querySelector('#preset-name') as HTMLInputElement).value).toBe('base')
     await docBtns().find((b) => b.text().trim() === 'save')!.trigger('click')
     await flushPromises()
-    expect(mockCreate).toHaveBeenCalled()
-    expect(mockUpdate).not.toHaveBeenCalled()
+    // WO-UI-27 доп.2: пути «сохранить как копию» нет — правка идёт через PUT.
+    expect(mockUpdate).toHaveBeenCalled()
+    expect(mockCreate).not.toHaveBeenCalled()
   })
 
   it('delete needs two clicks, then emits deleted', async () => {

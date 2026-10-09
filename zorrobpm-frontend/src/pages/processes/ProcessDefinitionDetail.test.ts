@@ -97,6 +97,24 @@ describe('ProcessDefinitionDetail render', () => {
     throw new Error('VariablesEditor not found')
   }
 
+  it('WO-UI-27 п.3: стартовый диалог по умолчанию ШИРОКИЙ min(94vw,1280px), тумблер Уже/Шире с памятью', async () => {
+    localStorage.removeItem('zbpm-start-dialog-wide')
+    const wrapper = mountPage()
+    await wrapper.vm.$nextTick()
+    const vm = wrapper.vm as any
+    vm.showStartModal = true
+    await settlePortal()
+    const dlg = document.querySelector('[role="dialog"]') as HTMLElement | null
+    expect(dlg, 'start dialog renders in portal').not.toBeNull()
+    // Дефолт — широко (владелец: «диалог можно сделать шире»).
+    expect(dlg!.className).toContain('w-[min(94vw,1280px)]')
+    // Тумблер сужает и запоминает выбор.
+    ;([...document.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes('presetDialogNarrower')) as HTMLElement).click()
+    await settlePortal()
+    expect((document.querySelector('[role="dialog"]') as HTMLElement).className).toContain('w-[min(94vw,640px)]')
+    expect(localStorage.getItem('zbpm-start-dialog-wide')).toBe('0')
+  })
+
   it('mounts without ReferenceError (dead ref removed in MT-9)', async () => {
     const wrapper = mountPage()
     await wrapper.vm.$nextTick()

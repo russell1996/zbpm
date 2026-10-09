@@ -118,4 +118,37 @@ describe('WO-UI-27 autoformat on show (criterion 1)', () => {
     // показанное при этом парсится в тот же смысл (эквивалентность без потерь).
     expect(JSON.parse((area.element as HTMLTextAreaElement).value)).toEqual(JSON.parse(ownerJson))
   })
+
+  it('BUG-1: typing in the JSON row editor keeps the typed text (no value loss)', async () => {
+    const w = mount(VariablesEditor, {
+      props: { modelValue: [{ name: 'stages', type: 'JSON', value: '{"a":1}' }] },
+    })
+    await flushPromises()
+    const area = w.find('textarea[id^="pv-value-"]')
+    await area.setValue('{"a":1,"b":2}')
+    const emitted = w.emitted('update:modelValue')
+    expect(emitted).toBeTruthy()
+    const last = emitted![emitted!.length - 1][0] as PresetVariable[]
+    // shadcn-Textarea эмитит СТРОКУ; хендлер обязан хранить набранное,
+    // а не `el.value` строки (= undefined) с TypeError в autoGrow.
+    expect(last[0].value).toBe('{"a":1,"b":2}')
+  })
+})
+
+describe('WO-UI-27 JSON line numbers (criterion 3b)', () => {
+  it('row editor shows a gutter with one number per line (>20 on owner fixture)', async () => {
+    const w = mount(VariablesEditor, {
+      props: { modelValue: [{ name: 'stages', type: 'JSON', value: ownerJson }] },
+    })
+    await flushPromises()
+    const gutter = w.find('[data-testid="ve-json-gutter-0"]')
+    expect(gutter.exists()).toBe(true)
+    expect(gutter.attributes('aria-hidden')).toBe('true')
+    const lines = (w.find('textarea[id^="pv-value-"]').element as HTMLTextAreaElement).value.split('\n').length
+    expect(lines).toBeGreaterThan(20)
+    const numbers = (gutter.element.textContent ?? '').trim().split(/\s+/)
+    expect(numbers).toHaveLength(lines)
+    expect(numbers[0]).toBe('1')
+    expect(numbers[numbers.length - 1]).toBe(String(lines))
+  })
 })

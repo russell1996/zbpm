@@ -19,7 +19,7 @@ import TabsBar from '@/widgets/shared/TabsBar.vue'
 import MemberAddDialog from '@/widgets/processes/MemberAddDialog.vue'
 import {
   Dialog,
-  DialogContent,
+  DialogScrollContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -149,7 +149,9 @@ const showStartModal = ref(false)
 // WO-UI-25 (критерий 1): двойной клик по «Start» не создаёт два инстанса.
 const startInFlight = ref(false)
 // WO-UI-27 п.3: ширина стартового диалога (стандарт/широко), память в localStorage.
-const startWide = ref(localStorage.getItem('zbpm-start-dialog-wide') === '1')
+// Дефолт — ШИРОКО min(94vw,1280px) (владелец: «диалог можно сделать шире»);
+// хранимое '0' — явный выбор «Уже».
+const startWide = ref(localStorage.getItem('zbpm-start-dialog-wide') !== '0')
 function toggleStartWide() {
   startWide.value = !startWide.value
   try {
@@ -762,9 +764,9 @@ async function downloadBpmn() {
 
       <!-- WO-UI-27 п.3 + доп.3: shadcn-Dialog, min(94vw,1280px), кнопка Шире/Уже. -->
       <Dialog :open="showStartModal" @update:open="(v) => { if (!v) showStartModal = false }">
-        <DialogContent
+        <DialogScrollContent
           class="flex flex-col gap-4 p-6"
-          :style="startWide ? 'width: min(94vw, 1280px);' : 'width: min(94vw, 640px);'"
+          :class="startWide ? 'w-[min(94vw,1280px)]' : 'w-[min(94vw,640px)]'"
           :aria-label="t('startProcessInstance')"
         >
           <DialogHeader class="flex-row items-center justify-between gap-2 space-y-0">
@@ -795,7 +797,7 @@ async function downloadBpmn() {
               {{ t('startProcess') }}
             </Button>
           </DialogFooter>
-        </DialogContent>
+        </DialogScrollContent>
       </Dialog>
 
     <!-- WO-ACL-11 criteria 20-22: ONE upload component — the card opens the shared

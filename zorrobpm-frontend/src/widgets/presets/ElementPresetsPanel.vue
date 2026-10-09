@@ -24,7 +24,8 @@ import { useToast } from '@/composables/useToast'
 /**
  * WO-VT-1 (фронт, §1-бис п.2-бис + VT-4): панель «Шаблоны для этого элемента».
  * Клик по элементу диаграммы: если шаблонов места нет — «Добавить шаблон»;
- * если есть — список с «Изменить / Дублировать / Создать новый / Удалить»,
+ * если есть — список с «Изменить / Экспорт / Удалить» (WO-UI-27 доп.2:
+ * пункт копирования убран совсем),
  * избранное, импорт/экспорт файлом. При выключенном флаге прячется целиком.
  */
 const props = defineProps<{
@@ -248,8 +249,10 @@ defineExpose({ reload: load, available })
             :title="p.name"
             @click="openEdit(p)"
           >
-            <span class="block truncate text-xs font-medium">{{ p.name }}</span>
-            <span class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+            <!-- WO-UI-27: обе строки сжимаются (min-w-0) — иначе на 280px
+                 кнопка вылезает из карточки (scrollWidth > clientWidth). -->
+            <span class="block truncate text-xs font-medium min-w-0 flex-1">{{ p.name }}</span>
+            <span class="mt-0.5 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground min-w-0">
               <span
                 class="inline-flex items-center rounded-full border border-border px-1.5 py-px"
                 :title="t('presetVisibility')"

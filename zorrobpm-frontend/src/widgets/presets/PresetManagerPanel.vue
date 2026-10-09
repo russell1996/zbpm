@@ -37,7 +37,10 @@ const presets = ref<VariablePreset[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 const available = ref(true)
-const kindFilter = ref('')
+// WO-UI-27: sentinel «все виды» — reka SelectItem запрещает value=""
+// (прецедент WO-UI-21: 'ALL' в ProcessInstanceList).
+const ALL_KINDS = 'ALL_KINDS'
+const kindFilter = ref(ALL_KINDS)
 const editingId = ref<string | null>(null)
 const dialogOpen = ref(false)
 
@@ -80,7 +83,7 @@ async function load() {
 }
 
 function filtered(): VariablePreset[] {
-  if (!kindFilter.value) return presets.value
+  if (kindFilter.value === ALL_KINDS) return presets.value
   return presets.value.filter((p) => p.targetKind === kindFilter.value)
 }
 
@@ -132,7 +135,7 @@ defineExpose({ reload: load, available })
           <SelectValue :placeholder="t('presetAllKinds')" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="">{{ t('presetAllKinds') }}</SelectItem>
+          <SelectItem :value="ALL_KINDS">{{ t('presetAllKinds') }}</SelectItem>
           <SelectItem v-for="k in KINDS" :key="k" :value="k">{{ kindLabel(k) }}</SelectItem>
         </SelectContent>
       </Select>

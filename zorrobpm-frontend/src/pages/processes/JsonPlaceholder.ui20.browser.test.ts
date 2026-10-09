@@ -22,6 +22,7 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import ProcessDefinitionDetail from '@/pages/processes/ProcessDefinitionDetail.vue'
+import VariablesEditor from '@/widgets/presets/VariablesEditor.vue'
 import ru from '@/locales/ru.json'
 import en from '@/locales/en.json'
 import kz from '@/locales/kz.json'
@@ -203,9 +204,11 @@ describe('WO-UI-20 criterion 3: JSON variable type renders in a real browser', (
       document.body.appendChild(host)
       hosts.push(host)
 
+      // WO-UI-27 доп.3: стартовый диалог — shadcn-портал в document.body,
+      // teleport НЕ стаббим, иначе контент портала невидим.
       const wrapper = mount(ProcessDefinitionDetail, {
         attachTo: host,
-        global: { stubs: { teleport: true }, plugins: [createPinia(), i18n] },
+        global: { plugins: [createPinia(), i18n] },
       })
       mounted.push(wrapper)
       await flushPromises()
@@ -222,21 +225,27 @@ describe('WO-UI-20 criterion 3: JSON variable type renders in a real browser', (
       // Choose the JSON variable type — this is the step that crashed.
       // WO-VT-1: the modal now shows PresetPicker — add a row first, then
       // pick the type in the row's own type select.
-      const addBtn = wrapper
-        .findAll('button')
-        .find((b) => b.text().includes(i18n.global.t('presetAddVariable') as unknown as string))
+      // WO-UI-27 доп.3: диалог в портале (ищем в document), тип — shadcn-Select.
+      const addBtn = [...document.querySelectorAll('button')].find((b) =>
+        (b.textContent ?? '').includes(i18n.global.t('presetAddVariable') as unknown as string),
+      ) as HTMLElement | undefined
       expect(addBtn, '"+ Add variable" renders in the picker').toBeTruthy()
-      await addBtn!.trigger('click')
+      addBtn!.click()
       await flushPromises()
-      const typeSelect = wrapper.find('select[id^="pv-type-"]')
-      expect(typeSelect.exists(), 'row variable type <select> renders').toBe(true)
-      await typeSelect.setValue('JSON')
+      // Тип меняем через emit редактора (путь данных row→picker→page тот же,
+      // что при выборе в shadcn-Select: changeType сбрасывает значение; сам
+      // клик по [role=option] синтетикой reka не выбирает — UI-привод селекта
+      // покрыт jsdom-тестами пикера, здесь проверяем рендер/плейсхолдер/консоль).
+      const eds = wrapper.findAllComponents(VariablesEditor)
+      expect(eds.length, 'VariablesEditor renders in portal').toBeGreaterThan(0)
+      eds[eds.length - 1].vm.$emit('update:modelValue', [
+        { name: 'data', type: 'JSON', value: '', allowEmptyString: null },
+      ])
       await flushPromises()
-      await until(() => wrapper.find('textarea[id^="pv-value-"]').exists())
+      await until(() => !!document.querySelector('textarea[id^="pv-value-"]'))
 
-      const area = wrapper.find('textarea[id^="pv-value-"]')
-      expect(area.exists()).toBe(true)
-      expect(area.attributes('placeholder')).toBe(expectedPlaceholder[locale])
+      const area = document.querySelector('textarea[id^="pv-value-"]') as HTMLTextAreaElement
+      expect(area.getAttribute('placeholder')).toBe(expectedPlaceholder[locale])
 
       // The live symptom: a cascade of console errors from the vue-i18n
       // compiler (trigger/notify/runIfDirty reactive re-evaluation).

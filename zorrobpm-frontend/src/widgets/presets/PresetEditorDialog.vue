@@ -25,7 +25,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Dialog,
-  DialogContent,
+  DialogScrollContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -46,7 +46,7 @@ import { onCtrlEnter } from '@/composables/usePresetModal'
  * WO-VT-1 (фронт, §1-бис п.2-бис): создание/правка шаблона. Правка — через PUT
  * с version; конфликт версии показывает понятное сообщение и предлагает
  * перезагрузить актуальную версию. Здесь же: избранное, смена видимости,
- * удаление с подтверждением, история изменений, дублирование (именем).
+ * удаление с подтверждением, история изменений.
  */
 const props = defineProps<{
   open: boolean
@@ -55,7 +55,6 @@ const props = defineProps<{
   targetRef?: string | null
   initialVariables?: PresetVariable[]
   presetId?: string | null
-  duplicateName?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -109,20 +108,23 @@ const variablesEditor = ref<InstanceType<typeof VariablesEditor> | null>(null)
 
 function onDialogKeydown(e: KeyboardEvent) {
   onCtrlEnter(e, () => {
-    void (async () => {
-      // WO-VT-3 HOLD r1 (RT-2): если открыт JSON-фулскрин — сначала применяем
-      // набранное в variables (иначе save уйдёт со старым значением и правки
-      // молча выброшены). Невалидный JSON — стоим (фулскрин открыт с ошибкой).
-      if (variablesEditor.value && !variablesEditor.value.commitFullscreen()) return
-      // patchRow идёт через emit дочернего редактора — ждём, пока v-model
-      // синхронизируется (один nextTick гоняемо недостаточен: emit → prop →
-      // ref родителя требует полного цикла обновления).
-      await nextTick()
-      await nextTick()
-      await nextTick()
-      if (!formError.value && !saving.value) void save()
-    })()
+    void ctrlEnterSave()
   })
+}
+
+/** Общий путь Ctrl+Enter: коммит фулскрина (если открыт) → save. */
+async function ctrlEnterSave() {
+  // WO-VT-3 HOLD r1 (RT-2): если открыт JSON-фулскрин — сначала применяем
+  // набранное в variables (иначе save уйдёт со старым значением и правки
+  // молча выброшены). Невалидный JSON — стоим (фулскрин открыт с ошибкой).
+  if (variablesEditor.value && !variablesEditor.value.commitFullscreen()) return
+  // patchRow идёт через emit дочернего редактора — ждём, пока v-model
+  // синхронизируется (один nextTick гоняемо недостаточен: emit → prop →
+  // ref родителя требует полного цикла обновления).
+  await nextTick()
+  await nextTick()
+  await nextTick()
+  if (!formError.value && !saving.value) void save()
 }
 
 function historyActionLabel(action: string): string {
@@ -179,7 +181,7 @@ async function loadForEdit() {
   loading.value = true
   try {
     const p = await getPreset(props.presetId)
-    name.value = props.duplicateName ?? p.name
+    name.value = p.name
     description.value = p.description ?? ''
     visibility.value = p.visibility
     variables.value = (p.variables ?? []).map((x) => ({ ...x }))
@@ -193,7 +195,7 @@ async function loadForEdit() {
 }
 
 function resetForCreate() {
-  name.value = props.duplicateName ?? ''
+  name.value = ''
   description.value = ''
   visibility.value = 'PRIVATE'
   variables.value = (props.initialVariables ?? []).map((x) => ({ ...x }))
@@ -210,7 +212,7 @@ watch(
   (open) => {
     if (!open) return
     resetForCreate()
-    if (props.presetId && !props.duplicateName) void loadForEdit()
+    if (props.presetId) void loadForEdit()
   },
   { immediate: true },
 )
@@ -222,7 +224,7 @@ async function save() {
   conflict.value = false
   try {
     let saved: VariablePreset
-    if (isEdit.value && !props.duplicateName) {
+    if (isEdit.value) {
       saved = await updatePreset(props.presetId!, {
         name: name.value.trim(),
         description: description.value || null,
@@ -358,20 +360,21 @@ function historyJson(vars: PresetVariable[] | null): string {
        JSON-фулскрина — Esc-возврат (RT-1): DialogContent ниже глушит
        escape-key-down, когда фокус в [data-preset-fs]. -->
   <Dialog :open="open" @update:open="(v) => { if (!v) requestClose() }">
-    <DialogContent
-      class="flex max-h-[90dvh] flex-col gap-0 overflow-hidden p-0"
-      style="width: min(94vw, 1280px); max-width: min(94vw, 1280px);"
-      :aria-label="t(titleKey)"
-      @keydown="onDialogKeydown"
+    <DialogScrollContent
+      class="flex max-h-[90dvh] flex-col gap-0 overflow-hidden p-0 w-[min(94vw,1280px)] max-w-[95vw]"
       @escape-key-down="onDialogEscape"
       @pointer-down-outside="(e) => e.preventDefault()"
       @interact-outside="(e) => e.preventDefault()"
     >
+      <!-- WO-UI-27 BUG-2: @keydown НЕЛЬЗЯ на DialogScrollContent — его корень
+           DialogPortal (фрагмент), слушатель теряется (Vue warning). Обёртка
+           display:contents: раскладку не меняет, keydown всплывает через неё. -->
+      <div class="contents" @keydown="onDialogKeydown">
       <DialogHeader class="flex-row items-center justify-between gap-2 space-y-0 border-b border-border px-4 py-3">
         <DialogTitle class="truncate text-lg font-bold">{{ t(titleKey) }}</DialogTitle>
         <div class="flex shrink-0 items-center gap-2">
           <Button
-            v-if="isEdit && !duplicateName"
+            v-if="isEdit"
             variant="ghost"
             size="icon"
             class="text-xl leading-none"
@@ -465,7 +468,12 @@ function historyJson(vars: PresetVariable[] | null): string {
           {{ targetKind }}{{ targetRef ? ` · ${targetRef}` : '' }}
         </div>
 
-        <VariablesEditor ref="variablesEditor" v-model="variables" id-prefix="pe" />
+        <VariablesEditor
+          ref="variablesEditor"
+          v-model="variables"
+          id-prefix="pe"
+          @request-save="ctrlEnterSave"
+        />
 
         <div v-if="conflict" class="space-y-2 rounded-md border border-amber-400 bg-amber-50/50 p-3 dark:bg-amber-950/20">
           <p role="alert" class="text-sm text-amber-700 dark:text-amber-300">{{ t('presetVersionConflict') }}</p>
@@ -487,7 +495,7 @@ function historyJson(vars: PresetVariable[] | null): string {
       <DialogFooter class="flex-row flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3">
           <div class="flex flex-wrap gap-2">
             <Button
-              v-if="isEdit && !duplicateName"
+              v-if="isEdit"
               type="button"
               variant="link"
               size="sm"
@@ -497,7 +505,7 @@ function historyJson(vars: PresetVariable[] | null): string {
               {{ confirmDelete ? t('presetConfirmDelete') : t('presetDelete') }}
             </Button>
             <Button
-              v-if="isEdit && !duplicateName && view !== 'history'"
+              v-if="isEdit && view !== 'history'"
               type="button"
               variant="link"
               size="sm"
@@ -509,7 +517,7 @@ function historyJson(vars: PresetVariable[] | null): string {
           </div>
           <div class="flex flex-wrap justify-end gap-2">
             <Button
-              v-if="isEdit && !duplicateName"
+              v-if="isEdit"
               type="button"
               variant="outline"
               size="sm"
@@ -534,6 +542,7 @@ function historyJson(vars: PresetVariable[] | null): string {
             </Button>
           </div>
         </DialogFooter>
-    </DialogContent>
+      </div>
+    </DialogScrollContent>
   </Dialog>
 </template>
