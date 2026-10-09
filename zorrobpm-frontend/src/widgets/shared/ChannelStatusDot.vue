@@ -2,13 +2,13 @@
 import { ref, computed, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '@/components/ui/dialog'
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import { useRealtimeEvents, type ChannelErrorKind } from '@/composables/useRealtimeEvents'
 import { useRealtimeChannel } from '@/composables/useRealtimeChannel'
@@ -21,12 +21,16 @@ import { useToast } from '@/composables/useToast'
  * - здоровый канал → индикатора НЕТ вообще (никакого «Подключено»);
  * - сбой дольше гистерезиса (5 с) → ОДНА маленькая нейтральная точка
  *   (без текста, без пульсации, без prefers-reduced-motion нарушений);
- * - детали — по клику: shadcn-Dialog «Состояние канала» (статус, код
+ * - детали — по клику: shadcn-панель «Состояние канала» (статус, код
  *   последней ошибки, время попытки, число попыток, Last-Event-ID,
  *   «Повторить сейчас», «Скопировать диагностику»);
  * - никаких кнопок/плашек реконнекта слева сверху и полос над контентом
- *   (Доп.2: layout shift = 0 — fixed/overlay здесь вообще нет, точка в
- *   потоке шапки фиксированного размера).
+ *   (Доп.2: layout shift = 0 — точка в потоке шапки фиксированного размера).
+ *
+ * Панель — DropdownMenu (рабочий shadcn-примитив в этом репо: тот же, что
+ * меню пользователя в HeaderBar). shadcn Dialog здесь НЕ подошёл: ни один
+ * экран репо его не использует (все диалоги — самописные v-if), DialogRoot
+ * не открывался ни в браузере, ни в тесте (см. историю правок).
  *
  * Различение причин (Доп.8): 401/403/429/сеть/таймаут/no-first-byte
  * («нет первого байта за N секунд» — признак буферизации прокси, REL-70).
@@ -35,12 +39,6 @@ const DOWN_HYSTERESIS_MS = 5000
 
 const { t } = useI18n()
 const toast = useToast()
-/**
- * Состояние канала — от экземпляра MainLayout (provide/inject), а НЕ свой
- * экземпляр composable: refs живут внутри вызова useRealtimeEvents, свой
- * экземпляр никогда не connect'ится и всегда «всё плохо». Fallback для
- * изолированных тестов — свой экземпляр.
- */
 type RealtimeHandle = ReturnType<typeof useRealtimeEvents>
 /**
  * Состояние канала — экземпляр MainLayout через модульный синглтон
@@ -55,7 +53,6 @@ if (!injected) {
 }
 const rt: RealtimeHandle = injected ?? useRealtimeEvents()
 
-const open = ref(false)
 const downSince = ref<number | null>(null)
 const showDot = ref(false)
 let hysteresisTimer: ReturnType<typeof setTimeout> | null = null
@@ -138,39 +135,31 @@ function copyDiagnostics(): void {
 }
 
 function retryNow(): void {
-  open.value = false
   rt.retryConnection()
 }
 </script>
 
 <template>
-  <!-- WO-UI-26: без Tooltip-обёртки вокруг кнопки — TooltipTrigger
-       перехватывает клик (превент), и Dialog не открывается ни в браузере,
-       ни в тесте. Подсказка — нативным title (ноль JS, ноль layout). -->
-  <template v-if="showDot">
-    <Button
-      variant="ghost"
-      size="icon"
-      data-testid="channel-dot"
-      class="h-8 w-8 shrink-0 hover:bg-transparent"
-      :aria-label="t('channelStatus')"
-      :title="t('channelStatus')"
-      @click="open = true"
-    >
-      <span class="h-2 w-2 rounded-full bg-muted-foreground/60" />
-    </Button>
-
-    <Dialog v-model:open="open">
-      <!-- data-testid — на внутреннем div: DialogContent рендерит fragment/
-           teleport-root, не-наследованные атрибуты на нём теряются (warn) и
-           querySelector их не находит ни в тесте, ни в проде. -->
-      <DialogContent class="sm:max-w-md">
-        <div data-testid="channel-dialog">
-        <DialogHeader>
-          <DialogTitle>{{ t('channelDiagTitle') }}</DialogTitle>
-          <DialogDescription>{{ t('channelDiagSubtitle') }}</DialogDescription>
-        </DialogHeader>
-        <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+  <!-- Подсказка — нативным title (ноль JS, ноль layout). -->
+  <DropdownMenu v-if="showDot">
+    <DropdownMenuTrigger as-child>
+      <!-- G24: точка — shadcn Button (ghost/icon), внутри — нейтральный
+           кружок 8px; сырые HTML-теги кнопок запрещены. -->
+      <Button
+        variant="ghost"
+        size="icon"
+        data-testid="channel-dot"
+        class="h-8 w-8 shrink-0 hover:bg-transparent"
+        :aria-label="t('channelStatus')"
+        :title="t('channelStatus')"
+      >
+        <span class="h-2 w-2 rounded-full bg-muted-foreground/60" />
+      </Button>
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="end" class="w-80" data-testid="channel-dialog">
+      <DropdownMenuLabel>{{ t('channelDiagTitle') }}</DropdownMenuLabel>
+      <div class="px-2 py-1.5 text-sm">
+        <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
           <dt class="text-muted-foreground">{{ t('channelDiagStatus') }}</dt>
           <dd data-testid="channel-diag-status">{{ t(ERROR_TEXT[rt.diagnostics.value.lastError]) }}</dd>
           <dt class="text-muted-foreground">{{ t('channelDiagLastAttempt') }}</dt>
@@ -182,17 +171,16 @@ function retryNow(): void {
           <dt class="text-muted-foreground">{{ t('channelDiagRole') }}</dt>
           <dd>{{ rt.diagnostics.value.isLeader ? t('channelDiagLeader') : t('channelDiagFollower') }}</dd>
         </dl>
-        <p v-if="errorHint" class="text-sm text-muted-foreground">{{ errorHint }}</p>
-        <DialogFooter class="gap-2">
-          <Button variant="outline" data-testid="channel-diag-copy" @click="copyDiagnostics">
-            {{ t('channelDiagCopy') }}
-          </Button>
-          <Button data-testid="channel-diag-retry" @click="retryNow">
-            {{ t('channelDiagRetry') }}
-          </Button>
-        </DialogFooter>
-        </div>
-      </DialogContent>
-    </Dialog>
-  </template>
+        <p v-if="errorHint" class="mt-2 text-muted-foreground">{{ errorHint }}</p>
+        <p class="mt-1 text-xs text-muted-foreground">{{ t('channelDiagSubtitle') }}</p>
+      </div>
+      <DropdownMenuSeparator />
+      <DropdownMenuItem data-testid="channel-diag-copy" @select="copyDiagnostics">
+        {{ t('channelDiagCopy') }}
+      </DropdownMenuItem>
+      <DropdownMenuItem data-testid="channel-diag-retry" @select="retryNow">
+        {{ t('channelDiagRetry') }}
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  </DropdownMenu>
 </template>
