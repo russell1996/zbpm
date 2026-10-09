@@ -277,4 +277,23 @@ public class UserTaskAssigneeResponseIntegrationTests {
         assertThat(tasks).extracting(UserTask::getFollowUpDate)
             .containsExactlyInAnyOrder("sales", "sales");
     }
+
+    /**
+     * WO-IN-4 раунд 2, О-1 (priority): priorityDefinition в MI резолвится в
+     * scope инстанса ({@code =loopCounter * 10} — scope-bind каждого инстанса),
+     * а не в root. Root не видел loopCounter: resolve давал null →
+     * EngineException «priority must be 0-100» → инцидент вместо задач.
+     */
+    @Transactional
+    @Test
+    void criterion10_miPriorityResolvesInScope() throws Exception {
+        UUID pi = startMiWith("src/test/files/test-in4-mi-scope-priority.bpmn", List.of(
+            var("employees", ProcessVariableType.JSON, "[21346, 78901]"),
+            var("candidateGroup", ProcessVariableType.STRING, "sales")));
+        List<UserTask> tasks = queryService.findUserTasks(query(pi), null).getData();
+        assertThat(tasks).hasSize(2);
+        assertThat(tasks).extracting(UserTask::getPriority)
+            .containsExactlyInAnyOrder(10, 20);
+        assertThat(incidentRepository.findAll(IncidentRepository.byProcessInstanceId(pi))).isEmpty();
+    }
 }
