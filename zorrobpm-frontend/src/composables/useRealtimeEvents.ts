@@ -6,6 +6,12 @@ import { useIncidentStore } from '@/stores/incident'
 import api from '@/services/api'
 import { sharedRefresh } from '@/services/refreshInterceptor'
 import { publishRealtimeEvent } from '@/services/realtimeBus'
+import {
+  acquireSseLeadership,
+  publishFanout,
+  subscribeFanout,
+  type SseFanoutMessage,
+} from '@/services/sseFanout'
 
 /**
  * WO-UI-18, часть A — живой realtime-канал для встроенного SPA.
@@ -125,6 +131,69 @@ export function reconnectDelayMs(attempt: number): number {
   return Math.min(SSE_RECONNECT_BASE_DELAY_MS * 2 ** attempt, SSE_RECONNECT_MAX_DELAY_MS)
 }
 
+/**
+ * WO-UI-26 Доп.6 п.2/Доп.8: диагноз последней неудачи канала для панели
+ * диагностики (по клику на индикатор). `no-first-byte` — признак буферизации
+ * прокси (REL-70): соединение открыто, но ни одного байта за N секунд.
+ */
+export type ChannelErrorKind =
+  | 'none'
+  | 'http-401'
+  | 'http-403'
+  | 'http-429'
+  | 'http-other'
+  | 'network'
+  | 'timeout'
+  | 'no-first-byte'
+
+export interface ChannelDiagnostics {
+  /** Текущий диагноз (none = канал здоров или ещё не пробовали). */
+  lastError: ChannelErrorKind
+  /** HTTP-статус, если диагноз http-*. */
+  httpStatus: number | null
+  /** Время последней попытки соединения (ISO). */
+  lastAttemptAt: string | null
+  /** Число попыток (пересозданий EventSource) в текущей сессии вкладки. */
+  attempts: number
+  /** Последний известный Last-Event-ID (курсор catchup). */
+  lastEventId: string | null
+  /** Эта вкладка — лидер SSE (держит соединение). */
+  isLeader: boolean
+}
+
+/**
+ * WO-UI-26 Н-3: курсор Last-Event-ID переживает смену лидера.
+ *
+ * Нативный EventSource шлёт Last-Event-ID сам, но только при реконнекте ТОГО
+ * ЖЕ соединения. Новый лидер открывает НОВЫЙ EventSource (заголовки ему не
+ * выставить — API EventSource их не поддерживает, а бэкенд читает курсор
+ * только из заголовка `Last-Event-ID`, без query-фолбэка) — разрыв между
+ * смертью старого лидера и connect нового серверным catchup не покрывает.
+ * Поэтому каждый экземпляр пишет последний id в sessionStorage (общий на
+ * вкладки одного origin): новый лидер подхватывает его в свой ref/диагностику
+ * (панель показывает непрерывность), а сам разрыв закрывается штатным
+ * запасным путём Доп.4 (один склеенный тихий refetch при реконнекте).
+ */
+const SSE_LAST_EVENT_STORAGE_KEY = 'zbpm.sse.lastEventId'
+
+function readStoredLastEventId(): string | null {
+  try {
+    if (typeof sessionStorage === 'undefined') return null
+    return sessionStorage.getItem(SSE_LAST_EVENT_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function storeLastEventId(id: string): void {
+  try {
+    if (typeof sessionStorage === 'undefined') return
+    sessionStorage.setItem(SSE_LAST_EVENT_STORAGE_KEY, id)
+  } catch {
+    // приватный режим/квота — курсор живёт только в ref, не фатально
+  }
+}
+
 export function useRealtimeEvents() {
   const isConnected = ref(false)
   const lastEventId = ref<string | null>(null)
@@ -147,6 +216,130 @@ export function useRealtimeEvents() {
   let eventSource: EventSource | null = null
   let reconnectAttempts = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  // WO-UI-26 Доп.6 п.2/Доп.8: диагностика канала для панели по клику.
+  const diagnostics = ref<ChannelDiagnostics>({
+    lastError: 'none',
+    httpStatus: null,
+    lastAttemptAt: null,
+    attempts: 0,
+    lastEventId: null,
+    isLeader: false,
+  })
+  // WO-UI-26 Доп.8: «нет первого байта» — соединение открыто, но onopen и
+  // события не приходят N секунд (буферизация прокси, REL-70). EventSource
+  // не отдаёт TTFB, поэтому меряем сами: таймер с момента construct.
+  let firstByteTimer: ReturnType<typeof setTimeout> | null = null
+  let firstByteSeen = false
+  const FIRST_BYTE_TIMEOUT_MS = 10000
+
+  function noteAttempt(): void {
+    diagnostics.value = {
+      ...diagnostics.value,
+      lastAttemptAt: new Date().toISOString(),
+      attempts: diagnostics.value.attempts + 1,
+      isLeader: isLeaderTab,
+    }
+  }
+
+  function noteError(kind: ChannelErrorKind, httpStatus: number | null = null): void {
+    // Первое наблюдение сильнее последующих повторов той же природы —
+    // но счётчик попыток и время всегда свежие (noteAttempt отдельно).
+    diagnostics.value = { ...diagnostics.value, lastError: kind, httpStatus }
+  }
+
+  /**
+   * WO-UI-26 Б-2: handshake-probe при CLOSED-обрыве. Браузер НЕ отдаёт HTTP-код
+   * ошибки EventSource (onerror без деталей), поэтому при CLOSED делаем лёгкий
+   * `fetch` того же URL с той же кукой (`credentials: include`) и читаем
+   * СТАТУС, не тело: 401/403/429/прочий → точный диагноз панели (критерий 23);
+   * 200 → рукопожатие живо (обрыв transient — оставляем 'network'); обрыв
+   * fetch по нашему таймауту → 'timeout'; сетевая ошибка → 'network'.
+   * Тело при 200 не потребляем (сразу cancel+abort — слот maxClients
+   * освобождается тут же, долгого холда нет).
+   */
+  const HANDSHAKE_PROBE_TIMEOUT_MS = 5000
+
+  async function probeHandshakeStatus(): Promise<
+    { status: number } | { timeout: true } | { network: true }
+  > {
+    try {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), HANDSHAKE_PROBE_TIMEOUT_MS)
+      let resp: Response
+      try {
+        resp = await fetch(buildStreamUrl(), {
+          credentials: 'include',
+          headers: { Accept: 'text/event-stream' },
+          signal: ctrl.signal,
+        })
+      } finally {
+        clearTimeout(timer)
+      }
+      try {
+        await resp.body?.cancel()
+      } catch {
+        // ignore — тело не нужно, важен только статус
+      }
+      ctrl.abort()
+      return { status: resp.status }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return { timeout: true }
+      return { network: true }
+    }
+  }
+
+  function classifyProbeResult(
+    result: { status: number } | { timeout: true } | { network: true },
+  ): void {
+    if ('status' in result) {
+      if (result.status === 401) noteError('http-401', 401)
+      else if (result.status === 403) noteError('http-403', 403)
+      else if (result.status === 429) noteError('http-429', 429)
+      else if (result.status !== 200) noteError('http-other', result.status)
+      // 200 — рукопожатие живо: оставляем уже выставленный 'network'.
+    } else if ('timeout' in result) {
+      noteError('timeout')
+    }
+    // network — уже выставлен вызывающим до probe, не трогаем.
+  }
+
+  function noteHealthy(): void {
+    diagnostics.value = { ...diagnostics.value, lastError: 'none', httpStatus: null }
+  }
+
+  function armFirstByteTimer(): void {
+    if (firstByteTimer) clearTimeout(firstByteTimer)
+    firstByteSeen = false
+    firstByteTimer = setTimeout(() => {
+      firstByteTimer = null
+      // Ни одного БАЙТА (события/heartbeat) за N секунд — поток висит без
+      // данных = признак буферизации прокси (REL-70). onopen — это заголовки
+      // ответа, а не байты потока: его наличие таймер НЕ гасит (иначе
+      // pending-случай Доп.8 — onopen есть, байтов нет — не диагностировался).
+      // CLOSED-источник уже ушёл в scheduleReconnect — не дублируем.
+      if (!firstByteSeen && eventSource && !isClosed(eventSource)) {
+        noteError('no-first-byte')
+      }
+    }, FIRST_BYTE_TIMEOUT_MS)
+  }
+
+  function markFirstByte(): void {
+    firstByteSeen = true
+    if (firstByteTimer) {
+      clearTimeout(firstByteTimer)
+      firstByteTimer = null
+    }
+  }
+  // WO-UI-26 Доп.5 (кр.21): роль вкладки. Лидер держит EventSource и
+  // ретранслирует события остальным через BroadcastChannel; follower только
+  // слушает ретрансляцию (своего EventSource не открывает — экономия слотов
+  // HTTP/1.1: 1 соединение на браузер, а не на вкладку).
+  let leadershipRelease: (() => void) | null = null
+  let fanoutUnsubscribe: (() => void) | null = null
+  let isLeaderTab = false
+  // WO-UI-26 Н-3: guard двойного connect + инвалидация протухших исходов.
+  let leadershipInflight = false
+  let connectGeneration = 0
 
   function dispatch(envelope: EventEnvelope) {
     // Каждый стор сам фильтрует по типу в своём handleEvent — дублирования
@@ -159,15 +352,57 @@ export function useRealtimeEvents() {
     publishRealtimeEvent(envelope)
   }
 
+  /**
+   * WO-UI-26 Доп.5: входящее событие от ЛИДЕРА (ретрансляция) либо от
+   * собственного EventSource. Идемпотентность — по sequence на стороне
+   * сторов/шины (Доп.4): дубль (лидер применил у себя + follower получил то
+   * же) — no-op, порядок — по sequence.
+   */
+  function onFanoutMessage(msg: SseFanoutMessage) {
+    if (msg.kind === 'event') {
+      // Ретрансляция лидера: тот же dispatch, что у собственного EventSource.
+      // Идемпотентность — по sequence/id на стороне сторов/шины (Доп.4):
+      // лидер уже применил событие у себя, follower применяет у себя.
+      if (msg.envelope.sequence !== undefined) {
+        lastEventId.value = String(msg.envelope.sequence)
+        // WO-UI-26 Н-3: follower тоже двигает общий курсор — при его повышении
+        // до лидера разрыв минимален.
+        storeLastEventId(String(msg.envelope.sequence))
+        diagnostics.value = { ...diagnostics.value, lastEventId: String(msg.envelope.sequence) }
+      }
+      dispatch(msg.envelope)
+    } else if (msg.kind === 'health') {
+      if (msg.patch.isConnected !== undefined) isConnected.value = msg.patch.isConnected
+      if (msg.patch.realtimeDown !== undefined) realtimeDown.value = msg.patch.realtimeDown
+      if (msg.patch.sessionExpired !== undefined) sessionExpired.value = msg.patch.sessionExpired
+      if (msg.patch.lastEventId !== undefined) lastEventId.value = msg.patch.lastEventId
+      mirrorHealth({
+        isConnected: isConnected.value,
+        realtimeDown: realtimeDown.value,
+        sessionExpired: sessionExpired.value,
+      })
+    }
+    // 'leader' обрабатывается внутри sseFanout (переизбрание молча).
+  }
+
   function onNamedEvent(event: Event) {
     const msg = event as MessageEvent<string>
+    markFirstByte()
     // SSE id = серверный sequence-курсор (SseEventStreamService ставит
     // .id(sequence)); браузер перепошлёт его как Last-Event-ID при реконнекте.
     if (msg.lastEventId) {
       lastEventId.value = msg.lastEventId
+      diagnostics.value = { ...diagnostics.value, lastEventId: msg.lastEventId }
+      // WO-UI-26 Н-3: курсор — в общее хранилище вкладок (смена лидера).
+      storeLastEventId(msg.lastEventId)
     }
     try {
       const envelope = JSON.parse(msg.data) as EventEnvelope
+      // WO-UI-26 Доп.5: лидер ретранслирует событие остальным вкладкам.
+      publishFanout({ kind: 'event', envelope })
+      if (lastEventId.value) {
+        publishFanout({ kind: 'health', patch: { lastEventId: lastEventId.value } })
+      }
       dispatch(envelope)
     } catch (e) {
       console.error('[RealtimeEvents] Failed to parse event data:', e)
@@ -175,11 +410,41 @@ export function useRealtimeEvents() {
   }
 
   function openSource() {
+    noteAttempt()
+    // WO-UI-26 Н-3: новый лидер подхватывает курсор умершего (sessionStorage
+    // общий на вкладки): диагностика показывает непрерывность; сам разрыв —
+    // штатным запасным путём Доп.4 (нативный catchup здесь невозможен —
+    // соединение новое, см. шапку SSE_LAST_EVENT_STORAGE_KEY).
+    if (!lastEventId.value) {
+      const stored = readStoredLastEventId()
+      if (stored) {
+        lastEventId.value = stored
+        diagnostics.value = { ...diagnostics.value, lastEventId: stored }
+      }
+    }
     const source = new EventSource(buildStreamUrl(), { withCredentials: true })
     for (const type of REALTIME_EVENT_TYPES) {
       source.addEventListener(type, onNamedEvent)
     }
+    // Любой байт потока (событие ИЛИ heartbeat) гасит first-byte таймер.
+    // Именованные типы покрыты выше; heartbeat без имени ловим через
+    // message-фолбэк, если он есть у реализации.
+    try {
+      const anySource = source as EventSource & { onmessage?: ((e: Event) => void) | null }
+      const prev = anySource.onmessage
+      anySource.onmessage = (e: Event) => {
+        markFirstByte()
+        if (prev) prev(e)
+      }
+    } catch {
+      // ignore — heartbeat без имени просто не гасит таймер раньше onopen
+    }
+    armFirstByteTimer()
     source.onopen = () => {
+      // onopen = заголовки ответа, НЕ байты потока: first-byte таймер НЕ
+      // гасим (Доп.8 — pending за буферизующим прокси: onopen есть, байтов
+      // нет). Гасят его только события/heartbeat (markFirstByte выше).
+      noteHealthy()
       isConnected.value = true
       error.value = null
       sessionExpired.value = false
@@ -187,6 +452,11 @@ export function useRealtimeEvents() {
       reconnectAttempts = 0
       // WO-UI-25: зеркало для подписчиков шины (индикатор + фолбэк-опрос).
       mirrorHealth({ isConnected: true, wasConnected: true, realtimeDown: false, sessionExpired: false })
+      // WO-UI-26 Доп.5: здоровье — остальным вкладкам.
+      publishFanout({
+        kind: 'health',
+        patch: { isConnected: true, wasConnected: true, realtimeDown: false, sessionExpired: false },
+      })
     }
     // WO-UI-18: намеренно НЕ закрываем source на transient-ошибке — нативный
     // SSE-автореконнект (reconnectTime(3000) от сервера) сам поднимет
@@ -197,7 +467,23 @@ export function useRealtimeEvents() {
     source.onerror = () => {
       isConnected.value = false
       mirrorHealth({ isConnected: false })
+      // WO-UI-26 Доп.6 п.2: классифицируем обрыв для панели диагностики.
+      // Точный HTTP-код браузер не отдаёт (CLOSED без деталей): различаем
+      // «сеть» (transient, нативный автореконнект в полёте) и «закрыт»
+      // (сервер/прокси закрыл или не-200 — идёт refresh+пересоздание).
+      noteError('network')
+      // WO-UI-26 Доп.5: обрыв видят и остальные вкладки.
+      publishFanout({ kind: 'health', patch: { isConnected: false } })
       if (isClosed(source)) {
+        // WO-UI-26 Б-2: CLOSED — уточняем диагноз handshake-probe (тот же
+        // URL/кука): 401/403/429/http-other/timeout вместо слепого 'network'.
+        // Результат приходит асинхронно и только УТОЧНЯЕТ (более специфичный
+        // код побеждает 'network'; 200/сеть — оставляют 'network').
+        void probeHandshakeStatus().then((result) => {
+          // Не затираем диагноз, если канал уже поднялся новым соединением.
+          if (isConnected.value) return
+          classifyProbeResult(result)
+        })
         scheduleReconnect()
       } else {
         error.value = 'Realtime connection lost, retrying…'
@@ -258,6 +544,13 @@ export function useRealtimeEvents() {
     sessionExpired.value = true
     realtimeDown.value = false
     error.value = 'Session expired, please sign in again'
+    // WO-UI-26 Б-2: смерть сессии = 401-сигнал для панели (критерий 23).
+    // Не затираем более специфичный диагноз probe (403/429/http-other/
+    // timeout/no-first-byte) — только 'none'/'network' уточняем до http-401.
+    const cur = diagnostics.value.lastError
+    if (cur === 'none' || cur === 'network') {
+      noteError('http-401', 401)
+    }
     mirrorHealth({ realtimeDown: false, sessionExpired: true })
   }
 
@@ -283,19 +576,82 @@ export function useRealtimeEvents() {
   }
 
   function connect() {
-    if (eventSource) return
+    // WO-UI-26 Н-3: синхронный guard от двойного connect в одном тике
+    // (MainLayout remount): acquireSseLeadership резолвится асинхронно, и без
+    // флага два вызова оба уходили в locks.request — второй висел в очереди
+    // того же лока и после 1500 мс становился «follower» СВОЕГО ЖЕ таба
+    // (лишняя подписка + протухший onPromoted, открывающий второй EventSource
+    // после disconnect). Поколение `connectGeneration` инвалидирует протухшие
+    // исходы: disconnect между запросом и резолвом — игнор вместо openSource.
+    if (eventSource || leadershipRelease || fanoutUnsubscribe || leadershipInflight) return
     if (typeof EventSource === 'undefined') {
       // jsdom и подобные среды без SSE: сторам просто не прилетают
       // live-события, страница работает на явных fetch как раньше.
       return
     }
-    openSource()
+    // WO-UI-26 Доп.5 (кр.21): сначала роль. Лидер открывает EventSource,
+    // follower только подписывается на ретрансляцию (своего EventSource нет —
+    // экономия слотов HTTP/1.1). Без Web Locks — каждая вкладка сама, как раньше.
+    leadershipInflight = true
+    const myGeneration = ++connectGeneration
+    void acquireSseLeadership(() => {
+      // Лок отобран (вкладка закрывается / dispose): чистимся как follower.
+      isLeaderTab = false
+    }).then(({ leader, release, onPromoted }) => {
+      // WO-UI-26 Н-3: протухший исход (disconnect между запросом и резолвом) —
+      // молча отпускаем лок вместо openSource (иначе EventSource переживает
+      // disconnect и висит зомби). Лок нельзя «отменить» — только отпустить.
+      if (myGeneration !== connectGeneration) {
+        leadershipInflight = false
+        try {
+          release()
+        } catch {
+          // ignore
+        }
+        return
+      }
+      leadershipInflight = false
+      if (leader) {
+        isLeaderTab = true
+        leadershipRelease = release
+        openSource()
+      } else {
+        isLeaderTab = false
+        fanoutUnsubscribe = subscribeFanout(onFanoutMessage)
+        // HOLD раунд 1 (Б-1): смерть лидера = браузер отдаёт лок следующему
+        // в очереди = onPromoted: follower открывает СВОЙ EventSource
+        // (ровно один новый; Last-Event-ID подхватит браузер сам) и
+        // объявляет себя лидером. Без этого остальные вкладки протухали молча.
+        onPromoted((realRelease) => {
+          // WO-UI-26 Н-3: повышение после disconnect — игнор (поколение ушло).
+          if (myGeneration !== connectGeneration) return
+          if (fanoutUnsubscribe) {
+            fanoutUnsubscribe()
+            fanoutUnsubscribe = null
+          }
+          isLeaderTab = true
+          // Повышенный лидер держит НАСТОЯЩИЙ холд (аргумент), а не no-op
+          // из follower-резолва — иначе disconnect не отпустит лок и цепочка
+          // переизбраний встанет (self-review раунда 2).
+          leadershipRelease = realRelease
+          openSource()
+        })
+      }
+    })
   }
 
   function disconnect() {
+    // WO-UI-26 Н-3: инвалидируем висящий запрос лидерства и протухшие
+    // onPromoted — их исход после этого игнорируется (лок отпускается).
+    connectGeneration++
+    leadershipInflight = false
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
+    }
+    if (firstByteTimer) {
+      clearTimeout(firstByteTimer)
+      firstByteTimer = null
     }
     reconnectAttempts = 0
     lastRefreshOk = null
@@ -306,6 +662,20 @@ export function useRealtimeEvents() {
       eventSource.close()
       eventSource = null
     }
+    // WO-UI-26 Доп.5: снять лидерство/подписку вкладки.
+    if (leadershipRelease) {
+      try {
+        leadershipRelease()
+      } catch {
+        // ignore
+      }
+      leadershipRelease = null
+    }
+    if (fanoutUnsubscribe) {
+      fanoutUnsubscribe()
+      fanoutUnsubscribe = null
+    }
+    isLeaderTab = false
     isConnected.value = false
   }
 
@@ -313,5 +683,21 @@ export function useRealtimeEvents() {
     disconnect()
   })
 
-  return { isConnected, lastEventId, error, sessionExpired, realtimeDown, connect, disconnect, retryConnection }
+  return {
+    isConnected,
+    lastEventId,
+    error,
+    sessionExpired,
+    realtimeDown,
+    connect,
+    disconnect,
+    retryConnection,
+    /** WO-UI-26 Доп.5: эта вкладка — лидер SSE (держит EventSource). */
+    isLeaderTab: () => isLeaderTab,
+    /** WO-UI-26 Доп.6 п.2: диагноз канала для панели по клику. */
+    diagnostics,
+    /** Только для тестов: форсировать диагноз (RED-контроль панели). */
+    setChannelErrorForTest: (kind: ChannelErrorKind, httpStatus: number | null = null) =>
+      noteError(kind, httpStatus),
+  }
 }

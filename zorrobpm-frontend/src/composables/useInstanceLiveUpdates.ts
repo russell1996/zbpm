@@ -12,14 +12,14 @@ import { sharedRealtimeHealth } from './useRealtimeEvents'
  *   один refresh — шторма запросов нет (критерий 4), состояние UI (скролл,
  *   активная вкладка, раскрытые блоки, выбранный элемент) не трогаем вообще:
  *   обновляются только данные сторов, ремаунта нет.
- * - Фолбэк-опрос (по умолчанию 4 с) — пока канал не отдаёт данные
- *   (reconnecting после обрыва или realtimeDown/sessionExpired): refresh идёт
+ * - Фолбэк-опрос (база 4 с, backoff до 15 с — WO-UI-26 К14) — пока канал не
+ *   отдают данные (reconnecting после обрыва или realtimeDown/sessionExpired): refresh идёт
  *   по таймеру; восстановление канала опрос выключает (критерий 5).
  * - Фоновая вкладка: live-refresh на паузе (очередь — один отложенный
  *   refresh при возврате), опрос тоже не гоняем зря.
  * - Отписка при unmount — утечек подписок/таймеров нет (критерий 5).
  */
-export type InstanceLiveState = 'live' | 'reconnecting' | 'polling'
+export type InstanceLiveState = 'live' | 'reconnecting' | 'polling' | 'finished'
 
 export interface InstanceLiveHealth {
   isConnected: Ref<boolean>
@@ -35,20 +35,48 @@ export function useInstanceLiveUpdates(options: {
   pollIntervalMs?: number
   /** По умолчанию — общее здоровье канала; в тестах — управляемые ref. */
   health?: InstanceLiveHealth
+  /**
+   * WO-UI-26 Доп.3: терминальное состояние инстанса. `true` — инстанс завершён/
+   * отменён: живые механизмы ВЫКЛЮЧЕНЫ (нет опроса, нет подписки на события
+   * инстанса, индикатор «завершён», а не «live»); при переходе running→
+   * completed — ОДИН финальный refresh, затем тишина. Функция (а не bool),
+   * потому что терминальность может наступить ПОСЛЕ монтирования.
+   */
+  isTerminal?: () => boolean
+  /**
+   * WO-UI-26 Б-1: точечный обработчик события страницы инстанса.
+   * Вызывается ДО планировщика на каждое событие этого инстанса.
+   * Возврат `true` — событие обработано точечно (локальный патч или
+   * по-сущностный тихий refresh уже запланирован), общий refresh НЕ нужен.
+   * Возврат `false`/отсутствие — событие идёт общим путём (debounce refresh).
+   * Исключение — как `false` (не роняем шину).
+   */
+  onEvent?: (envelope: import('@/types/api').EventEnvelope) => boolean
 }) {
   const debounceMs = options.debounceMs ?? 250
-  const pollIntervalMs = options.pollIntervalMs ?? 4000
+  const pollBaseMs = options.pollIntervalMs ?? 4000
+  /** WO-UI-26 К14: потолок backoff фолбэк-опроса. */
+  const POLL_MAX_MS = 15000
+  let pollDelayMs = pollBaseMs
   const health = options.health ?? sharedRealtimeHealth
 
   const liveState = ref<InstanceLiveState>('live')
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
-  let pollTimer: ReturnType<typeof setInterval> | null = null
+  let pollTimer: ReturnType<typeof setTimeout> | null = null
   let pendingWhileHidden = false
   let disposed = false
 
   function isHidden(): boolean {
     return typeof document !== 'undefined' && document.visibilityState === 'hidden'
+  }
+
+  function isTerminal(): boolean {
+    try {
+      return options.isTerminal?.() ?? false
+    } catch {
+      return false
+    }
   }
 
   function doRefresh(): void {
@@ -63,8 +91,10 @@ export function useInstanceLiveUpdates(options: {
   }
 
   function scheduleRefresh(): void {
-    if (disposed || isHidden()) {
-      pendingWhileHidden = true
+    if (disposed || isHidden() || isTerminal()) {
+      // WO-UI-26 Доп.3: терминальный инстанс не планирует refresh —
+      // кроме финального (см. ниже, идёт напрямую через doRefresh).
+      if (isHidden() && !isTerminal()) pendingWhileHidden = true
       return
     }
     // Уже запланирован — всплеск схлопывается, лишний таймер не ставим.
@@ -93,20 +123,43 @@ export function useInstanceLiveUpdates(options: {
 
   function startPoll(): void {
     if (pollTimer) return
-    pollTimer = setInterval(() => {
-      if (!disposed && !isHidden()) doRefresh()
-    }, pollIntervalMs)
+    // WO-UI-26 Доп.2/К14: щадящий опрос при недоступном SSE — backoff
+    // base→2×base→…→cap 15 с (вместо фиксированных 4 с: 15 запросов/мин при
+    // мёртвом канале). Сброс до base — при старте и при возврате канала.
+    pollDelayMs = pollBaseMs
+    armPoll()
+  }
+
+  function armPoll(): void {
+    if (pollTimer || disposed) return
+    pollTimer = setTimeout(() => {
+      pollTimer = null
+      if (disposed || isHidden() || isTerminal()) {
+        if (!disposed && !isTerminal()) armPoll()
+        return
+      }
+      doRefresh()
+      pollDelayMs = Math.min(pollDelayMs * 2, POLL_MAX_MS)
+      armPoll()
+    }, pollDelayMs)
   }
 
   function stopPoll(): void {
     if (pollTimer) {
-      clearInterval(pollTimer)
+      clearTimeout(pollTimer)
       pollTimer = null
     }
+    pollDelayMs = pollBaseMs
   }
 
   function recompute(): void {
     if (disposed) return
+    // WO-UI-26 Доп.3: терминальный инстанс — «завершён», живых механизмов нет.
+    if (isTerminal()) {
+      liveState.value = 'finished'
+      stopPoll()
+      return
+    }
     const dead = health.realtimeDown.value || health.sessionExpired.value
     if (dead) {
       liveState.value = 'polling'
@@ -130,15 +183,47 @@ export function useInstanceLiveUpdates(options: {
   }
 
   function onVisibility(): void {
-    if (!isHidden() && pendingWhileHidden) {
+    if (!isHidden() && pendingWhileHidden && !isTerminal()) {
       pendingWhileHidden = false
       scheduleRefresh()
     }
   }
 
+  /**
+   * WO-UI-26 Доп.3: переход running→completed в открытой странице — ОДИН
+   * финальный refresh (итог: последние activities/переменные), затем тишина.
+   * Вызывает страница, увидевшая терминальность (событие completed/cancelled
+   * или опрос с completedAt). Идемпотентен: повторные вызовы — no-op.
+   */
+  let finalRefreshDone = false
+  function finalRefresh(): void {
+    if (finalRefreshDone || disposed) return
+    finalRefreshDone = true
+    stopPoll()
+    if (debounceTimer) {
+      clearTimeout(debounceTimer)
+      debounceTimer = null
+    }
+    pendingWhileHidden = false
+    liveState.value = 'finished'
+    doRefresh()
+  }
+
   const unsubscribe = subscribeRealtimeEvents((envelope) => {
     const id = options.getInstanceId()
     if (!id || envelope.processInstanceId !== id) return
+    // WO-UI-26 Доп.3: терминальный инстанс событий не ждёт — кроме самого
+    // перехода (его обрабатывает страница через finalRefresh, не планировщик).
+    if (isTerminal()) return
+    // WO-UI-26 Б-1: точечный путь первым — обработанное событие общий
+    // refresh не планирует (иначе каждое событие = 7 fetch).
+    if (options.onEvent) {
+      try {
+        if (options.onEvent(envelope)) return
+      } catch (e) {
+        console.error('[InstanceLive] onEvent failed:', e)
+      }
+    }
     scheduleRefresh()
   })
 
@@ -168,5 +253,5 @@ export function useInstanceLiveUpdates(options: {
     }
   })
 
-  return { liveState, refreshNow }
+  return { liveState, refreshNow, finalRefresh, pollDelayForTest: () => pollDelayMs }
 }

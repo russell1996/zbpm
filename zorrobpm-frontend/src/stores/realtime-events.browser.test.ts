@@ -50,9 +50,10 @@ vi.mock('@/composables/useDateFormat', () => ({
 vi.mock('@/shared/lib/export', () => ({ exportToCsv: vi.fn() }))
 
 const mockGetUserTasks = vi.hoisted(() => vi.fn())
+const mockGetUserTaskOne = vi.hoisted(() => vi.fn())
 vi.mock('@/services/taskService', () => ({
   getUserTasks: mockGetUserTasks,
-  getUserTask: vi.fn().mockResolvedValue(null),
+  getUserTask: mockGetUserTaskOne,
   completeUserTask: vi.fn().mockResolvedValue(undefined),
   getServiceTasks: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
   getServiceTask: vi.fn().mockResolvedValue(null),
@@ -160,6 +161,12 @@ beforeEach(() => {
   vi.clearAllMocks()
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
+  // WO-UI-26 Доп.5: лидерство детерминировано — сразу лидер (иначе connect
+  // висит на Web-Locks таймауте как follower и EventSource не открывается).
+  Object.defineProperty(navigator, 'locks', {
+    value: { request: (_n: string, _o: unknown, cb: () => Promise<void>) => cb() },
+    configurable: true,
+  })
   mockGetPaged.mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 })
 })
 
@@ -196,18 +203,21 @@ describe('WO-UI-18 realtime in a real browser', () => {
     await until(() => taskRowsText(wrapper).some((t) => t.includes('Task t1')))
     expect(FakeEventSource.instances).toHaveLength(1)
 
-    // Сервер публикует user-task.created; стор сам перезапрашивает список —
-    // пользователь ничего не нажимал.
-    mockGetUserTasks.mockResolvedValue({
-      data: [taskRow('t1'), taskRow('t2')], totalElements: 2, pageIndex: 0, pageSize: 10,
-    })
+    // Сервер публикует user-task.created; стор патчит ОДНУ строку адресным
+    // GET (WO-UI-26 Доп.4: вместо полного refetch списка): getUserTask с
+    // activityId из события, список — нет. Пользователь ничего не нажимал.
+    mockGetUserTasks.mockClear()
+    mockGetUserTaskOne.mockResolvedValue(taskRow('t2'))
     FakeEventSource.instances[0].emit(
       'user-task.created',
-      { sequence: 77, id: 'e-77', type: 'user-task.created', version: 1, occurredAt: '2026-09-24T00:00:00Z', data: {} },
+      { sequence: 77, id: 'e-77', type: 'user-task.created', version: 1, occurredAt: '2026-09-24T00:00:00Z', data: { activityId: 't2' } },
       '77',
     )
     await flushPromises()
     await until(() => taskRowsText(wrapper).some((t) => t.includes('Task t2')))
+    // Адресный патч: один GET сущности, ноль запросов списка.
+    expect(mockGetUserTaskOne).toHaveBeenCalledWith('t2')
+    expect(mockGetUserTasks).not.toHaveBeenCalled()
 
     // Реальная геометрия: новая строка действительно отрисована (в jsdom высота 0 всегда).
     const rows = wrapper.findAll('tbody tr')

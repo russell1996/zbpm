@@ -15,6 +15,8 @@ import type {
 import * as processService from '@/services/processService'
 import * as instanceService from '@/services/instanceService'
 import * as variableService from '@/services/variableService'
+import { createPatchTracker } from '@/services/realtimePatch'
+import { scheduleListRefresh } from '@/services/realtimeScheduler'
 
 export const useProcessStore = defineStore('process', () => {
   const definitions = ref<PagedData<ProcessDefinition> | null>(null)
@@ -96,6 +98,62 @@ export const useProcessStore = defineStore('process', () => {
   // событие сбрасывает выбранный фильтр ключом.
   let lastInstancesQuery: ProcessInstanceQuery = {}
 
+  // WO-UI-26 Доп.4: трекер порядка/дедупа событий.
+  const patchTracker = createPatchTracker()
+
+  /**
+   * WO-UI-26 Доп.2: тихий фоновый refresh (stale-while-revalidate) — НЕ ставит
+   * `loading`, merge по ключу (неизменённые строки — те же объекты).
+   */
+  function mergeInstances(patch: PagedData<ProcessInstance>): void {
+    const cur = instances.value
+    if (!cur) {
+      instances.value = patch
+      return
+    }
+    const byId = new Map(cur.data.map((p) => [p.id, p]))
+    let changed = false
+    for (const row of patch.data) {
+      if (byId.get(row.id) !== row) {
+        byId.set(row.id, row)
+        changed = true
+      }
+    }
+    if (changed || cur.totalElements !== patch.totalElements) {
+      instances.value = { ...patch, data: [...byId.values()] }
+    }
+  }
+
+  /** WO-UI-26 Доп.2/Доп.4: тихий запасной refetch (без loading, merge по ключу). */
+  async function refreshInstancesQuiet(): Promise<void> {
+    const myRequest = ++instancesRequest
+    try {
+      const result = await instanceService.getProcessInstances(lastInstancesQuery)
+      if (myRequest !== instancesRequest) return
+      mergeInstances(result)
+    } catch (e) {
+      if (myRequest !== instancesRequest) return
+      error.value = e instanceof Error ? e.message : 'Failed to load instances'
+    }
+  }
+
+  /**
+   * WO-UI-26 Доп.4: адресный патч одной строки инстанса (статус/completedAt),
+   * 0 запросов списка. False — патч невозможен (нет строки / чужой фильтр).
+   */
+  function patchInstanceRow(patch: Partial<ProcessInstance> & { id: string }): boolean {
+    const cur = instances.value
+    if (!cur) return false
+    const idx = cur.data.findIndex((p) => p.id === patch.id)
+    if (idx === -1) return false
+    const next = { ...cur.data[idx], ...patch }
+    if (JSON.stringify(next) === JSON.stringify(cur.data[idx])) return true
+    const data = [...cur.data]
+    data[idx] = next
+    instances.value = { ...cur, data }
+    return true
+  }
+
   async function fetchInstances(query: ProcessInstanceQuery = {}) {
     lastInstancesQuery = query
     const myRequest = ++instancesRequest
@@ -122,6 +180,75 @@ export const useProcessStore = defineStore('process', () => {
       error.value = e instanceof Error ? e.message : 'Failed to load instance'
     } finally {
       loading.value = false
+    }
+  }
+
+  /**
+   * WO-UI-26 Б-1: тихий перечит инстанса для живой страницы (stale-while-
+   * revalidate) — НЕ ставит `loading` (мерцание), только `refreshing`-семантика
+   * вызывающей страницы. Ошибка — в error, без спиннера.
+   */
+  async function fetchInstanceQuiet(id: string): Promise<void> {
+    try {
+      currentInstance.value = await instanceService.getProcessInstance(id)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load instance'
+    }
+  }
+
+  /**
+   * WO-UI-26 Б-1: локальный патч текущего инстанса (0 запросов) — статус/
+   * completedAt из envelope. True — применён.
+   */
+  function patchCurrentInstanceLocal(patch: Partial<ProcessInstance>): boolean {
+    const cur = currentInstance.value
+    if (!cur) return false
+    const next = { ...cur, ...patch }
+    if (JSON.stringify(next) === JSON.stringify(cur)) return true
+    currentInstance.value = next
+    return true
+  }
+
+  /**
+   * WO-UI-26 Б-1: локальный патч activity по elementId (0 запросов) —
+   * найденную CREATED/IN_PROGRESS запись переводим в COMPLETED. True —
+   * применён (BPMN-маркеры обновятся реактивно без fetch).
+   */
+  function patchActivityCompletedLocal(elementId: string): boolean {
+    if (!elementId) return false
+    const cur = currentActivities.value
+    const idx = cur.findIndex(
+      (a) => a.bpmnElementId === elementId && (a.status === 'CREATED' || a.status === 'IN_PROGRESS'),
+    )
+    if (idx === -1) return false
+    const next = [...cur]
+    next[idx] = { ...next[idx], status: 'COMPLETED' as const }
+    currentActivities.value = next
+    return true
+  }
+
+  /**
+   * WO-UI-26 Б-1: тихий перечит переменных инстанса (уже был тихим — явный
+   * алиас для живой страницы, чтобы refreshLiveQuiet не звал громкие пути).
+   */
+  async function refreshVariablesQuiet(query: VariableQuery): Promise<void> {
+    try {
+      const result = await variableService.getVariables(query)
+      currentVariables.value = result.data
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load variables'
+    }
+  }
+
+  /**
+   * WO-UI-26 Б-1: тихий перечит подпроцессов (уже был тихим — явный алиас).
+   */
+  async function refreshSubprocessesQuiet(id: string): Promise<void> {
+    try {
+      const result = await instanceService.getProcessInstances({ parentProcessInstanceId: id, pageIndex: 0, pageSize: 100 })
+      currentSubprocesses.value = result.data
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load subprocesses'
     }
   }
 
@@ -249,12 +376,82 @@ export const useProcessStore = defineStore('process', () => {
   }
 
   function handleEvent(envelope: EventEnvelope) {
+    // WO-UI-26 Доп.4: событие → адресный патч; полный refetch — только запасной.
+    const patchable =
+      envelope.type === 'process-instance.started' ||
+      envelope.type === 'process-instance.completed' ||
+      envelope.type === 'process-instance.cancelled'
+    if (patchable && !patchTracker.shouldPatch(envelope)) {
+      const seq = typeof envelope.sequence === 'number' ? envelope.sequence : 0
+      if (seq > 0 && seq > patchTracker.lastSequence() + 1 && patchTracker.lastSequence() > 0) {
+        scheduleListRefresh('instances', () => refreshInstancesQuiet())
+      }
+      return
+    }
     switch (envelope.type) {
-      case 'process-instance.started':
-      case 'process-instance.completed':
-      case 'process-instance.cancelled':
-        fetchInstances(lastInstancesQuery)
+      case 'process-instance.started': {
+        // Новой строки целиком в событии нет — один GET сущности.
+        const piId = envelope.processInstanceId
+        if (piId) {
+          void instanceService
+            .getProcessInstance(piId)
+            .then((pi) => {
+              patchTracker.markApplied(envelope)
+              const cur = instances.value
+              if (!cur) {
+                scheduleListRefresh('instances', () => refreshInstancesQuiet())
+                return
+              }
+              // Чужой фильтр/страница: только счётчик (Доп.4 п.1).
+              const q = lastInstancesQuery
+              const fitsKey =
+                (!q.processDefinitionKey || pi.processKey === q.processDefinitionKey) &&
+                (!q.processDefinitionId || pi.processDefinitionId === q.processDefinitionId)
+              if (!fitsKey) return
+              if (cur.data.some((p) => p.id === pi.id)) {
+                patchInstanceRow(pi)
+                return
+              }
+              if ((q.pageIndex ?? 0) !== 0) {
+                instances.value = { ...cur, totalElements: cur.totalElements + 1 }
+                return
+              }
+              instances.value = { ...cur, data: [pi, ...cur.data], totalElements: cur.totalElements + 1 }
+            })
+            .catch(() => {
+              scheduleListRefresh('instances', () => refreshInstancesQuiet())
+            })
+        } else {
+          patchTracker.markApplied(envelope)
+          scheduleListRefresh('instances', () => refreshInstancesQuiet())
+        }
         break
+      }
+      case 'process-instance.completed':
+      case 'process-instance.cancelled': {
+        // Статус одной строки — без запросов (completedAt ставит сервер;
+        // точное время подтянет запасной путь/следующий патч, статус — сразу).
+        const piId = envelope.processInstanceId
+        patchTracker.markApplied(envelope)
+        if (piId) {
+          const done = envelope.type === 'process-instance.completed'
+          if (!patchInstanceRow(done ? { id: piId, completedAt: envelope.occurredAt ?? new Date().toISOString() } : { id: piId })) {
+            scheduleListRefresh('instances', () => refreshInstancesQuiet())
+          }
+          if (!done) {
+            // cancelled-флаг — одним GET (в событии его нет).
+            void instanceService
+              .getProcessInstance(piId)
+              .then((pi) => {
+                patchInstanceRow(pi)
+              })
+              .catch(() => {})
+          }
+        } else {
+          scheduleListRefresh('instances', () => refreshInstancesQuiet())
+        }
+        break
+      }
     }
   }
 
@@ -278,6 +475,11 @@ export const useProcessStore = defineStore('process', () => {
     fetchVersions,
     fetchInstances,
     fetchInstance,
+    fetchInstanceQuiet,
+    patchCurrentInstanceLocal,
+    patchActivityCompletedLocal,
+    refreshVariablesQuiet,
+    refreshSubprocessesQuiet,
     fetchActivities,
     fetchMoreActivities,
     refreshActivities,
@@ -286,5 +488,9 @@ export const useProcessStore = defineStore('process', () => {
     startInstance,
     clearCurrent,
     handleEvent,
+    // WO-UI-26 Доп.2/Доп.4: тихие точечные обновления (тесты + планировщик).
+    refreshInstancesQuiet,
+    patchInstanceRow,
+    lastSequenceForTest: () => patchTracker.lastSequence(),
   }
 })
