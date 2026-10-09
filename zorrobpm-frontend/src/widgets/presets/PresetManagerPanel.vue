@@ -3,7 +3,7 @@ import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PresetEditorDialog from './PresetEditorDialog.vue'
 import type { VariablePreset } from '@/types/presets'
-import { listPresets, deletePreset, isPresetsDisabled } from '@/services/presetService'
+import { listPresets, createPreset, deletePreset, isPresetsDisabled } from '@/services/presetService'
 import { errorMessage } from '@/shared/lib/utils'
 import { useToast } from '@/composables/useToast'
 
@@ -14,6 +14,11 @@ import { useToast } from '@/composables/useToast'
  */
 const props = defineProps<{
   processKey: string
+  /**
+   * WO-VT-3 раунд 2 (решение CTO п.4): id элемента → имя из схемы.
+   * Неизвестный ref — id как fallback (см. refLabel).
+   */
+  elementNames?: Record<string, string>
 }>()
 
 const { t } = useI18n()
@@ -34,6 +39,19 @@ const KINDS = ['START', 'USER_TASK', 'SERVICE_TASK', 'MESSAGE', 'INCIDENT', 'DMN
 
 function kindLabel(kind: string): string {
   return t(`presetKind_${kind}`)
+}
+
+function visibilityLabel(visibility: string): string {
+  return visibility === 'PROCESS' ? t('presetVisibilityProcess') : t('presetVisibilityPrivate')
+}
+
+// WO-VT-3 Дополнение №2 п.2 + решение CTO п.4 (раунд 2): «Привязка» →
+// «Элемент»: имя элемента из схемы, неизвестный ref — id как fallback,
+// для START — «Запуск процесса» вместо «—».
+function refLabel(p: VariablePreset): string {
+  if (p.targetKind === 'START') return t('presetStartTargetRef')
+  if (!p.targetRef) return '—'
+  return props.elementNames?.[p.targetRef] || p.targetRef
 }
 
 async function load() {
@@ -68,10 +86,28 @@ async function remove(p: VariablePreset) {
     confirmDeleteId.value = p.id
     return
   }
+  confirmDeleteId.value = null
+  // WO-VT-3 Дополнение №2 п.4: «Отменить» в тосте — пересоздаём удалённый
+  // шаблон теми же данными (имя свободно — старый удалён).
+  const backup = {
+    processDefinitionKey: p.processDefinitionKey,
+    targetKind: p.targetKind,
+    targetRef: p.targetRef,
+    name: p.name,
+    description: p.description,
+    visibility: p.visibility,
+    variables: (p.variables ?? []).map((v) => ({ ...v })),
+  }
   try {
     await deletePreset(p.id)
-    confirmDeleteId.value = null
-    toast.success(t('presetDeleted'))
+    toast.success(t('presetDeleted'), {
+      action: {
+        label: t('presetUndo'),
+        onClick: () => {
+          void createPreset(backup).then(() => load())
+        },
+      },
+    })
     await load()
   } catch (e) {
     toast.error(errorMessage(e, t('presetDeleteFailed')))
@@ -84,48 +120,52 @@ defineExpose({ reload: load, available })
 
 <template>
   <div v-if="available" class="border border-border rounded-lg overflow-hidden bg-card">
-    <div class="px-4 py-3 border-b border-border flex items-center gap-3">
+    <div class="px-4 py-3 border-b border-border flex items-center gap-3 flex-wrap">
       <h3 class="text-sm font-bold">{{ t('presetManagerTitle') }}</h3>
       <span class="flex-1" />
-      <label for="preset-kind-filter" class="sr-only">{{ t('presetTargetKind') }}</label>
-      <select id="preset-kind-filter" v-model="kindFilter" class="px-2 py-1 border border-input rounded text-xs font-mono">
+      <label for="preset-kind-filter" class="sr-only">{{ t('presetWhereUsed') }}</label>
+      <select id="preset-kind-filter" v-model="kindFilter" class="px-2 py-1 border border-input rounded text-xs font-mono h-8">
         <option value="">{{ t('presetAllKinds') }}</option>
         <option v-for="k in KINDS" :key="k" :value="k">{{ kindLabel(k) }}</option>
       </select>
     </div>
+    <!-- WO-VT-3 Дополнение №2 п.2: строка «зачем это». -->
+    <p class="px-4 pt-2 text-xs text-muted-foreground">{{ t('presetWhyManager') }}</p>
     <div v-if="loading" class="px-4 py-3 text-sm text-muted-foreground">{{ t('loading') }}</div>
     <p v-else-if="loadError" class="px-4 py-3 text-sm text-red-500">{{ loadError }}</p>
-    <table v-else-if="filtered().length" class="w-full text-sm">
+    <div v-else-if="filtered().length" class="overflow-x-auto">
+    <table class="w-full text-sm min-w-[560px]">
       <thead class="bg-muted">
         <tr>
           <th class="px-4 py-2 text-left font-medium">{{ t('presetName') }}</th>
-          <th class="px-4 py-2 text-left font-medium">{{ t('presetTargetKind') }}</th>
-          <th class="px-4 py-2 text-left font-medium">{{ t('presetTargetRef') }}</th>
+          <th class="px-4 py-2 text-left font-medium">{{ t('presetWhereUsed') }}</th>
+          <th class="px-4 py-2 text-left font-medium">{{ t('presetElementName') }}</th>
           <th class="px-4 py-2 text-left font-medium">{{ t('presetVisibility') }}</th>
           <th class="px-4 py-2 text-left font-medium"></th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="p in filtered()" :key="p.id" class="border-t border-border">
-          <td class="px-4 py-2">
-            {{ p.name }}
+          <td class="px-4 py-2 max-w-48">
+            <span class="block truncate" :title="p.name">{{ p.name }}</span>
             <span v-if="p.favorite" aria-hidden="true"> ★</span>
           </td>
-          <td class="px-4 py-2 font-mono text-xs">{{ kindLabel(p.targetKind) }}</td>
-          <td class="px-4 py-2 font-mono text-xs">{{ p.targetRef || '—' }}</td>
-          <td class="px-4 py-2 text-xs">{{ p.visibility }}</td>
+          <td class="px-4 py-2 text-xs">{{ kindLabel(p.targetKind) }}</td>
+          <td class="px-4 py-2 font-mono text-xs max-w-40 truncate" :title="refLabel(p)">{{ refLabel(p) }}</td>
+          <td class="px-4 py-2 text-xs">{{ visibilityLabel(p.visibility) }}</td>
           <td class="px-4 py-2 text-right text-xs whitespace-nowrap">
-            <button type="button" class="text-primary hover:underline mr-2" @click="openEdit(p)">
+            <button type="button" class="text-primary hover:underline mr-2 h-8 px-1" @click="openEdit(p)">
               {{ t('presetEdit') }}
             </button>
-            <button type="button" class="text-red-500 hover:underline" @click="remove(p)">
+            <button type="button" class="text-red-500 hover:underline h-8 px-1" @click="remove(p)">
               {{ confirmDeleteId === p.id ? t('presetConfirmDelete') : t('presetDelete') }}
             </button>
           </td>
         </tr>
       </tbody>
     </table>
-    <p v-else class="px-4 py-3 text-sm text-muted-foreground">{{ t('presetNoTemplates') }}</p>
+    </div>
+    <p v-else class="px-4 py-3 text-sm text-muted-foreground">{{ t('presetNoTemplatesHint') }}</p>
     <PresetEditorDialog
       :open="dialogOpen"
       :process-key="processKey"

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
- * WO-VT-1 (фронт): VariablesEditor — редактор по типам, «спросить при
- * запуске», таблица/сырой JSON, allowEmptyString только для STRING.
+ * WO-VT-3: VariablesEditor карточками — имя+тип+меню ⋯, значение на всю
+ * ширину по типу, поведение чипами, компакт/поиск, тулбар-табы справа.
  */
 import { describe, it, expect, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -12,9 +12,10 @@ vi.mock('vue-i18n', () => ({
 }))
 
 describe('VariablesEditor', () => {
-  it('renders one row per variable', () => {
+  it('renders one card per variable', () => {
     const w = mount(VariablesEditor, { props: { modelValue: [{ name: 'a', type: 'STRING', value: 'x' }] } })
     expect(w.findAll('input[id^="pv-name-"]')).toHaveLength(1)
+    expect(w.findAll('[data-testid="ve-card"]')).toHaveLength(1)
   })
 
   it('add button appends an empty STRING row', async () => {
@@ -36,48 +37,68 @@ describe('VariablesEditor', () => {
     expect(w.find('[role="alert"]').text()).toContain('not a LONG')
   })
 
-  it('empty LONG with a name is marked as ask-at-launch', () => {
+  it('empty LONG with a name shows the ask-at-launch chip', () => {
     const w = mount(VariablesEditor, {
       props: { modelValue: [{ name: 'n', type: 'LONG', value: '' }] },
     })
-    expect(w.text()).toContain('presetAskAtLaunch')
+    expect(w.text()).toContain('presetAskChip')
   })
 
-  it('allowEmptyString checkbox exists only for STRING and clears the ask marker', async () => {
+  it('empty-string chip exists only for STRING and toggles the flag', async () => {
     const wStr = mount(VariablesEditor, {
       props: { modelValue: [{ name: 's', type: 'STRING', value: '' }] },
     })
-    expect(wStr.find('input[id^="pv-empty-"]').exists()).toBe(true)
-    expect(wStr.text()).toContain('presetAskAtLaunch')
-    await wStr.find('input[id^="pv-empty-"]').setValue(true)
+    const chip = wStr.find('button[aria-pressed]')
+    expect(chip.exists()).toBe(true)
+    expect(wStr.text()).toContain('presetAskChip')
+    await chip.trigger('click')
     const emitted = wStr.emitted('update:modelValue')![0][0] as Array<{ allowEmptyString: boolean }>
     expect(emitted[0].allowEmptyString).toBe(true)
 
     const wLong = mount(VariablesEditor, {
       props: { modelValue: [{ name: 'n', type: 'LONG', value: '' }] },
     })
-    expect(wLong.find('input[id^="pv-empty-"]').exists()).toBe(false)
+    expect(wLong.find('button[aria-pressed]').exists()).toBe(false)
   })
 
-  it('BOOLEAN renders a checkbox bound to true/false', async () => {
+  it('BOOLEAN renders a switch bound to true/false', async () => {
     const w = mount(VariablesEditor, {
       props: { modelValue: [{ name: 'b', type: 'BOOLEAN', value: 'false' }] },
     })
-    const box = w.find('input[type="checkbox"]')
-    await box.setValue(true)
+    const sw = w.find('button[role="switch"]')
+    expect(sw.attributes('aria-checked')).toBe('false')
+    await sw.trigger('click')
     const emitted = w.emitted('update:modelValue')![0][0] as Array<{ value: string }>
     expect(emitted[0].value).toBe('true')
   })
 
-  it('UUID generate button fills a uuid-shaped value', async () => {
+  it('UUID generate icon-button inside the value field fills a uuid', async () => {
     const w = mount(VariablesEditor, {
       props: { modelValue: [{ name: 'u', type: 'UUID', value: '' }] },
     })
-    const btns = w.findAll('button')
-    const gen = btns.find((b) => b.text() === 'presetGenerateUuid')!
+    const gen = w.find('button[aria-label="presetGenerateUuid"]')
+    expect(gen.exists()).toBe(true)
     await gen.trigger('click')
     const emitted = w.emitted('update:modelValue')![0][0] as Array<{ value: string }>
     expect(emitted[0].value).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
+  it('LONG keeps placeholder text visible (no number-input sanitizing)', () => {
+    const w = mount(VariablesEditor, {
+      props: { modelValue: [{ name: 'n', type: 'LONG', value: '{{seq}}' }] },
+    })
+    const input = w.find('input[id^="pv-value-"]')
+    expect((input.element as HTMLInputElement).value).toBe('{{seq}}')
+  })
+
+  it('row menu duplicates and deletes with inline confirm', async () => {
+    const w = mount(VariablesEditor, {
+      props: { modelValue: [{ name: 'a', type: 'STRING', value: 'x' }] },
+    })
+    await w.find('[data-testid="ve-row-menu"]').trigger('click')
+    await w.find('[data-testid="ve-row-menu-duplicate"]').trigger('click')
+    const dup = w.emitted('update:modelValue')![0][0] as Array<{ name: string }>
+    expect(dup).toHaveLength(2)
   })
 
   it('raw mode: invalid JSON blocks apply, valid JSON replaces the table', async () => {

@@ -65,9 +65,10 @@ describe('PresetEditorDialog', () => {
     await w.find('#preset-name').setValue('case-a')
     const addBtn = w.findAll('button').find((b) => b.text().includes('presetAddVariable'))!
     await addBtn.trigger('click')
-    await w.find('input[id^="pv-name-"]').setValue('n')
-    await w.find('select[id^="pv-type-"]').setValue('LONG')
-    await w.find('input[id^="pv-value-"]').setValue('7')
+    // WO-VT-3: редактор в диалоге с id-префиксом pe- (без коллизий id).
+    await w.find('input[id^="pe-name-"]').setValue('n')
+    await w.find('select[id^="pe-type-"]').setValue('LONG')
+    await w.find('input[id^="pe-value-"]').setValue('7')
     const saveBtn = w.findAll('button').find((b) => b.text().trim() === 'save')!
     await saveBtn.trigger('click')
     await flushPromises()

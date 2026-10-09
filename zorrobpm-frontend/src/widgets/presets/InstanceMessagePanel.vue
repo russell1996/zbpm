@@ -7,13 +7,22 @@ import { errorMessage } from '@/shared/lib/utils'
 import { useToast } from '@/composables/useToast'
 
 /**
- * WO-VT-1 (фронт, VT-4): публикация сообщения из шаблона MESSAGE.
+ * WO-VT-3 (фронт, VT-4): публикация сообщения из шаблона MESSAGE.
  * Имя сообщения и correlationKey вводит пользователь (ref шаблона = имя
  * сообщения); переменные — PresetPicker (ручной ввод или шаблон).
+ *
+ * WO-VT-3 (A-NEW-2): пикер НЕ пересоздаётся при доборе имени — :key убран,
+ * targetRef обновляется живой пропсой; введённые переменные сохраняются
+ * внутри PresetPicker.manualVars/templateVars и выживают при смене имени.
  */
 const props = defineProps<{
   processKey: string
   processInstanceId?: string | null
+  /**
+   * WO-VT-3 раунд 2 (E-VT3-1, мокап А): голый режим для модалки «Отправить
+   * сообщение» — без карточки и заголовка (их даёт диалог), только форма.
+   */
+  bare?: boolean
 }>()
 
 const { t } = useI18n()
@@ -61,9 +70,11 @@ async function publish() {
 </script>
 
 <template>
-  <div class="border border-border rounded-lg p-4 bg-card space-y-3">
-    <h3 class="text-sm font-bold">{{ t('presetPublishMessage') }}</h3>
-    <div class="grid grid-cols-2 gap-3">
+  <div :class="bare ? 'space-y-3' : 'border border-border rounded-lg p-4 bg-card space-y-3'" :data-testid="bare ? 'message-panel-bare' : 'message-panel-card'">
+    <h3 v-if="!bare" class="text-sm font-bold">{{ t('presetPublishMessage') }}</h3>
+    <!-- WO-VT-3 Дополнение №2 п.2: строка «зачем это» (до решения по IA). -->
+    <p class="text-xs text-muted-foreground">{{ t('presetWhyMessage') }}</p>
+    <div class="grid grid-cols-1 min-[560px]:grid-cols-2 gap-3">
       <div>
         <label for="msg-name" class="block text-xs font-medium mb-1">{{ t('presetMessageName') }}</label>
         <input
@@ -81,10 +92,13 @@ async function publish() {
         />
       </div>
     </div>
+    <!-- WO-VT-3 (A-NEW-2): без :key — key пересоздавал пикер при каждой
+         букве имени и сносил введённые переменные. targetRef вычисляется
+         один раз при появлении имени; смена имени потом пикер не трогает
+         (сообщение то же, меняется только текст). -->
     <PresetPicker
       v-if="messageName.trim()"
       ref="pickerRef"
-      :key="messageName.trim()"
       :process-key="processKey"
       target-kind="MESSAGE"
       :target-ref="messageName.trim()"
