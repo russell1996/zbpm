@@ -764,5 +764,6 @@
   "channelDiag429Hint": "Слишком много открытых потоков — закройте лишние вкладки.",
   "channelDiagFinished": "Завершён",
   "uiErrorTitle": "Что-то пошло не так",
-  "uiErrorReload": "Перезагрузить"
+  "uiErrorReload": "Перезагрузить",
+  "dialogClose": "Закрыть"
 }

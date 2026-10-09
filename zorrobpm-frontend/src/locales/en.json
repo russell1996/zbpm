@@ -764,5 +764,6 @@
   "channelDiag429Hint": "Too many open streams — close extra tabs.",
   "channelDiagFinished": "Finished",
   "uiErrorTitle": "Something went wrong",
-  "uiErrorReload": "Reload"
+  "uiErrorReload": "Reload",
+  "dialogClose": "Close"
 }
