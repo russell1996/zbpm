@@ -615,6 +615,7 @@
   "presetCorrelationKey": "Ключ корреляции",
   "presetCreateNew": "Создать новый",
   "presetDelete": "Удалить",
+  "presetTemplateMenu": "Действия с шаблоном",
   "presetConfirmDelete": "Нажмите ещё раз для подтверждения удаления",
   "presetDeleteRowAria": "Удалить переменную {name}",
   "presetRowDeleted": "Удалено: {name}",

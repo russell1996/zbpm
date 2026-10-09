@@ -615,6 +615,7 @@
   "presetCorrelationKey": "Correlation key",
   "presetCreateNew": "Create new",
   "presetDelete": "Delete",
+  "presetTemplateMenu": "Template actions",
   "presetConfirmDelete": "Click again to confirm deletion",
   "presetDeleteRowAria": "Delete variable {name}",
   "presetRowDeleted": "Deleted {name}",

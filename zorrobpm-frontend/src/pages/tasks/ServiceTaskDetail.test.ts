@@ -1,4 +1,10 @@
 // @vitest-environment jsdom
+// jsdom lacks PointerEvent capture APIs that reka-ui's SelectTrigger calls on pointerdown.
+if (!HTMLElement.prototype.hasPointerCapture) {
+  HTMLElement.prototype.hasPointerCapture = () => false
+  HTMLElement.prototype.setPointerCapture = () => {}
+  HTMLElement.prototype.releasePointerCapture = () => {}
+}
 /**
  * WO-VT-1 раунд 2 (Б-1, Б-2): проводка пикер→сервис в ServiceTaskDetail.
  * - complete/fail/throw-error шлют переменные из пикера (с развёрнутыми
@@ -79,8 +85,12 @@ const SERVICE_TASK = {
 }
 
 function renderPage() {
+  // WO-UI-27: attachTo — порталы shadcn-Select/Dialog живут в document.
+  const host = document.createElement('div')
+  document.body.appendChild(host)
   return mount(ServiceTaskDetail, {
-    global: { stubs: { teleport: true }, plugins: [createPinia()] },
+    attachTo: host,
+    global: { plugins: [createPinia()] },
   })
 }
 
@@ -103,9 +113,13 @@ async function typeManualRow(
   await picker.findAll('button').find((b) => b.text().includes('presetAddVariable'))!.trigger('click')
   // Строки добавляются в конец — правим ПОСЛЕДНЮЮ (find вернул бы первую).
   const names = picker.findAll('input[id^="pv-name-"]')
-  const types = picker.findAll('select[id^="pv-type-"]')
   await names[names.length - 1].setValue(name)
-  await types[types.length - 1].setValue(type)
+  // WO-UI-27: тип — shadcn-Select; значение правим через emit редактора.
+  const editor = picker.findComponent({ name: 'VariablesEditor' })
+  const cur = (picker.vm as unknown as { manualVars?: Array<Record<string, unknown>> }).manualVars
+    ?? (editor.vm as unknown as { $props: { modelValue: Array<Record<string, unknown>> } }).$props.modelValue
+  const rows = cur.map((r, j) => (j === cur.length - 1 ? { ...r, type, allowEmptyString: null } : { ...r }))
+  editor.vm.$emit('update:modelValue', rows)
   await flushPromises()
   // Контрол значения последней строки (input или textarea для JSON).
   const values = picker.findAll('input[id^="pv-value-"], textarea[id^="pv-value-"]')
@@ -157,8 +171,13 @@ describe('ServiceTaskDetail — preset picker wiring (WO-VT-1 Б-2)', () => {
     const picker = w.findComponent(PresetPicker)
     await picker.findAll('[role="tab"]')[1].trigger('click')
     await flushPromises()
-    await picker.find('#preset-select').setValue('p1')
+    const trg = picker.find('[data-testid="preset-select"]')
+    trg.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
     await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
+    ;(document.querySelector('[role="option"]') as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
     await actionButton(w).trigger('click')
     await flushPromises()
     expect(mockComplete).toHaveBeenCalledTimes(1)
@@ -216,12 +235,11 @@ describe('ServiceTaskDetail — preset picker wiring (WO-VT-1 Б-2)', () => {
     const picker = w.findComponent(PresetPicker)
     await picker.findAll('button').find((b) => b.text().includes('presetAddVariable'))!.trigger('click')
     const names = picker.findAll('input[id^="pv-name-"]')
-    const types = picker.findAll('select[id^="pv-type-"]')
     await names[names.length - 1].setValue('cfg')
-    await types[types.length - 1].setValue('JSON')
     await flushPromises()
-    const areas = picker.findAll('textarea[id^="pv-value-"]')
-    await areas[areas.length - 1].setValue('{invalid}')
+    // WO-UI-27: тип — shadcn-Select; значение правим через emit редактора.
+    const editor = picker.findComponent({ name: 'VariablesEditor' })
+    editor.vm.$emit('update:modelValue', [{ name: 'cfg', type: 'JSON', value: '{invalid}', allowEmptyString: null }])
     await flushPromises()
     const pvm = picker.vm as unknown as { missingAsk: string[]; hasErrors: boolean }
     expect(pvm.missingAsk).toEqual([])
