@@ -47,11 +47,11 @@ public class UserTaskEntity {
      * {@code UserTaskDbOperationsImpl}, never through this association) used ONLY as an
      * {@code @EntityGraph} path on the paged {@code findAll} — the status then rides the
      * page query as a to-one JOIN (one statement, pagination-safe, unlike a collection
-     * fetch). LAZY, {@code optional = true} DESPITE the domain invariant (the activity
-     * always exists by construction): with {@code optional = false} Hibernate issues a
-     * strict existence check that fails on live rows for this shared-PK mapping
-     * (proven live: JpaObjectRetrievalFailure on existing activities, fixed by this
-     * flag alone). Non-graph readers (findById in DbOperations/TaskFormDataService/…)
+     * fetch). LAZY, {@code optional = true}: со строгим {@code optional = false}
+     * Hibernate бросал JpaObjectRetrievalFailure на живых строках этого shared-PK
+     * маппинга (RED живьём, снят сменой флага); инвариант «activity всегда есть»
+     * при этом держится прод-кодом (строка задачи создаётся из живой активности),
+     * а не JPA-валидацией. Non-graph readers (findById in DbOperations/TaskFormDataService/…)
      * get a proxy with ZERO extra queries until touched — and nothing touches it
      * outside the mapper.
      */
