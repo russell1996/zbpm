@@ -128,8 +128,14 @@ export function acquireSseLeadership(onRevoked: () => void): Promise<{
   leader: boolean
   held: () => void
   release: () => void
-  /** Ставится вызывающим: смерть лидера → follower становится лидером. */
-  onPromoted: (fn: () => void) => void
+  /**
+   * Ставится вызывающим: смерть лидера → follower становится лидером.
+   * Колбэк получает НАСТОЯЩИЙ release нового холда (а не no-op из
+   * follower-резолва): повышенный лидер обязан отпускать лок в disconnect,
+   * иначе цепочка переизбраний рвётся (лок висит за закрытым соединением,
+   * следующий кандидат ждёт вечно). Self-review раунда 2, тест ниже.
+   */
+  onPromoted: (fn: (release: () => void) => void) => void
 }> {
   ensureTabId()
   ensureChannel()
@@ -140,9 +146,10 @@ export function acquireSseLeadership(onRevoked: () => void): Promise<{
   }
   return new Promise((resolve) => {
     let settled = false
-    // Повышение follower после смерти лидера (ставит вызывающий).
-    let promoted: (() => void) | null = null
-    const onPromoted = (fn: () => void): void => {
+    // Повышение follower после смерти лидера (ставит вызывающий;
+    // получает настоящий release — см. тип выше).
+    let promoted: ((release: () => void) => void) | null = null
+    const onPromoted = (fn: (release: () => void) => void): void => {
       promoted = fn
     }
     const release = () => {
@@ -174,12 +181,14 @@ export function acquireSseLeadership(onRevoked: () => void): Promise<{
             resolve({ leader: true, held: () => {}, release, onPromoted })
           } else if (promoted) {
             // Лок дождался очереди ПОСЛЕ follower-таймаута: повышение.
+            // Передаём настоящий release этого холда (а не no-op резолва):
+            // иначе повышенный лидер не отпустит лок в disconnect.
             isLeader = true
             lockHeld = true
             publishFanout({ kind: 'leader', tabId: ensureTabId() })
             const p = promoted
             promoted = null
-            p()
+            p(release)
           }
         }),
     )
