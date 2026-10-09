@@ -152,3 +152,48 @@ describe('WO-UI-27 JSON line numbers (criterion 3b)', () => {
     expect(numbers[numbers.length - 1]).toBe(String(lines))
   })
 })
+
+/**
+ * WO-UI-27 раунд 2 (О-3): Tab в JSON-редакторе вставляет отступ, а не уводит
+ * фокус (VariablesEditor.vue:359-362). Красная команда r1 доказала живьём
+ * временным зондом (3/3 GREEN) — здесь постоянный тест по его образцу.
+ */
+describe('WO-UI-27 Tab indent in JSON row editor (criterion 4, O-3)', () => {
+  it('Tab inserts a two-space indent, focus stays in the editor', async () => {
+    // attachTo — иначе jsdom держит компонент в detached-div и focus() no-op.
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const w = mount(VariablesEditor, {
+      props: { modelValue: [{ name: 'j', type: 'JSON', value: '{"a":1}' }] },
+      attachTo: host,
+    })
+    await flushPromises()
+    const area = w.find('textarea[id^="pv-value-"]')
+    const el = area.element as HTMLTextAreaElement
+    el.focus()
+    // В поле — показанный (отформатированный) текст; Tab вставляет отступ
+    // в позицию курсора именно в нём.
+    const before = el.value
+    el.selectionStart = el.selectionEnd = 1
+    await area.trigger('keydown', { key: 'Tab' })
+    const emitted = w.emitted('update:modelValue')
+    expect(emitted).toBeTruthy()
+    const last = emitted![emitted!.length - 1][0] as PresetVariable[]
+    expect(last[0].value).toBe(before.slice(0, 1) + '  ' + before.slice(1))
+    // Фокус не ушёл из редактора (Tab не навёл порядок табуляции).
+    expect(document.activeElement).toBe(el)
+    w.unmount()
+    host.remove()
+  })
+
+  it('Shift+Tab is left alone (native focus exit)', async () => {
+    const w = mount(VariablesEditor, {
+      props: { modelValue: [{ name: 'j', type: 'JSON', value: '{"a":1}' }] },
+    })
+    await flushPromises()
+    const area = w.find('textarea[id^="pv-value-"]')
+    await area.trigger('keydown', { key: 'Tab', shiftKey: true })
+    // Никакого эмита: штатный выход из поля не тронут.
+    expect(w.emitted('update:modelValue')).toBeFalsy()
+  })
+})

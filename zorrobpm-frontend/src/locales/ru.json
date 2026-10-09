@@ -611,7 +611,6 @@
   "presetAskAtLaunch": "Пусто — спросить при запуске",
   "presetBackToEdit": "Назад к правке",
   "presetChooseTemplate": "Выберите шаблон…",
-  "presetCopySuffix": "Копия {name}",
   "presetCorrelationKey": "Ключ корреляции",
   "presetCreateNew": "Создать новый",
   "presetDelete": "Удалить",

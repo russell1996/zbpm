@@ -149,7 +149,7 @@ describe('WO-UI-27 browser: owner fixture formatted on show (criteria 1, 5)', ()
     const r = dlg.getBoundingClientRect()
     // Критерий 4: min(96vw,1600px) × 92vh.
     expect(r.width / 1280, 'fullscreen width ≥90%').toBeGreaterThan(0.9)
-    expect(r.height / 800, 'fullscreen height ≥85%').toBeGreaterThan(0.85)
+    expect(r.height / 800, 'fullscreen height ≥90%').toBeGreaterThan(0.9)
     const fs = document.querySelector('[id$="-jsonfs"]') as HTMLTextAreaElement
     expect(fs, 'fullscreen editor renders').not.toBeNull()
     expect(fs.value.split('\n').length, 'fullscreen shows formatted').toBeGreaterThan(20)
@@ -172,7 +172,7 @@ describe('WO-UI-27 browser: owner fixture formatted on show (criteria 1, 5)', ()
     const dlg = document.querySelector('[role="dialog"]') as HTMLElement
     const r = dlg.getBoundingClientRect()
     expect(r.width / 1920, 'width ≥75% (96vw cap at 1920)').toBeGreaterThan(0.75)
-    expect(r.height / 900, 'height ≥85%').toBeGreaterThan(0.85)
+    expect(r.height / 900, 'height ≥90%').toBeGreaterThan(0.9)
     const fs = document.querySelector('[id$="-jsonfs"]') as HTMLTextAreaElement
     expect(fs.value).toContain('Тыщенко')
     await page.screenshot({ path: SHOT('after-fullscreen-1920-dark') })
