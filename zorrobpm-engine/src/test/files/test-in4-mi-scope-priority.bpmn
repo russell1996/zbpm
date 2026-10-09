@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_in4_mi_scope_priority" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-in4-mi-scope-priority" name="IN-4 MI scope priority" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="startEvent" targetRef="workTask" />
+    <!-- WO-IN-4 раунд 2 (О-1, priority): priorityDefinition — выражение от
+         scope-переменной. До фикса резолвился root-контекстом и падал в
+         инцидент (EngineException: priority must be 0-100, resolved null).
+         employees несёт пары [id, priority]: assigneeEmployeeId — LONG-элемент,
+         prio пакуется вторым scope-bind через inputElement? Нет: inputElement
+         один, поэтому priority выражением от loopCounter: инстанс N получает
+         10*N (10 и 20). -->
+    <bpmn:userTask id="workTask" name="Work Task">
+      <bpmn:extensionElements>
+        <zeebe:assignmentDefinition assignee="=assigneeEmployeeId" candidateGroups="=candidateGroup" candidateUsers="reviewer" />
+        <zeebe:priorityDefinition priority="=loopCounter * 10" />
+      </bpmn:extensionElements>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=employees" inputElement="assigneeEmployeeId" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="workTask" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

@@ -77,7 +77,7 @@ class ScriptOverloadPassthroughTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void miPriority_overload_propagates_noIncident() {
         ElementSupport elementSupport = mock(ElementSupport.class);
-        when(elementSupport.resolveUserTaskPriorityOrThrow(any(), any())).thenThrow(OVERLOAD);
+        when(elementSupport.resolveUserTaskPriorityInScopeOrThrow(any(), any(), any())).thenThrow(OVERLOAD);
         DBService dbService = mock(DBService.class);
         MultiInstanceExecutor executor = new MultiInstanceExecutor(
             dbService, mock(ScriptService.class), mock(com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService.class),
