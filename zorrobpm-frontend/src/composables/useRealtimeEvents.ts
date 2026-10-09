@@ -6,6 +6,12 @@ import { useIncidentStore } from '@/stores/incident'
 import api from '@/services/api'
 import { sharedRefresh } from '@/services/refreshInterceptor'
 import { publishRealtimeEvent } from '@/services/realtimeBus'
+import {
+  acquireSseLeadership,
+  publishFanout,
+  subscribeFanout,
+  type SseFanoutMessage,
+} from '@/services/sseFanout'
 
 /**
  * WO-UI-18, часть A — живой realtime-канал для встроенного SPA.
@@ -147,6 +153,13 @@ export function useRealtimeEvents() {
   let eventSource: EventSource | null = null
   let reconnectAttempts = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  // WO-UI-26 Доп.5 (кр.21): роль вкладки. Лидер держит EventSource и
+  // ретранслирует события остальным через BroadcastChannel; follower только
+  // слушает ретрансляцию (своего EventSource не открывает — экономия слотов
+  // HTTP/1.1: 1 соединение на браузер, а не на вкладку).
+  let leadershipRelease: (() => void) | null = null
+  let fanoutUnsubscribe: (() => void) | null = null
+  let isLeaderTab = false
 
   function dispatch(envelope: EventEnvelope) {
     // Каждый стор сам фильтрует по типу в своём handleEvent — дублирования
@@ -159,6 +172,35 @@ export function useRealtimeEvents() {
     publishRealtimeEvent(envelope)
   }
 
+  /**
+   * WO-UI-26 Доп.5: входящее событие от ЛИДЕРА (ретрансляция) либо от
+   * собственного EventSource. Идемпотентность — по sequence на стороне
+   * сторов/шины (Доп.4): дубль (лидер применил у себя + follower получил то
+   * же) — no-op, порядок — по sequence.
+   */
+  function onFanoutMessage(msg: SseFanoutMessage) {
+    if (msg.kind === 'event') {
+      // Ретрансляция лидера: тот же dispatch, что у собственного EventSource.
+      // Идемпотентность — по sequence/id на стороне сторов/шины (Доп.4):
+      // лидер уже применил событие у себя, follower применяет у себя.
+      if (msg.envelope.sequence !== undefined) {
+        lastEventId.value = String(msg.envelope.sequence)
+      }
+      dispatch(msg.envelope)
+    } else if (msg.kind === 'health') {
+      if (msg.patch.isConnected !== undefined) isConnected.value = msg.patch.isConnected
+      if (msg.patch.realtimeDown !== undefined) realtimeDown.value = msg.patch.realtimeDown
+      if (msg.patch.sessionExpired !== undefined) sessionExpired.value = msg.patch.sessionExpired
+      if (msg.patch.lastEventId !== undefined) lastEventId.value = msg.patch.lastEventId
+      mirrorHealth({
+        isConnected: isConnected.value,
+        realtimeDown: realtimeDown.value,
+        sessionExpired: sessionExpired.value,
+      })
+    }
+    // 'leader' обрабатывается внутри sseFanout (переизбрание молча).
+  }
+
   function onNamedEvent(event: Event) {
     const msg = event as MessageEvent<string>
     // SSE id = серверный sequence-курсор (SseEventStreamService ставит
@@ -168,6 +210,11 @@ export function useRealtimeEvents() {
     }
     try {
       const envelope = JSON.parse(msg.data) as EventEnvelope
+      // WO-UI-26 Доп.5: лидер ретранслирует событие остальным вкладкам.
+      publishFanout({ kind: 'event', envelope })
+      if (lastEventId.value) {
+        publishFanout({ kind: 'health', patch: { lastEventId: lastEventId.value } })
+      }
       dispatch(envelope)
     } catch (e) {
       console.error('[RealtimeEvents] Failed to parse event data:', e)
@@ -187,6 +234,11 @@ export function useRealtimeEvents() {
       reconnectAttempts = 0
       // WO-UI-25: зеркало для подписчиков шины (индикатор + фолбэк-опрос).
       mirrorHealth({ isConnected: true, wasConnected: true, realtimeDown: false, sessionExpired: false })
+      // WO-UI-26 Доп.5: здоровье — остальным вкладкам.
+      publishFanout({
+        kind: 'health',
+        patch: { isConnected: true, wasConnected: true, realtimeDown: false, sessionExpired: false },
+      })
     }
     // WO-UI-18: намеренно НЕ закрываем source на transient-ошибке — нативный
     // SSE-автореконнект (reconnectTime(3000) от сервера) сам поднимет
@@ -197,6 +249,8 @@ export function useRealtimeEvents() {
     source.onerror = () => {
       isConnected.value = false
       mirrorHealth({ isConnected: false })
+      // WO-UI-26 Доп.5: обрыв видят и остальные вкладки.
+      publishFanout({ kind: 'health', patch: { isConnected: false } })
       if (isClosed(source)) {
         scheduleReconnect()
       } else {
@@ -283,13 +337,28 @@ export function useRealtimeEvents() {
   }
 
   function connect() {
-    if (eventSource) return
+    if (eventSource || leadershipRelease || fanoutUnsubscribe) return
     if (typeof EventSource === 'undefined') {
       // jsdom и подобные среды без SSE: сторам просто не прилетают
       // live-события, страница работает на явных fetch как раньше.
       return
     }
-    openSource()
+    // WO-UI-26 Доп.5 (кр.21): сначала роль. Лидер открывает EventSource,
+    // follower только подписывается на ретрансляцию (своего EventSource нет —
+    // экономия слотов HTTP/1.1). Без Web Locks — каждая вкладка сама, как раньше.
+    void acquireSseLeadership(() => {
+      // Лок отобран (вкладка закрывается / dispose): чистимся как follower.
+      isLeaderTab = false
+    }).then(({ leader, release }) => {
+      if (leader) {
+        isLeaderTab = true
+        leadershipRelease = release
+        openSource()
+      } else {
+        isLeaderTab = false
+        fanoutUnsubscribe = subscribeFanout(onFanoutMessage)
+      }
+    })
   }
 
   function disconnect() {
@@ -306,6 +375,20 @@ export function useRealtimeEvents() {
       eventSource.close()
       eventSource = null
     }
+    // WO-UI-26 Доп.5: снять лидерство/подписку вкладки.
+    if (leadershipRelease) {
+      try {
+        leadershipRelease()
+      } catch {
+        // ignore
+      }
+      leadershipRelease = null
+    }
+    if (fanoutUnsubscribe) {
+      fanoutUnsubscribe()
+      fanoutUnsubscribe = null
+    }
+    isLeaderTab = false
     isConnected.value = false
   }
 
@@ -313,5 +396,16 @@ export function useRealtimeEvents() {
     disconnect()
   })
 
-  return { isConnected, lastEventId, error, sessionExpired, realtimeDown, connect, disconnect, retryConnection }
+  return {
+    isConnected,
+    lastEventId,
+    error,
+    sessionExpired,
+    realtimeDown,
+    connect,
+    disconnect,
+    retryConnection,
+    /** WO-UI-26 Доп.5: эта вкладка — лидер SSE (держит EventSource). */
+    isLeaderTab: () => isLeaderTab,
+  }
 }
