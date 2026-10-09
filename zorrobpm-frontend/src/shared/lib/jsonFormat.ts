@@ -6,6 +6,15 @@
  * и `1e3`→`1000`. Здесь лексер идёт по ТЕКСТУ: строки/числа/литералы
  * копируются побайтово, меняются только пробелы вне строк. Поэтому
  * `minify(format(x)) === x` дословно для любого валидного входа.
+ *
+ * WO-UI-27 раунд 2 (Б-1): лексер резал атомы по классу символов
+ * (`[a-zA-Z0-9.+-eE]+`) и сборка принимала любой атом значением без проверки
+ * конца и единственности top-level — `tru`, `01`, `1.`, `-.5`, `0x10`, хвосты
+ * вида `{} {}` считались валидными. Здесь — строгая валидация по RFC 8259
+ * между лексером и сборкой: атомы только `true|false|null`, число по
+ * грамматике JSON, ровно ОДНО top-level значение без хвоста, строки без
+ * сырых управляющих символов и с корректными escape. Ошибка — с позицией
+ * строка:столбец. Числа/строки по-прежнему копируются побайтово.
  */
 
 export interface JsonFormatResult {
@@ -22,6 +31,9 @@ export interface JsonErrorPos {
 interface Token {
   kind: 'brace-open' | 'brace-close' | 'bracket-open' | 'bracket-close' | 'colon' | 'comma' | 'atom'
   text: string
+  /** Позиция начала токена (WO-UI-27 раунд 2: для ошибки строка:столбец). */
+  line: number
+  col: number
 }
 
 function isDigit(ch: string): boolean {
@@ -58,17 +70,17 @@ function lex(src: string): { tokens: Token[]; error: JsonErrorPos | null } {
       continue
     }
     if (ch === '{') {
-      tokens.push({ kind: 'brace-open', text: ch })
+      tokens.push({ kind: 'brace-open', text: ch, line, col })
     } else if (ch === '}') {
-      tokens.push({ kind: 'brace-close', text: ch })
+      tokens.push({ kind: 'brace-close', text: ch, line, col })
     } else if (ch === '[') {
-      tokens.push({ kind: 'bracket-open', text: ch })
+      tokens.push({ kind: 'bracket-open', text: ch, line, col })
     } else if (ch === ']') {
-      tokens.push({ kind: 'bracket-close', text: ch })
+      tokens.push({ kind: 'bracket-close', text: ch, line, col })
     } else if (ch === ':') {
-      tokens.push({ kind: 'colon', text: ch })
+      tokens.push({ kind: 'colon', text: ch, line, col })
     } else if (ch === ',') {
-      tokens.push({ kind: 'comma', text: ch })
+      tokens.push({ kind: 'comma', text: ch, line, col })
     } else if (ch === '"') {
       // Строка — побайтово до закрывающей кавычки с учётом экранов.
       let j = i + 1
@@ -89,7 +101,9 @@ function lex(src: string): { tokens: Token[]; error: JsonErrorPos | null } {
         j += 1
       }
       if (!closed) return err('незакрытая строка')
-      tokens.push({ kind: 'atom', text: src.slice(i, j + 1) })
+      const tokLine = line
+      const tokCol = col
+      tokens.push({ kind: 'atom', text: src.slice(i, j + 1), line: tokLine, col: tokCol })
       // Колонки внутри строки не считаем посимвольно точно — ошибка дальше
       // всё равно привяжется к позиции токена; двигаем грубо.
       const consumed = src.slice(i, j + 1)
@@ -98,9 +112,11 @@ function lex(src: string): { tokens: Token[]; error: JsonErrorPos | null } {
       continue
     } else if (ch === '-' || isDigit(ch) || ch === 't' || ch === 'f' || ch === 'n') {
       // Число или литерал true/false/null — до первого не-атомного символа.
+      // Строгая проверка значения — позже в validateTokens (RFC 8259);
+      // здесь режем сырьём, чтобы ошибка указывала на весь атом целиком.
       let j = i
       while (j < src.length && isAtomChar(src[j])) j += 1
-      tokens.push({ kind: 'atom', text: src.slice(i, j) })
+      tokens.push({ kind: 'atom', text: src.slice(i, j), line, col })
       col += j - i
       i = j
       continue
@@ -111,6 +127,152 @@ function lex(src: string): { tokens: Token[]; error: JsonErrorPos | null } {
     i += 1
   }
   return { tokens, error: null }
+}
+
+/** Число по грамматике RFC 8259 §6: -?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)? */
+const JSON_NUMBER_RE = /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/
+
+function isValidJsonNumber(text: string): boolean {
+  return JSON_NUMBER_RE.test(text)
+}
+
+/**
+ * WO-UI-27 раунд 2 (Б-1): содержимое строки (включая кавычки) по RFC 8259 §7:
+ * никаких сырых управляющих символов (< 0x20 — в т.ч. табуляция), escape
+ * только из набора `" \ / b f n r t uXXXX` (u — ровно 4 hex-цифры).
+ * Возвращает текст причины или null, если строка корректна.
+ */
+function stringContentError(text: string): string | null {
+  for (let i = 1; i < text.length - 1; i++) {
+    const ch = text[i]
+    if (ch === '\\') {
+      const n = text[i + 1]
+      if (n === undefined) return 'плохой escape в строке'
+      if (n === 'u') {
+        if (!/^[0-9a-fA-F]{4}$/.test(text.slice(i + 2, i + 6))) return 'плохой \\u-escape в строке'
+        i += 5
+      } else if ('"\\/bfnrt'.includes(n)) {
+        i += 1
+      } else {
+        return `плохой escape '\\${n}' в строке`
+      }
+    } else if (ch < ' ') {
+      return 'управляющий символ в строке без escape'
+    }
+  }
+  return null
+}
+
+/**
+ * WO-UI-27 раунд 2 (Б-1): строгая валидация потока токенов по RFC 8259.
+ * Проверяет: атомы — только `true|false|null` или число по грамматике
+ * (режет `tru`, `nul`, `[truely]`, `01`, `1.`, `-.5`, `0x10`); ключи объекта —
+ * только строки; ровно ОДНО top-level значение без хвоста (режет `{} {}`,
+ * `[1] [2]`); запятые/двоеточия/скобки — на своих местах. Пустой поток —
+ * не ошибка здесь (о нём сообщает build). Числа и строки НЕ переписываются —
+ * только проверка, побайтовость формата не страдает.
+ */
+function validateTokens(tokens: Token[]): JsonErrorPos | null {
+  const fail = (t: Token, message: string): JsonErrorPos => ({
+    line: t.line,
+    column: t.col,
+    message: `строка ${t.line}:${t.col}: ${message}`,
+  })
+  if (!tokens.length) return null
+
+  const stack: Array<'object' | 'array'> = []
+  // Состояние верхнего контейнера: need-key (после `{`/`,` в объекте),
+  // need-colon (после ключа), need-value (после `:`),
+  // need-value-or-end (после `[`/`,` в массиве),
+  // need-comma-or-end (после завершённого значения).
+  const states: string[] = []
+  let topDone = false
+
+  for (const t of tokens) {
+    if (topDone) return fail(t, 'лишний текст после значения')
+    const depth = stack.length
+    const curType = depth ? stack[depth - 1] : null
+    const curState = depth ? states[depth - 1] : null
+    switch (t.kind) {
+      case 'brace-open':
+      case 'bracket-open': {
+        const want = t.kind === 'brace-open' ? 'object' : 'array'
+        const ok =
+          !curType ||
+          (curType === 'object' && curState === 'need-value') ||
+          (curType === 'array' && curState === 'need-value-or-end')
+        if (!ok) return fail(t, `'${t.text}' не ожидается здесь`)
+        stack.push(want)
+        states.push(want === 'object' ? 'need-key' : 'need-value-or-end')
+        break
+      }
+      case 'brace-close': {
+        if (curType !== 'object' || (curState !== 'need-key' && curState !== 'need-comma-or-end')) {
+          return fail(t, `лишняя '}'`)
+        }
+        stack.pop()
+        states.pop()
+        if (!stack.length) topDone = true
+        else states[states.length - 1] = 'need-comma-or-end'
+        break
+      }
+      case 'bracket-close': {
+        if (curType !== 'array' || (curState !== 'need-value-or-end' && curState !== 'need-comma-or-end')) {
+          return fail(t, `лишняя ']'`)
+        }
+        stack.pop()
+        states.pop()
+        if (!stack.length) topDone = true
+        else states[states.length - 1] = 'need-comma-or-end'
+        break
+      }
+      case 'colon': {
+        if (curType !== 'object' || curState !== 'need-colon') return fail(t, `':' без ключа`)
+        states[states.length - 1] = 'need-value'
+        break
+      }
+      case 'comma': {
+        const ok =
+          (curType === 'object' && curState === 'need-comma-or-end') ||
+          (curType === 'array' && curState === 'need-comma-or-end')
+        if (!ok) return fail(t, `',' без значения`)
+        states[states.length - 1] = curType === 'object' ? 'need-key' : 'need-value-or-end'
+        break
+      }
+      case 'atom': {
+        const isStr = t.text[0] === '"'
+        if (isStr) {
+          const se = stringContentError(t.text)
+          if (se) return fail(t, se)
+        } else if (t.text !== 'true' && t.text !== 'false' && t.text !== 'null' && !isValidJsonNumber(t.text)) {
+          return fail(t, `невалидный литерал '${t.text}'`)
+        }
+        if (!curType) {
+          topDone = true
+          break
+        }
+        if (curType === 'object') {
+          if (curState === 'need-key') {
+            if (!isStr) return fail(t, 'ключ объекта должен быть строкой')
+            states[states.length - 1] = 'need-colon'
+          } else if (curState === 'need-value') {
+            states[states.length - 1] = 'need-comma-or-end'
+          } else {
+            return fail(t, 'значение не ожидается здесь')
+          }
+        } else {
+          if (curState !== 'need-value-or-end') return fail(t, 'значение не ожидается здесь')
+          states[states.length - 1] = 'need-comma-or-end'
+        }
+        break
+      }
+    }
+  }
+  if (stack.length || !topDone) {
+    const last = tokens[tokens.length - 1]
+    return fail(last, 'незакрытая скобка')
+  }
+  return null
 }
 
 /** Структурная проверка + сборка. `pretty=true` — с отступами, иначе в одну строку. */
@@ -238,6 +400,8 @@ function build(tokens: Token[], pretty: boolean): { text: string | null; error: 
 export function formatJsonValue(src: string): JsonFormatResult {
   const { tokens, error } = lex(src)
   if (error) return { text: null, error: error.message }
+  const verr = validateTokens(tokens)
+  if (verr) return { text: null, error: verr.message }
   const built = build(tokens, true)
   if (built.error) return { text: null, error: built.error.message }
   return { text: built.text ?? '', error: null }
@@ -247,6 +411,8 @@ export function formatJsonValue(src: string): JsonFormatResult {
 export function minifyJsonValue(src: string): JsonFormatResult {
   const { tokens, error } = lex(src)
   if (error) return { text: null, error: error.message }
+  const verr = validateTokens(tokens)
+  if (verr) return { text: null, error: verr.message }
   const built = build(tokens, false)
   if (built.error) return { text: null, error: built.error.message }
   return { text: built.text ?? '', error: null }
@@ -256,6 +422,8 @@ export function minifyJsonValue(src: string): JsonFormatResult {
 export function jsonErrorAt(src: string): JsonErrorPos | null {
   const { tokens, error } = lex(src)
   if (error) return error
+  const verr = validateTokens(tokens)
+  if (verr) return verr
   const built = build(tokens, true)
   return built.error
 }

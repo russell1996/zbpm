@@ -611,7 +611,6 @@
   "presetAskAtLaunch": "Empty — will be asked at launch",
   "presetBackToEdit": "Back to editing",
   "presetChooseTemplate": "Choose a template…",
-  "presetCopySuffix": "Copy of {name}",
   "presetCorrelationKey": "Correlation key",
   "presetCreateNew": "Create new",
   "presetDelete": "Delete",
