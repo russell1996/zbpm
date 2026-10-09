@@ -128,6 +128,8 @@ const bpmnXml = ref('')
 const selectedElement = ref<string | null>(null)
 const activeTab = ref('model')
 const showStartModal = ref(false)
+// WO-UI-25 (критерий 1): двойной клик по «Start» не создаёт два инстанса.
+const startInFlight = ref(false)
 // WO-VT-1: старт из шаблона — переменные отдаёт PresetPicker в модалке.
 const startPickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
 const askMissing = ref<string[]>([])
@@ -227,18 +229,31 @@ const selectedFlow = computed<BpmnFlow | null>(() =>
 const requirements = computed(() => allNodes.value.filter((n) => n.documentation))
 
 async function startProcess() {
-  const id = await store.startInstance({
-    processDefinitionId: route.params.id as string,
-    variables: (startPickerRef.value?.getVariables() ?? []).map((v) => ({
-      name: v.name,
-      type: v.type,
-      value: v.value,
-    })),
-  })
-  if (id) {
-    showStartModal.value = false
-    askMissing.value = []
-    router.push('/processes/instances')
+  // WO-UI-25 (критерий 1): повторный вызов в полёте (двойной клик) — игнор,
+  // кнопка в шаблоне тоже блокируется через startInFlight.
+  if (startInFlight.value) return
+  startInFlight.value = true
+  try {
+    const id = await store.startInstance({
+      processDefinitionId: route.params.id as string,
+      variables: (startPickerRef.value?.getVariables() ?? []).map((v) => ({
+        name: v.name,
+        type: v.type,
+        value: v.value,
+      })),
+    })
+    if (id) {
+      showStartModal.value = false
+      askMissing.value = []
+      toast.success(t('instanceStarted'))
+      // WO-UI-25: после старта — СРАЗУ на страницу инстанса, не в список.
+      router.push(`/processes/instances/${id}`)
+    } else {
+      // Ошибка старта: остаёмся в диалоге, причина видна.
+      toast.error(store.error || t('loadError'))
+    }
+  } finally {
+    startInFlight.value = false
   }
 }
 
@@ -728,7 +743,7 @@ async function downloadBpmn() {
             <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showStartModal = false">{{ t('cancel') }}</button>
             <button
               class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
-              :disabled="askMissing.length > 0 || pickerInvalid"
+              :disabled="askMissing.length > 0 || pickerInvalid || startInFlight"
               :title="askMissing.length ? t('presetFillAskFields', { fields: askMissing.join(', ') }) : ''"
               @click="startProcess"
             >

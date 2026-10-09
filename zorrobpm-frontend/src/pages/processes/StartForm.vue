@@ -35,6 +35,9 @@ function onPickerChange() {
 }
 
 async function startProcess() {
+  // WO-UI-25 (критерий 1): повторный вызов в полёте (двойной клик) — игнор;
+  // кнопка и так disabled через submitting, это защита программного пути.
+  if (submitting.value) return
   submitting.value = true
   error.value = null
   try {
@@ -69,14 +72,18 @@ async function startProcess() {
       }))
     }
 
-    const id = await instanceService.startProcessInstance({
+    // WO-UI-25: startProcessInstance возвращает IdDTO-объект ({ id }), не
+    // строку — подстановка сырого ответа в URL давала бы
+    // `/processes/instances/[object Object]` (та же ошибка жила и в старой
+    // кнопке тоста, переход по ней вёл в никуда).
+    const { id } = await instanceService.startProcessInstance({
       processDefinitionKey: processKey,
       variables,
     })
     if (id) {
-      toast.success('Process started', {
-        action: { label: 'View Instance', onClick: () => router.push(`/processes/instances/${id}`) },
-      })
+      toast.success(t('instanceStarted'))
+      // WO-UI-25 (критерий 1): после старта — СРАЗУ на страницу инстанса.
+      router.push(`/processes/instances/${id}`)
     }
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'Failed to start process'
