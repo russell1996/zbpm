@@ -766,7 +766,7 @@ async function downloadBpmn() {
       <Dialog :open="showStartModal" @update:open="(v) => { if (!v) showStartModal = false }">
         <DialogScrollContent
           class="flex flex-col gap-4 p-6"
-          :class="startWide ? 'w-[min(94vw,1280px)]' : 'w-[min(94vw,640px)]'"
+          :class="startWide ? 'w-[min(94vw,1280px)] max-w-[95vw]' : 'w-[min(94vw,640px)] max-w-[95vw]'"
           :aria-label="t('startProcessInstance')"
         >
           <DialogHeader class="flex-row items-center justify-between gap-2 space-y-0">
