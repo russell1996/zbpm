@@ -122,7 +122,7 @@ describe('StartForm', () => {
     expect(wrapper.find('a[href="https://example.com/start"]').exists()).toBe(true)
   })
 
-  it('POF: start process does NOT call router.push immediately, shows toast with action', async () => {
+  it('WO-UI-25 criterion 1: start navigates to the instance page (toast action retired)', async () => {
     const pushSpy = vi.spyOn(router, 'push')
 
     const wrapper = mount(StartForm, {
@@ -135,7 +135,8 @@ describe('StartForm', () => {
     await vm.startProcess()
     await flushPromises()
 
-    // After fix: router.push is NOT called (replaced by toast action button)
-    expect(pushSpy).not.toHaveBeenCalled()
+    // WO-UI-25: после старта — сразу на страницу инстанса (раньше был только
+    // тост с кнопкой, перехода не было — см. StartForm.ui25.test.ts).
+    expect(pushSpy).toHaveBeenCalledWith('/processes/instances/instance-1')
   })
 })

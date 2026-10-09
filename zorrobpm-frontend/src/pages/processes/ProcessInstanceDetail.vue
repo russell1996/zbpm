@@ -28,6 +28,8 @@ import PresetManagerPanel from '@/widgets/presets/PresetManagerPanel.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { buildDiagnosticJson } from '@/shared/lib/diagnostic'
+import { useInstanceLiveUpdates } from '@/composables/useInstanceLiveUpdates'
+import { useInstanceViewState, type InstanceTabId } from '@/composables/useInstanceViewState'
 
 const route = useRoute()
 const router = useRouter()
@@ -50,11 +52,21 @@ useBreadcrumbLabel(() => {
   return name ? `${name} · ${pi.id.slice(0, 8)}` : pi.id.slice(0, 8)
 })
 
-const activeTab = ref<'bpmn' | 'variables' | 'tasks' | 'serviceTasks' | 'incidents' | 'history' | 'subprocesses' | 'presets'>('bpmn')
+// WO-UI-25 (критерий 8, дополнение 2026-10-09): «где я» живёт в адресе.
+// Вид (вкладка, выбранный элемент, плоскость drill-down, страница активностей)
+// синхронизирован с query URL через композабл: F5/deep link/back-forward
+// восстанавливают вид, а не сбрасывают в корень.
+const viewState = useInstanceViewState()
+// Top-level ref-алиасы: в template рефы разворачиваются только на верхнем
+// уровне setup-биндингов — viewState.plane напрямую остался бы Ref-объектом.
+const activeTab = viewState.tab
+const selectedElement = viewState.element
+const viewPlane = viewState.plane
 
 // WO-ACL-14 criteria 1-3: ONE tab component (TabsBar) — the local tab strip is gone.
-// WO-UI-17 F24: no `as const` — TabsBar takes a mutable TabItem[]; the literal
-// union lives on activeTab, and selectTab narrows the string payload honestly.
+// WO-UI-17 F24: no `as const` — TabsBar takes a mutable TabItem[].
+// WO-UI-25: литеральный союз вкладок живёт в useInstanceViewState
+// (InstanceTabId); activeTab IS viewState.tab, selectTab пишет в ?tab=.
 const instanceTabs = computed(() => [
   { id: 'bpmn', label: t('bpmnFlow') },
   { id: 'variables', label: t('variables') },
@@ -67,14 +79,16 @@ const instanceTabs = computed(() => [
 ])
 
 // TabsBar emits `string`, but only ever one of our own tab ids — narrow it
-// through the list instead of casting blindly.
+// through the list instead of casting blindly. The union lives in
+// useInstanceViewState (InstanceTabId); activeTab IS viewState.tab,
+// so assignment here lands in ?tab= via the composable watcher.
 function selectTab(id: string) {
   if (instanceTabs.value.some((tab) => tab.id === id)) {
     activeTab.value = id as typeof activeTab.value
   }
 }
+
 const bpmnXml = ref('')
-const selectedElement = ref<string | null>(null)
 
 // BPMN element highlighting derived from the instance activity history
 const activeElementIds = computed(() =>
@@ -180,6 +194,11 @@ const dialogIncidents = computed(() => {
     .map((a) => a.id)
   return (incidentStore.incidents?.data || []).filter((inc) => activityIds.includes(inc.activityId))
 })
+
+// WO-UI-25 (критерий 8): выбор элемента пишется в ?element= через viewState.
+function onElementClick(elementId: string) {
+  selectedElement.value = elementId
+}
 
 function openElementDialog(elementId: string) {
   dialogSelectedElement.value = elementId
@@ -407,6 +426,15 @@ async function copyInspectedVariable() {
   setTimeout(() => { variableCopied.value = false }, 1500)
 }
 
+// WO-UI-25 (критерий 8): activities грузятся окном с учётом ?page= —
+// «Обновить»/SSE не сбрасывают подгруженные страницы в первую.
+async function loadActivitiesWithPages(id: string) {
+  await processStore.fetchActivities(id)
+  for (let i = 0; i < viewState.activitiesPage.value && processStore.hasMoreActivities; i++) {
+    await processStore.fetchMoreActivities(id)
+  }
+}
+
 async function loadTabData() {
   const pi = processStore.currentInstance
   if (!pi) return
@@ -417,7 +445,7 @@ async function loadTabData() {
       taskStore.fetchServiceTasks({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
       incidentStore.fetchIncidents({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
       processStore.fetchVariables({ processInstanceId: pi.id }),
-      processStore.fetchActivities(pi.id),
+      loadActivitiesWithPages(pi.id),
       processStore.fetchSubprocesses(pi.id),
     ])
   } finally {
@@ -425,13 +453,21 @@ async function loadTabData() {
   }
 }
 
+// WO-UI-25 (критерий 8, механизм б): диаграмма кэшируется по definition.
+// Тот же xml-объект = watch в BpmnViewer не стреляет = viewer живёт дальше
+// (плоскость/зум не слетают при «Обновить»/SSE). Новая диаграмма (другой
+// инстанс другого определения) — новая строка → честный перерендер.
+let loadedXmlDefinitionId: string | null = null
 async function loadBpmnXml() {
   const pi = processStore.currentInstance
-  if (!pi || bpmnXml.value) return
+  if (!pi) return
+  if (bpmnXml.value && loadedXmlDefinitionId === pi.processDefinitionId) return
   try {
     bpmnXml.value = await processService.getProcessDefinitionXml(pi.processDefinitionId)
+    loadedXmlDefinitionId = pi.processDefinitionId
   } catch {
     // XML not available
+    loadedXmlDefinitionId = null
   }
 }
 
@@ -455,17 +491,60 @@ async function onTabChange() {
 async function reloadAll() {
   const pi = processStore.currentInstance
   if (!pi) return
-  bpmnXml.value = ''
+  // WO-UI-25 (критерий 8, механизм б): bpmnXml НЕ сбрасываем — v-if держит
+  // BpmnViewer живым, плоскость/масштаб/выбор целы; обновляются только данные
+  // (маркеры/подсветка — через prop-watcher'ы viewer). Сброс xml пересоздавал
+  // viewer и «выкидывал в основной».
   await processStore.fetchInstance(pi.id) // refresh the instance itself so its status badge updates
   await loadTabData()
   await loadBpmnXml()
 }
 
+// WO-UI-25 (критерий 3): живое обновление по realtime-событиям инстанса.
+// В отличие от reloadAll НЕ трогает bpmnXml (картинка не перерисовывается —
+// нет мерцания) и читает activities окном refreshActivities (пагинация
+// «догрузить ещё» сохраняется). Состояние UI (таб, скролл, выбор) живёт в
+// локальных ref и этим путём не сбрасывается — обновляются только данные.
+async function refreshLive() {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  await Promise.all([
+    processStore.fetchInstance(pi.id),
+    processStore.refreshActivities(pi.id),
+    taskStore.fetchUserTasks({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
+    taskStore.fetchServiceTasks({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
+    incidentStore.fetchIncidents({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
+    processStore.fetchVariables({ processInstanceId: pi.id }),
+    processStore.fetchSubprocesses(pi.id),
+  ])
+}
+
+// WO-UI-25: подписка на общую realtime-шину с фильтром по текущему инстансу
+// (дебаунс 250 мс, фолбэк-опрос 4 с, пауза в скрытой вкладке — всё внутри
+// композабла). Отписка — его же onUnmounted; route-смена id переинициализирует
+// через init/watch ниже, getInstanceId всегда читает актуальный стор.
+const { liveState } = useInstanceLiveUpdates({
+  getInstanceId: () => processStore.currentInstance?.id ?? null,
+  refresh: refreshLive,
+})
+
+// WO-UI-25: ключи/классы индикатора — computed в script: сканер непереведённых
+// строк (WO-ACL-11 criterion 11) флагит строковые литералы-слова внутри {{ }}.
+const liveIndicatorKey = computed(() =>
+  liveState.value === 'live' ? 'liveConnected' : liveState.value === 'reconnecting' ? 'liveReconnecting' : 'livePolling')
+const liveDotClass = computed(() =>
+  liveState.value === 'live' ? 'bg-green-500' : liveState.value === 'reconnecting' ? 'bg-amber-500 animate-pulse' : 'bg-red-500')
+
 // WO-UI-18 часть C: догрузка следующей страницы activities.
+// WO-UI-25 (критерий 8): номер страницы — в ?page= (переживает F5).
 async function loadMoreActivities() {
   const pi = processStore.currentInstance
   if (!pi) return
+  const before = processStore.currentActivities.length
   await processStore.fetchMoreActivities(pi.id)
+  if (processStore.currentActivities.length > before) {
+    viewState.activitiesPage.value += 1
+  }
 }
 
 function downloadDiagnostic() {
@@ -492,14 +571,21 @@ function downloadDiagnostic() {
 }
 
 async function init(id: string) {
-  bpmnXml.value = ''
-  selectedElement.value = null
   members.value = []
+  // WO-UI-25 (критерий 8): selectedElement/plane/tab/page НЕ сбрасываем —
+  // ими владеет viewState (адрес): back/forward и deep link восстанавливают
+  // вид, сброс здесь «выкидывал» обратно в корень.
   await processStore.fetchInstance(id)
   // load tasks/service-tasks/incidents/activities/subprocesses up-front so the BPMN element
   // panel can offer cross-links and highlighting immediately
   await loadTabData()
   const pi = processStore.currentInstance
+  // Смена определения = новая диаграмма: сброс xml ПЕРЕД loadBpmnXml, viewer
+  // пересоздастся честно. То же определение (родитель→подпроцесс) — xml тот
+  // же объект, viewer живёт, плоскость/зум целы.
+  if (pi && pi.processDefinitionId !== loadedXmlDefinitionId) {
+    bpmnXml.value = ''
+  }
   if (pi) {
     await processStore.fetchStructure(pi.processDefinitionId)
   }
@@ -584,6 +670,19 @@ watch(activeTab, onTabChange)
               <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': processStore.loading || tabLoading }" />
               {{ t('refresh') }}
             </Button>
+            <!-- WO-UI-25 (критерий 3/5): индикатор живого канала. Ручная кнопка
+                 «Обновить» выше остаётся всегда; здесь только состояние. -->
+            <span
+              data-testid="live-indicator"
+              class="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground shrink-0"
+              :title="t(liveIndicatorKey)"
+            >
+              <span
+                class="h-1.5 w-1.5 rounded-full"
+                :class="liveDotClass"
+              />
+              {{ t(liveIndicatorKey) }}
+            </span>
           </div>
           <!-- Row 2: Name · v2 · Status · date — center-aligned -->
           <div class="flex items-center gap-2 flex-wrap -mt-1">
@@ -633,7 +732,9 @@ watch(activeTab, onTabChange)
                 :incident-element-ids="incidentElementIds"
                 :completed-element-ids="completedElementIds"
                 :element-counts="elementCounts"
-                @element-click="selectedElement = $event"
+                :plane-element-id="viewPlane"
+                @element-click="onElementClick"
+                @plane-change="viewPlane = $event"
               />
             </div>
             <!-- WO-ACL-11 criterion 38: the properties panel is the same height as
