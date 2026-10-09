@@ -734,5 +734,8 @@
   "presetOpenManager": "Process templates →",
   "presetInstanceActions": "Instance actions",
   "presetSnapshotDialogTitle": "Save variables as template",
-  "presetOpenTemplate": "Open template"
+  "presetOpenTemplate": "Open template",
+  "presetDialogWider": "Wider",
+  "presetDialogNarrower": "Narrower",
+  "presetDialogWiderHint": "Toggle dialog width"
 }

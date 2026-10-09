@@ -734,5 +734,8 @@
   "presetOpenManager": "Процесс үлгілері →",
   "presetInstanceActions": "Инстанс әрекеттері",
   "presetSnapshotDialogTitle": "Айнымалыларды үлгі ретінде сақтау",
-  "presetOpenTemplate": "Үлгіні ашу"
+  "presetOpenTemplate": "Үлгіні ашу",
+  "presetDialogWider": "Кеңірек",
+  "presetDialogNarrower": "Тарлау",
+  "presetDialogWiderHint": "Диалог енін ауыстыру"
 }

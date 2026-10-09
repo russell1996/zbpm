@@ -29,29 +29,33 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <DropdownMenu>
-    <DropdownMenuTrigger as-child>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        data-testid="row-menu-button"
-        :aria-label="label"
-        :title="label"
-      >
-        <span aria-hidden="true">⋯</span>
-      </Button>
-    </DropdownMenuTrigger>
-    <DropdownMenuContent align="end" class="min-w-40">
-      <DropdownMenuItem
-        v-for="item in items"
-        :key="item.id"
-        :data-testid="`row-menu-item-${item.id}`"
-        :class="item.danger ? 'text-red-500' : ''"
-        @select="emit('select', item.id)"
-      >
-        {{ item.label }}
-      </DropdownMenuItem>
-    </DropdownMenuContent>
-  </DropdownMenu>
+  <!-- Обёртка несёт внешние attrs (напр. data-testid="instance-actions-menu"):
+       корень DropdownMenu ничего не рендерит, без неё attrs теряются. -->
+  <div class="relative shrink-0">
+    <DropdownMenu>
+      <DropdownMenuTrigger as-child>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          data-testid="row-menu-button"
+          :aria-label="label"
+          :title="label"
+        >
+          <span aria-hidden="true">⋯</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" class="min-w-40">
+        <DropdownMenuItem
+          v-for="item in items"
+          :key="item.id"
+          :data-testid="`row-menu-item-${item.id}`"
+          :class="item.danger ? 'text-red-500' : ''"
+          @select="emit('select', item.id)"
+        >
+          {{ item.label }}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  </div>
 </template>
