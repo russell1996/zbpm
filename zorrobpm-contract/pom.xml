@@ -62,19 +62,6 @@
             <artifactId>jackson-annotations</artifactId>
         </dependency>
 
-        <!-- WO-UI-25 post-merge CI fix: первый тест модуля (DomainEventTypeSnapshotTest).
-             Версии из Boot BOM, как в zorrobpm-exchange (WO-OBS-8). -->
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.assertj</groupId>
-            <artifactId>assertj-core</artifactId>
-            <scope>test</scope>
-        </dependency>
-
     </dependencies>
 
     <build>
