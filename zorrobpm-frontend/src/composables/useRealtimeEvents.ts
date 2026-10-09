@@ -463,7 +463,7 @@ export function useRealtimeEvents() {
     void acquireSseLeadership(() => {
       // Лок отобран (вкладка закрывается / dispose): чистимся как follower.
       isLeaderTab = false
-    }).then(({ leader, release }) => {
+    }).then(({ leader, release, onPromoted }) => {
       if (leader) {
         isLeaderTab = true
         leadershipRelease = release
@@ -471,6 +471,19 @@ export function useRealtimeEvents() {
       } else {
         isLeaderTab = false
         fanoutUnsubscribe = subscribeFanout(onFanoutMessage)
+        // HOLD раунд 1 (Б-1): смерть лидера = браузер отдаёт лок следующему
+        // в очереди = onPromoted: follower открывает СВОЙ EventSource
+        // (ровно один новый; Last-Event-ID подхватит браузер сам) и
+        // объявляет себя лидером. Без этого остальные вкладки протухали молча.
+        onPromoted(() => {
+          if (fanoutUnsubscribe) {
+            fanoutUnsubscribe()
+            fanoutUnsubscribe = null
+          }
+          isLeaderTab = true
+          leadershipRelease = release
+          openSource()
+        })
       }
     })
   }
