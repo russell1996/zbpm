@@ -1,7 +1,10 @@
 package com.zorrodev.bpm.engine.entity;
 
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.Setter;
@@ -38,6 +41,23 @@ public class UserTaskEntity {
     /** Resolved zeebe:taskSchedule followUpDate (WO-C8-8). */
     private String followUpDate;
     private String assignee;
+    /**
+     * WO-IN-4: task id == activity id — authoritative lifecycle lives on the activity row.
+     * Read-only view ({@code insertable/updatable = false}: the row is written by
+     * {@code UserTaskDbOperationsImpl}, never through this association) used ONLY as an
+     * {@code @EntityGraph} path on the paged {@code findAll} — the status then rides the
+     * page query as a to-one JOIN (one statement, pagination-safe, unlike a collection
+     * fetch). LAZY, {@code optional = true} DESPITE the domain invariant (the activity
+     * always exists by construction): with {@code optional = false} Hibernate issues a
+     * strict existence check that fails on live rows for this shared-PK mapping
+     * (proven live: JpaObjectRetrievalFailure on existing activities, fixed by this
+     * flag alone). Non-graph readers (findById in DbOperations/TaskFormDataService/…)
+     * get a proxy with ZERO extra queries until touched — and nothing touches it
+     * outside the mapper.
+     */
+    @OneToOne(fetch = FetchType.LAZY, optional = true)
+    @JoinColumn(name = "id", referencedColumnName = "id", insertable = false, updatable = false)
+    private ActivityEntity activity;
     /** Comma-separated resolved candidate groups (WO-INT-1). */
     private String candidateGroups;
     /**
