@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import PresetEditorDialog from './PresetEditorDialog.vue'
+import VariableRowMenu from './VariableRowMenu.vue'
 import type {
   PresetTargetKind,
   PresetVariable,
@@ -9,6 +10,7 @@ import type {
 } from '@/types/presets'
 import {
   listPresets,
+  createPreset,
   deletePreset,
   importPreset,
   exportPreset,
@@ -92,14 +94,42 @@ async function remove(p: VariablePreset) {
     confirmDeleteId.value = p.id
     return
   }
+  confirmDeleteId.value = null
+  // WO-VT-3 Дополнение №2 п.4: «Отменить» в тосте — пересоздаём удалённое.
+  const backup = {
+    processDefinitionKey: p.processDefinitionKey,
+    targetKind: p.targetKind,
+    targetRef: p.targetRef,
+    name: p.name,
+    description: p.description,
+    visibility: p.visibility,
+    variables: (p.variables ?? []).map((v) => ({ ...v })),
+  }
   try {
     await deletePreset(p.id)
-    confirmDeleteId.value = null
-    toast.success(t('presetDeleted'))
+    toast.success(t('presetDeleted'), {
+      action: {
+        label: t('presetUndo'),
+        onClick: () => {
+          void createPreset(backup).then(() => load())
+        },
+      },
+    })
     await load()
   } catch (e) {
     toast.error(errorMessage(e, t('presetDeleteFailed')))
   }
+}
+
+function visibilityLabel(visibility: string): string {
+  return visibility === 'PROCESS' ? t('presetVisibilityProcess') : t('presetVisibilityPrivate')
+}
+
+function onRowMenu(p: VariablePreset, id: string) {
+  if (id === 'edit') openEdit(p)
+  else if (id === 'duplicate') openDuplicate(p)
+  else if (id === 'export') void exportOne(p)
+  else if (id === 'delete') void remove(p)
 }
 
 async function toggleFavorite(p: VariablePreset) {
@@ -206,54 +236,91 @@ defineExpose({ reload: load, available })
     <div v-if="loading" class="text-xs text-muted-foreground">{{ t('loading') }}</div>
     <p v-else-if="loadError" class="text-xs text-red-500">{{ loadError }}</p>
     <ul v-else-if="presets.length" class="space-y-1.5">
+      <!-- WO-VT-3 (критерий 7): карточка вместо flex-строки из 4 действий:
+           клик = Изменить, действия — под ⋯, удаление с подтверждением. -->
       <li
         v-for="p in presets"
         :key="p.id"
-        class="flex items-center gap-1.5 text-xs border border-border rounded-md px-2 py-1.5"
+        class="rounded-md border border-border px-2 py-1.5"
+        data-testid="preset-card"
       >
-        <button
-          type="button"
-          class="text-sm leading-none"
-          :aria-label="t('presetFavorite')"
-          :aria-pressed="p.favorite ? 'true' : 'false'"
-          @click="toggleFavorite(p)"
-        >
-          {{ p.favorite ? '★' : '☆' }}
-        </button>
-        <span class="font-medium truncate flex-1 min-w-0">{{ p.name }}</span>
-        <span class="text-muted-foreground shrink-0">({{ p.variables?.length ?? 0 }})</span>
-        <button type="button" class="text-primary hover:underline shrink-0" @click="openEdit(p)">
-          {{ t('presetEdit') }}
-        </button>
-        <button type="button" class="text-primary hover:underline shrink-0" @click="openDuplicate(p)">
-          {{ t('presetDuplicate') }}
-        </button>
-        <button type="button" class="text-primary hover:underline shrink-0" @click="exportOne(p)">
-          {{ t('presetExport') }}
-        </button>
-        <button type="button" class="text-red-500 hover:underline shrink-0" @click="remove(p)">
-          {{ confirmDeleteId === p.id ? t('presetConfirmDelete') : t('presetDelete') }}
-        </button>
+        <div class="flex items-center gap-1.5 min-w-0">
+          <button
+            type="button"
+            class="text-sm leading-none h-8 w-8 shrink-0 rounded hover:bg-muted"
+            :aria-label="t('presetFavorite')"
+            :aria-pressed="p.favorite ? 'true' : 'false'"
+            :title="t('presetFavorite')"
+            @click="toggleFavorite(p)"
+          >
+            {{ p.favorite ? '★' : '☆' }}
+          </button>
+          <button
+            type="button"
+            class="flex-1 min-w-0 text-left rounded px-1 py-1 hover:bg-muted"
+            :title="p.name"
+            @click="openEdit(p)"
+          >
+            <span class="block truncate text-xs font-medium">{{ p.name }}</span>
+            <span class="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+              <span
+                class="inline-flex items-center rounded-full border border-border px-1.5 py-px"
+                :title="t('presetVisibility')"
+              >
+                {{ visibilityLabel(p.visibility) }}
+              </span>
+              <span>{{ t('presetVarCount', { n: p.variables?.length ?? 0 }) }}</span>
+            </span>
+          </button>
+          <VariableRowMenu
+            :label="t('presetRowMenu')"
+            :items="[
+              { id: 'edit', label: t('presetEdit') },
+              { id: 'duplicate', label: t('presetDuplicate') },
+              { id: 'export', label: t('presetExport') },
+              { id: 'delete', label: confirmDeleteId === p.id ? t('presetConfirmDelete') : t('presetDelete'), danger: true },
+            ]"
+            @select="onRowMenu(p, $event)"
+          />
+        </div>
+        <div v-if="confirmDeleteId === p.id" class="mt-1 flex items-center gap-2 rounded border border-red-300 bg-red-50 dark:bg-red-950/30 px-2 py-1">
+          <span class="flex-1 text-[11px] text-red-600 dark:text-red-300">{{ t('presetDeleteRowConfirm') }}</span>
+          <button type="button" class="h-7 rounded bg-red-500 px-2 py-0.5 text-[11px] text-white hover:opacity-90" @click="remove(p)">
+            {{ t('presetDeleteRowYes') }}
+          </button>
+          <button type="button" class="h-7 rounded border border-border px-2 py-0.5 text-[11px] hover:bg-muted" @click="confirmDeleteId = null">
+            {{ t('cancel') }}
+          </button>
+        </div>
       </li>
     </ul>
-    <p v-else class="text-xs text-muted-foreground">{{ t('presetNoTemplates') }}</p>
-    <div class="flex flex-wrap gap-1.5">
+    <div v-else class="rounded-md border border-dashed border-border px-2 py-3 text-center">
+      <p class="text-xs text-muted-foreground">{{ t('presetNoTemplatesHint') }}</p>
       <button
         type="button"
-        class="px-2.5 py-1 text-xs bg-primary text-primary-foreground rounded-md hover:opacity-90"
+        class="mt-1.5 h-8 w-full rounded-md bg-primary px-2.5 py-1 text-xs text-primary-foreground hover:opacity-90"
         @click="openCreate"
       >
-        {{ presets.length ? t('presetCreateNew') : t('presetAddTemplate') }}
+        {{ t('presetAddTemplate') }}
+      </button>
+    </div>
+    <div v-if="presets.length" class="flex flex-wrap gap-1.5">
+      <button
+        type="button"
+        class="h-8 flex-1 whitespace-nowrap rounded-md bg-primary px-2.5 py-1 text-xs text-primary-foreground hover:opacity-90"
+        @click="openCreate"
+      >
+        {{ t('presetCreateNew') }}
       </button>
       <button
         type="button"
-        class="px-2.5 py-1 text-xs border border-border rounded-md hover:bg-muted"
+        class="h-8 whitespace-nowrap rounded-md border border-border px-2.5 py-1 text-xs hover:bg-muted"
         @click="triggerImport"
       >
         {{ t('presetImportFile') }}
       </button>
-      <input ref="fileInput" type="file" accept="application/json,.json" class="hidden" @change="onFileChosen" />
     </div>
+    <input ref="fileInput" type="file" accept="application/json,.json" class="hidden" @change="onFileChosen" />
     <PresetEditorDialog
       :open="dialogOpen"
       :process-key="processKey"
