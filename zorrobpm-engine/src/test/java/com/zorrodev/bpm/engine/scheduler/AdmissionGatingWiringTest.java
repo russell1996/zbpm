@@ -31,17 +31,24 @@ import static org.mockito.Mockito.when;
 /**
  * WO-ENG-35 (NEW2-16): охранный тест гейтования admission-гейта на входах.
  *
+ * <p>WO-ENG-35 раунд 2 (Б-2): гейтятся ТОЛЬКО FEEL-достижимые входы (8), а не
+ * все 12 — script-free операции (claim/unclaim/assign/cancel) идут напрямую,
+ * иначе sustained-перегрузка script-пула роняла бы их в 503 (поймано красной
+ * командой живьём: cancel → 503 на забитом пуле).
+ *
  * <p>Три ловушки против «тест, который не может краснеть» (прецедент
  * {@code DeactivationWakeupCoverageTest}):
  * <ul>
- *   <li>литеральные числа методов (12/2/2) — новый вход без гейта валит тест,
- *       пока список не пересмотрен;</li>
- *   <li>поведенческие проверки (InOrder, отсутствие аннотации), а не только
- *       подсчёт строк;</li>
- *   <li>мутации: убрать {@code gated(...)} в одном методе → тест 1 КРАСНЫЙ;
- *       вернуть {@code @Transactional} на listener → тест 2 КРАСНЫЙ; убрать
- *       гейт из одной fire-лямбды → тест 3 КРАСНЫЙ; убрать поле/метод →
- *       компиляция падает (тест не нужен).</li>
+ *   <li>литеральные множества входов (8 гейтованных + 4 прямых) — новый вход
+ *       или смена гейта валит тест, пока список не пересмотрен;</li>
+ *   <li>поведенческие проверки (InOrder, отсутствие аннотации, прямой
+ *       unit-вызов listener с verify), а не только подсчёт строк;</li>
+ *   <li>мутации: убрать {@code gatedFeel(...)} в одном методе → тест 1 КРАСНЫЙ;
+ *       снова завернуть script-free вход в гейт → тест 1 КРАСНЫЙ (двусторонний:
+ *       и снятие, и лишний гейт ловятся); вернуть {@code @Transactional} на
+ *       listener → тест 2 КРАСНЫЙ; убрать гейт из одной fire-лямбды → тест 3
+ *       КРАСНЫЙ; убрать вызов admit из listener → тест 5 КРАСНЫЙ; убрать
+ *       поле/метод → компиляция падает (тест не нужен).</li>
  * </ul>
  */
 @ExtendWith(MockitoExtension.class)
@@ -55,9 +62,14 @@ class AdmissionGatingWiringTest {
     private static final Path RUNTIME_RESOURCE =
         Path.of("../zorrobpm-rest/src/main/java/com/zorrodev/bpm/rest/resource/RuntimeResource.java");
 
-    /** WO-ENG-35: все 12 входов RuntimeResource идут через gated(). */
+    /**
+     * WO-ENG-35 раунд 2 (Б-2): ровно 8 FEEL-достижимых входов идут через
+     * {@code gatedFeel()}, а 4 script-free — напрямую. Двусторонний: краснеет
+     * и при снятии гейта с FEEL-входа, и при заворачивании script-free входа
+     * обратно в гейт (мутация over-gating).
+     */
     @Test
-    void runtimeResource_allTwelveEntriesGated() throws IOException {
+    void runtimeResource_onlyFeelReachableEntriesGated() throws IOException {
         assertThat(Files.exists(RUNTIME_RESOURCE))
             .as("путь к RuntimeResource от cwd surefire (модуль engine): %s",
                 RUNTIME_RESOURCE.toAbsolutePath())
@@ -74,24 +86,33 @@ class AdmissionGatingWiringTest {
             entryCount++;
         }
         assertThat(entryCount)
-            .as("число входов RuntimeResource (новый вход без гейта — пересмотреть тест)")
+            .as("число входов RuntimeResource (новый вход — пересмотреть тест)")
             .isEqualTo(12);
 
-        Matcher gated = Pattern.compile("gated\\(\\(\\) ->").matcher(src);
-        int gatedCount = 0;
-        while (gated.find()) {
-            gatedCount++;
+        // 8 FEEL-достижимых — через гейт (имена methods + gatedFeel рядом).
+        for (String gated : List.of("startProcessInstance", "completeServiceTask",
+                "completeAdHocScopeJob", "failServiceTask", "throwServiceTaskError",
+                "publishMessage", "completeUserTask", "resolveIncident")) {
+            Matcher m = Pattern.compile(
+                "public \\S+ " + gated + "\\([^)]*\\) \\{[^}]*?gatedFeel\\(\\(\\) ->",
+                Pattern.DOTALL).matcher(src);
+            assertThat(m.find())
+                .as("FEEL-достижимый вход %s обёрнут в gatedFeel(() -> ...)", gated)
+                .isTrue();
         }
-        assertThat(gatedCount)
-            .as("каждый вход обёрнут в gated(() -> ...)")
-            .isEqualTo(12);
-        assertThat(src)
-            .as("прямых вызовов *Operations в обход gated нет")
-            .doesNotContain("return processInstanceRuntimeOperations.",
-                "return serviceTaskRuntimeOperations.",
-                "return userTaskRuntimeOperations.",
-                "return messageRuntimeOperations.",
-                "return incidentRuntimeOperations.");
+        // 4 script-free — напрямую, без гейта.
+        for (String direct : List.of("claimUserTask", "unclaimUserTask",
+                "assignUserTask", "cancelProcessInstance")) {
+            Matcher m = Pattern.compile(
+                "public \\S+ " + direct + "\\(").matcher(src);
+            assertThat(m.find()).as("вход %s существует", direct).isTrue();
+            int bodyStart = src.indexOf("{", m.end());
+            int bodyEnd = src.indexOf("}", bodyStart);
+            String body = src.substring(bodyStart, bodyEnd);
+            assertThat(body)
+                .as("script-free вход %s идёт напрямую, без gatedFeel (over-gating)", direct)
+                .doesNotContain("gatedFeel");
+        }
     }
 
     /** WO-ENG-35: AMQP-слушатель ждёт admission ВНЕ транзакции. */
@@ -108,6 +129,34 @@ class AdmissionGatingWiringTest {
             Transactional.class))
             .as("транзакционная половина осталась @Transactional (граница та же)")
             .isNotNull();
+    }
+
+    /**
+     * WO-ENG-35 раунд 2 (оформительская красной команды): поведенческий ассерт
+     * вызова гейта в listener — не опираемся на strict-stubs соседнего теста.
+     * Прямой unit-вызов {@code on} с мок-гейтом (no-op лиза) и мок-процессором:
+     * гейт вызывается РОВНО один раз ДО тела (InOrder), тело — один раз.
+     */
+    @Test
+    void amqpListener_admissionBeforeProcess() {
+        com.zorrodev.bpm.engine.tracing.TracingSupport tracing =
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.tracing.TracingSupport.class);
+        com.zorrodev.bpm.engine.listener.ServiceTaskCompletionProcessor processor =
+            org.mockito.Mockito.mock(
+                com.zorrodev.bpm.engine.listener.ServiceTaskCompletionProcessor.class);
+        org.mockito.Mockito.lenient().when(scriptService.admitOutsideTx())
+            .thenReturn(AdmissionLease.noop());
+        ServiceTaskCompleteListener listener =
+            new ServiceTaskCompleteListener(tracing, scriptService, processor);
+        com.zorrodev.bpm.exchange.ServiceTaskCompleted event =
+            new com.zorrodev.bpm.exchange.ServiceTaskCompleted();
+        event.setServiceTaskId(UUID.randomUUID());
+
+        listener.on(event);
+
+        InOrder order = inOrder(scriptService, processor);
+        order.verify(scriptService).admitOutsideTx();
+        order.verify(processor).process(event);
     }
 
     /** WO-ENG-35: fire таймера идёт ПОСЛЕ acquire гейта (InOrder, обе лямбды). */

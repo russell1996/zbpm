@@ -30,6 +30,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -54,7 +55,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Время ответа ≥ окну доказывает, что ожидание реально произошло на
  * HTTP-пути (а не «быстрый отказ без ожидания»).
  *
- * <p>RED-мутация (в ПРОД-коде): {@code gated(() -> ...)} → прямой вызов
+ * <p>RED-мутация (в ПРОД-коде): {@code gatedFeel(() -> ...)} → прямой вызов
  * делегата в {@code RuntimeResource} (обход гейта = «ожидание вернулось
  * внутрь»): вход открывает транзакцию, упирается в забитый пул, ждёт то же
  * окно ВНУТРИ (in-tx дельта == 1), затем тот же 503. Тест КРАСНЫЙ на
@@ -84,6 +85,7 @@ class AdmissionGateHttpIT {
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private String adminToken;
     private UUID processDefinitionId;
+    private UUID nofeelProcessDefinitionId;
 
     @BeforeAll
     void setup() throws Exception {
@@ -100,6 +102,20 @@ class AdmissionGateHttpIT {
                 .andReturn();
         processDefinitionId = UUID.fromString(
             mapper.readTree(deployResult.getResponse().getContentAsString()).get("id").asText());
+        // WO-ENG-35 раунд 2 (Б-2): процесс без единого FEEL — для
+        // дифференциального теста script-free операций под насыщением.
+        String nofeelBpmn = Files.readString(
+            Paths.get("src/test/files/eng35-nofeel-process.bpmn"), StandardCharsets.UTF_8);
+        AddProcessDefinitionDTO nofeelDto = new AddProcessDefinitionDTO();
+        nofeelDto.setBpmn(nofeelBpmn);
+        MvcResult nofeelDeploy = mockMvc.perform(post("/process-definitions")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(nofeelDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isCreated())
+                .andReturn();
+        nofeelProcessDefinitionId = UUID.fromString(
+            mapper.readTree(nofeelDeploy.getResponse().getContentAsString()).get("id").asText());
     }
 
     private String login(String username, String password) throws Exception {
@@ -220,6 +236,113 @@ class AdmissionGateHttpIT {
                 .as("ни одного admission-ожидания внутри транзакции: гейт ждал "
                     + "до её открытия (мутация «обход гейта» даёт здесь 1.0)")
                 .isZero();
+        } finally {
+            leasesRelease.countDown();
+            for (Thread t : leaseHolders) {
+                t.join(15_000);
+            }
+            release.countDown();
+        }
+    }
+
+    /**
+     * WO-ENG-35 раунд 2 (Б-2, находка красной команды): при забитом
+     * script-пуле script-free операции отвечают 2xx, а FEEL-входы — 503.
+     *
+     * <p>Конструкция (факты, не сон): инстанс NO-FEEL процесса стартуется ДО
+     * насыщения (201 — старт сам FEEL-гейтован, но пул свободен); затем то же
+     * двухслойное насыщение, что в первом тесте (сырой executor + лизы,
+     * факты workerBusy/queueSize/permits==0). Затем: claim userTask → 200,
+     * cancel инстанса → 202. Тот же cancel на гейтованном дереве давал 503
+     * (зонд красной команды T2, `status=503`).
+     *
+     * <p>Почему claim/cancel mewakili все четыре script-free: их пути —
+     * плоские записи без FEEL (`CompletionService.claimUserTask`,
+     * отмена строк/подписок в `ProcessInstanceRuntimeOperationsImpl`;
+     * unclaim/assign — те же плоские записи, grep в §3 отчёта). Обратная
+     * сторона дифференциала — первый тест класса (FEEL-старт → 503).
+     *
+     * <p>RED-мутация (в ПРОД-коде): завернуть cancel обратно в
+     * {@code gatedFeel} (over-gating) → cancel даёт 503 вместо 202 → этот
+     * тест КРАСНЫЙ СТАБИЛЬНО (статус, не счётчик: 503 vs 202 различаются
+     * напрямую). Мутация «снять гейт со старта» — первый тест класса.
+     */
+    @Test
+    @Timeout(value = 180, unit = TimeUnit.SECONDS)
+    void saturatedPool_scriptFreeOps_stay2xx_whileFeelStartSheds503() throws Exception {
+        // Инстанс — ДО насыщения (старт FEEL-гейтован, пул свободен → 201).
+        StartProcessInstanceDTO startDto = new StartProcessInstanceDTO();
+        startDto.setProcessDefinitionId(nofeelProcessDefinitionId);
+        startDto.setVariables(List.of());
+        MvcResult started = mockMvc.perform(post("/process-instances")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .content(mapper.writeValueAsString(startDto))
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isCreated())
+                .andReturn();
+        UUID instanceId = UUID.fromString(
+            mapper.readTree(started.getResponse().getContentAsString()).get("id").asText());
+        MvcResult tasks = mockMvc.perform(get("/user-tasks")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .param("processInstanceId", instanceId.toString()))
+                .andExpect(status().isOk())
+                .andReturn();
+        UUID taskId = UUID.fromString(mapper.readTree(
+            tasks.getResponse().getContentAsString()).get("data").get(0).get("id").asText());
+
+        // То же насыщение, что в первом тесте (факты, не сон).
+        java.util.concurrent.ThreadPoolExecutor raw = pool();
+        CountDownLatch release = new CountDownLatch(1);
+        CountDownLatch workerBusy = new CountDownLatch(1);
+        raw.execute(() -> {
+            workerBusy.countDown();
+            try {
+                release.await(60, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        assertThat(workerBusy.await(30, TimeUnit.SECONDS))
+            .as("воркер пула занят").isTrue();
+        raw.execute(() -> {
+            try {
+                release.await(60, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(10))
+            .until(() -> raw.getQueue().size() == 1);
+        CountDownLatch leasesHeld = new CountDownLatch(2);
+        CountDownLatch leasesRelease = new CountDownLatch(1);
+        List<Thread> leaseHolders = new java.util.ArrayList<>();
+        for (int i = 0; i < 2; i++) {
+            Thread t = new Thread(() -> {
+                try (AdmissionLease held = scriptService.admitOutsideTx()) {
+                    leasesHeld.countDown();
+                    leasesRelease.await(60, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            t.setDaemon(true);
+            t.start();
+            leaseHolders.add(t);
+        }
+        try {
+            assertThat(leasesHeld.await(30, TimeUnit.SECONDS))
+                .as("обе фоновые лизы взяты").isTrue();
+            assertThat(gatePermits()).as("все пермиты гейта разобраны").isZero();
+
+            // Script-free под насыщением: claim → 200 (не 503).
+            mockMvc.perform(post("/user-tasks/" + taskId + "/claim")
+                            .header("Authorization", "Bearer " + adminToken))
+                    .andExpect(status().isOk());
+            // Script-free под насыщением: cancel → 202 (не 503 — зонд T2
+            // красной команды фиксировал здесь 503 на гейтованном дереве).
+            mockMvc.perform(post("/process-instances/" + instanceId + "/cancel")
+                            .header("Authorization", "Bearer " + adminToken))
+                    .andExpect(status().isAccepted());
         } finally {
             leasesRelease.countDown();
             for (Thread t : leaseHolders) {
