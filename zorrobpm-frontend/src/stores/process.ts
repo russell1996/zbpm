@@ -183,6 +183,75 @@ export const useProcessStore = defineStore('process', () => {
     }
   }
 
+  /**
+   * WO-UI-26 Б-1: тихий перечит инстанса для живой страницы (stale-while-
+   * revalidate) — НЕ ставит `loading` (мерцание), только `refreshing`-семантика
+   * вызывающей страницы. Ошибка — в error, без спиннера.
+   */
+  async function fetchInstanceQuiet(id: string): Promise<void> {
+    try {
+      currentInstance.value = await instanceService.getProcessInstance(id)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load instance'
+    }
+  }
+
+  /**
+   * WO-UI-26 Б-1: локальный патч текущего инстанса (0 запросов) — статус/
+   * completedAt из envelope. True — применён.
+   */
+  function patchCurrentInstanceLocal(patch: Partial<ProcessInstance>): boolean {
+    const cur = currentInstance.value
+    if (!cur) return false
+    const next = { ...cur, ...patch }
+    if (JSON.stringify(next) === JSON.stringify(cur)) return true
+    currentInstance.value = next
+    return true
+  }
+
+  /**
+   * WO-UI-26 Б-1: локальный патч activity по elementId (0 запросов) —
+   * найденную CREATED/IN_PROGRESS запись переводим в COMPLETED. True —
+   * применён (BPMN-маркеры обновятся реактивно без fetch).
+   */
+  function patchActivityCompletedLocal(elementId: string): boolean {
+    if (!elementId) return false
+    const cur = currentActivities.value
+    const idx = cur.findIndex(
+      (a) => a.bpmnElementId === elementId && (a.status === 'CREATED' || a.status === 'IN_PROGRESS'),
+    )
+    if (idx === -1) return false
+    const next = [...cur]
+    next[idx] = { ...next[idx], status: 'COMPLETED' as const }
+    currentActivities.value = next
+    return true
+  }
+
+  /**
+   * WO-UI-26 Б-1: тихий перечит переменных инстанса (уже был тихим — явный
+   * алиас для живой страницы, чтобы refreshLiveQuiet не звал громкие пути).
+   */
+  async function refreshVariablesQuiet(query: VariableQuery): Promise<void> {
+    try {
+      const result = await variableService.getVariables(query)
+      currentVariables.value = result.data
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load variables'
+    }
+  }
+
+  /**
+   * WO-UI-26 Б-1: тихий перечит подпроцессов (уже был тихим — явный алиас).
+   */
+  async function refreshSubprocessesQuiet(id: string): Promise<void> {
+    try {
+      const result = await instanceService.getProcessInstances({ parentProcessInstanceId: id, pageIndex: 0, pageSize: 100 })
+      currentSubprocesses.value = result.data
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load subprocesses'
+    }
+  }
+
   // WO-UI-18 часть C (Finding #3): встроенный SPA идёт пагинированным путём
   // GET .../activities/paged вместо голого List. Первая страница подгружается
   // вместе с остальными табами, дальше — fetchMoreActivities() по кнопке.
@@ -406,6 +475,11 @@ export const useProcessStore = defineStore('process', () => {
     fetchVersions,
     fetchInstances,
     fetchInstance,
+    fetchInstanceQuiet,
+    patchCurrentInstanceLocal,
+    patchActivityCompletedLocal,
+    refreshVariablesQuiet,
+    refreshSubprocessesQuiet,
     fetchActivities,
     fetchMoreActivities,
     refreshActivities,

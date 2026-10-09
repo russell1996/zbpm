@@ -135,6 +135,77 @@ export const useTaskStore = defineStore('task', () => {
     userTasks.value = { ...cur, data }
   }
 
+  /**
+   * WO-UI-26 Б-1: адресный патч одной service-task (одна строка/бейдж),
+   * 0 запросов списка. False — нужен запасной путь.
+   */
+  function patchServiceTaskRow(task: ServiceTask): boolean {
+    const cur = serviceTasks.value
+    if (!cur) return false
+    const q = lastServiceTasksQuery
+    if (q.processInstanceId && task.processInstanceId !== q.processInstanceId) return false
+    const idx = cur.data.findIndex((t) => t.id === task.id)
+    if (idx === -1) {
+      if ((q.pageIndex ?? 0) !== 0) {
+        serviceTasks.value = { ...cur, totalElements: cur.totalElements + 1 }
+        return true
+      }
+      serviceTasks.value = {
+        ...cur,
+        data: [task, ...cur.data],
+        totalElements: cur.totalElements + 1,
+      }
+      return true
+    }
+    if (cur.data[idx] === task) return true
+    const data = [...cur.data]
+    data[idx] = task
+    serviceTasks.value = { ...cur, data }
+    return true
+  }
+
+  function removeServiceTaskRow(id: string): void {
+    const cur = serviceTasks.value
+    if (!cur) return
+    const idx = cur.data.findIndex((t) => t.id === id)
+    if (idx === -1) return
+    const data = [...cur.data]
+    data.splice(idx, 1)
+    serviceTasks.value = { ...cur, data }
+  }
+
+  /**
+   * WO-UI-26 Б-1: тихий перечит user-tasks скоупа инстанса (stale-while-
+   * revalidate) — НЕ ставит `loading`. Не трогает lastUserTasksQuery чужого
+   * списка: шьёт явный query инстанса.
+   */
+  async function refreshUserTasksForInstanceQuiet(processInstanceId: string): Promise<void> {
+    const myRequest = ++userTasksRequest
+    try {
+      const result = await taskService.getUserTasks({ processInstanceId, pageIndex: 0, pageSize: 100 })
+      if (myRequest !== userTasksRequest) return
+      mergeUserTasks(result)
+    } catch (e) {
+      if (myRequest !== userTasksRequest) return
+      error.value = e instanceof Error ? e.message : 'Failed to load user tasks'
+    }
+  }
+
+  /**
+   * WO-UI-26 Б-1: тихий перечит service-tasks скоупа инстанса (без loading).
+   */
+  async function refreshServiceTasksForInstanceQuiet(processInstanceId: string): Promise<void> {
+    const myRequest = ++serviceTasksRequest
+    try {
+      const result = await taskService.getServiceTasks({ processInstanceId, pageIndex: 0, pageSize: 100 })
+      if (myRequest !== serviceTasksRequest) return
+      mergeServiceTasks(result)
+    } catch (e) {
+      if (myRequest !== serviceTasksRequest) return
+      error.value = e instanceof Error ? e.message : 'Failed to load service tasks'
+    }
+  }
+
   async function fetchUserTasks(query: UserTaskQuery = {}) {
     lastUserTasksQuery = query
     const myRequest = ++userTasksRequest
@@ -425,8 +496,12 @@ export const useTaskStore = defineStore('task', () => {
     // WO-UI-26 Доп.2/Доп.4: тихие точечные обновления (тесты + планировщик).
     refreshUserTasksQuiet,
     refreshServiceTasksQuiet,
+    refreshUserTasksForInstanceQuiet,
+    refreshServiceTasksForInstanceQuiet,
     patchUserTaskRow,
     removeUserTaskRow,
+    patchServiceTaskRow,
+    removeServiceTaskRow,
     lastSequenceForTest: () => patchTracker.lastSequence(),
   }
 })

@@ -90,6 +90,32 @@ export const useIncidentStore = defineStore('incident', () => {
     return true
   }
 
+  /** WO-UI-26 Б-1: локальное удаление инцидента (resolved-уход, 0 запросов). */
+  function removeIncidentRow(id: string): void {
+    const cur = incidents.value
+    if (!cur) return
+    const idx = cur.data.findIndex((i) => i.id === id)
+    if (idx === -1) return
+    const data = [...cur.data]
+    data.splice(idx, 1)
+    incidents.value = { ...cur, data }
+  }
+
+  /**
+   * WO-UI-26 Б-1: тихий перечит incidents скоупа инстанса (без loading).
+   */
+  async function refreshIncidentsForInstanceQuiet(processInstanceId: string): Promise<void> {
+    const myRequest = ++incidentsRequest
+    try {
+      const result = await incidentService.getIncidents({ processInstanceId, pageIndex: 0, pageSize: 100 })
+      if (myRequest !== incidentsRequest) return
+      mergeIncidents(result)
+    } catch (e) {
+      if (myRequest !== incidentsRequest) return
+      error.value = e instanceof Error ? e.message : 'Failed to load incidents'
+    }
+  }
+
   async function fetchIncidents(query: IncidentQuery = {}) {
     lastIncidentsQuery = query
     const myRequest = ++incidentsRequest
@@ -184,7 +210,9 @@ export const useIncidentStore = defineStore('incident', () => {
     handleEvent,
     // WO-UI-26 Доп.2/Доп.4: тихие точечные обновления (тесты + планировщик).
     refreshIncidentsQuiet,
+    refreshIncidentsForInstanceQuiet,
     patchIncidentRow,
+    removeIncidentRow,
     lastSequenceForTest: () => patchTracker.lastSequence(),
   }
 })

@@ -43,6 +43,15 @@ export function useInstanceLiveUpdates(options: {
    * потому что терминальность может наступить ПОСЛЕ монтирования.
    */
   isTerminal?: () => boolean
+  /**
+   * WO-UI-26 Б-1: точечный обработчик события страницы инстанса.
+   * Вызывается ДО планировщика на каждое событие этого инстанса.
+   * Возврат `true` — событие обработано точечно (локальный патч или
+   * по-сущностный тихий refresh уже запланирован), общий refresh НЕ нужен.
+   * Возврат `false`/отсутствие — событие идёт общим путём (debounce refresh).
+   * Исключение — как `false` (не роняем шину).
+   */
+  onEvent?: (envelope: import('@/types/api').EventEnvelope) => boolean
 }) {
   const debounceMs = options.debounceMs ?? 250
   const pollBaseMs = options.pollIntervalMs ?? 4000
@@ -206,6 +215,15 @@ export function useInstanceLiveUpdates(options: {
     // WO-UI-26 Доп.3: терминальный инстанс событий не ждёт — кроме самого
     // перехода (его обрабатывает страница через finalRefresh, не планировщик).
     if (isTerminal()) return
+    // WO-UI-26 Б-1: точечный путь первым — обработанное событие общий
+    // refresh не планирует (иначе каждое событие = 7 fetch).
+    if (options.onEvent) {
+      try {
+        if (options.onEvent(envelope)) return
+      } catch (e) {
+        console.error('[InstanceLive] onEvent failed:', e)
+      }
+    }
     scheduleRefresh()
   })
 
