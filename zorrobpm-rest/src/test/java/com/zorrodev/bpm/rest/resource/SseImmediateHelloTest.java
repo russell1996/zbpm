@@ -35,11 +35,13 @@ import static org.mockito.Mockito.lenient;
  * никаких прямых {@code emitter.send} мимо pump'а) ДО чтения catchup и
  * drain, первый flush несёт байты за миллисекунды.
  *
- * <p>POF-мутации (критерий 4): убрать {@code sendImmediateHello} из
- * {@code SseEventStreamController} — {@code hello_stagedPreDrain_pumpedFirst}
- * КРАСНЫЙ (тишина после drain); убрать keep-ветку {@code hello} из
- * {@code drainToLive} — тот же тест КРАСНЫЙ (приветствие съедено дедупом
- * catchup как {@code cursor <= boundary}).
+ * <p>POF-мутации (критерий 4): убрать keep-ветку {@code hello} из
+ * {@code drainToLive} — {@code hello_stagedPreDrain_pumpedFirst} КРАСНЫЙ
+ * (приветствие съедено дедупом catchup как {@code cursor <= boundary});
+ * убрать тело {@code sendImmediateHello} — тот же тест КРАСНЫЙ (тишина
+ * после drain). Проводка контроллер→сервис — отдельно
+ * {@code SseControllerHelloWiringTest} (P-46: delete строки в контроллере
+ * иначе не краснит ничего).
  */
 @ExtendWith(MockitoExtension.class)
 class SseImmediateHelloTest {
