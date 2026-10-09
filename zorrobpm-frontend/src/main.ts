@@ -4,6 +4,7 @@ import App from './App.vue'
 import router from './app/router'
 import i18n from './app/i18n'
 import { setupApiInterceptors } from './services/interceptors'
+import { reportUiError } from './services/uiError'
 // WO-ACL-8 criterion 38: Golos Text font via @fontsource (self-hosted, CSP-safe).
 import '@fontsource/golos-text/400.css'
 import '@fontsource/golos-text/500.css'
@@ -26,5 +27,9 @@ app.use(router)
 app.use(i18n)
 
 setupApiInterceptors()
+
+// WO-UI-26 Доп.1 (кр.11): вместо белого экрана — понятная панель в App.vue
+// (причина не проглатывается: reportUiError всегда пишет в console.error).
+app.config.errorHandler = (err) => reportUiError(err)
 
 app.mount('#app')

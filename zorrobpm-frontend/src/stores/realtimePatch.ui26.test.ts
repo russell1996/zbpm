@@ -201,4 +201,28 @@ describe('WO-UI-26 Доп.4 адресные патчи', () => {
     expect(sawLoading).toBe(false)
     expect(store.userTasks?.data).toHaveLength(2)
   })
+
+  it('кр.15: патч одной строки из 50 — identity остальных 49 не меняется', () => {
+    const store = useProcessStore()
+    const rows = Array.from({ length: 50 }, (_, i) => ({
+      id: `pi-${i}`, parentActivityId: null, processDefinitionId: 'pd-1', processName: 'P',
+      processKey: 'k', processVersion: 1, startedAt: '2026-10-09', completedAt: null, cancelled: false,
+    }))
+    store.instances = { data: rows, totalElements: 50, pageIndex: 0, pageSize: 100 }
+    const beforeObjects = [...store.instances.data]
+    store.handleEvent(envelope({
+      type: 'process-instance.completed', sequence: 40, id: 'e-40', processInstanceId: 'pi-7',
+    }))
+    const after = store.instances!.data
+    expect(after).toHaveLength(50)
+    // Изменилась РОВНО одна строка (новый объект только у неё)…
+    expect(after[7]).not.toBe(beforeObjects[7])
+    expect(after[7].completedAt).toBeTruthy()
+    // …остальные 49 — те же объекты (Vue не трогает их реактивность).
+    for (let i = 0; i < 50; i++) {
+      if (i === 7) continue
+      expect(after[i]).toBe(beforeObjects[i])
+    }
+    expect(store.loading).toBe(false)
+  })
 })
