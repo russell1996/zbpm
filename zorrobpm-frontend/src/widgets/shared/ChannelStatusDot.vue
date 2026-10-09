@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onUnmounted, watch, inject } from 'vue'
+import { ref, computed, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   Dialog,
@@ -10,13 +10,8 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { useRealtimeEvents, type ChannelErrorKind } from '@/composables/useRealtimeEvents'
+import { useRealtimeChannel } from '@/composables/useRealtimeChannel'
 import { useToast } from '@/composables/useToast'
 
 /**
@@ -47,8 +42,18 @@ const toast = useToast()
  * изолированных тестов — свой экземпляр.
  */
 type RealtimeHandle = ReturnType<typeof useRealtimeEvents>
-const rt: RealtimeHandle =
-  inject<RealtimeHandle>('zbpm-realtime', undefined as unknown as RealtimeHandle) ?? useRealtimeEvents()
+/**
+ * Состояние канала — экземпляр MainLayout через модульный синглтон
+ * useRealtimeChannel (provide/inject в том же тике монтирования не
+ * стыкуется — см. useRealtimeChannel.ts). Без set — явная ошибка в консоль,
+ * а не молча неверный индикатор.
+ */
+const injected = useRealtimeChannel().get()
+if (!injected) {
+  // eslint-disable-next-line no-console
+  console.error('[ChannelStatusDot] no realtime channel set — dot disabled')
+}
+const rt: RealtimeHandle = injected ?? useRealtimeEvents()
 
 const open = ref(false)
 const downSince = ref<number | null>(null)
@@ -139,29 +144,28 @@ function retryNow(): void {
 </script>
 
 <template>
-  <TooltipProvider>
-    <Tooltip v-if="showDot">
-      <TooltipTrigger as-child>
-        <!-- WO-UI-26 Доп.7/G24: точка — shadcn Button (ghost/icon), внутри —
-             нейтральный кружок 8px; сырые HTML-теги кнопок запрещены (G24). -->
-        <Button
-          variant="ghost"
-          size="icon"
-          data-testid="channel-dot"
-          class="h-8 w-8 shrink-0 hover:bg-transparent"
-          :aria-label="t('channelStatus')"
-          @click="open = true"
-        >
-          <span class="h-2 w-2 rounded-full bg-muted-foreground/60" />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>
-        {{ t('channelStatus') }}
-      </TooltipContent>
-    </Tooltip>
+  <!-- WO-UI-26: без Tooltip-обёртки вокруг кнопки — TooltipTrigger
+       перехватывает клик (превент), и Dialog не открывается ни в браузере,
+       ни в тесте. Подсказка — нативным title (ноль JS, ноль layout). -->
+  <template v-if="showDot">
+    <Button
+      variant="ghost"
+      size="icon"
+      data-testid="channel-dot"
+      class="h-8 w-8 shrink-0 hover:bg-transparent"
+      :aria-label="t('channelStatus')"
+      :title="t('channelStatus')"
+      @click="open = true"
+    >
+      <span class="h-2 w-2 rounded-full bg-muted-foreground/60" />
+    </Button>
 
     <Dialog v-model:open="open">
-      <DialogContent data-testid="channel-dialog" class="sm:max-w-md">
+      <!-- data-testid — на внутреннем div: DialogContent рендерит fragment/
+           teleport-root, не-наследованные атрибуты на нём теряются (warn) и
+           querySelector их не находит ни в тесте, ни в проде. -->
+      <DialogContent class="sm:max-w-md">
+        <div data-testid="channel-dialog">
         <DialogHeader>
           <DialogTitle>{{ t('channelDiagTitle') }}</DialogTitle>
           <DialogDescription>{{ t('channelDiagSubtitle') }}</DialogDescription>
@@ -187,7 +191,8 @@ function retryNow(): void {
             {{ t('channelDiagRetry') }}
           </Button>
         </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
-  </TooltipProvider>
+  </template>
 </template>

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, provide } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useIsMobile } from '@/shared/lib/responsive'
 import { SidebarProvider } from '@/components/ui/sidebar'
 import SidebarNavShadcn from '@/widgets/shared/SidebarNavShadcn.vue'
 import HeaderBar from '@/widgets/shared/HeaderBar.vue'
 import { useRealtimeEvents } from '@/composables/useRealtimeEvents'
+import { useRealtimeChannel } from '@/composables/useRealtimeChannel'
 
 const isMobile = useIsMobile()
 const sidebarOpen = ref(!isMobile.value)
@@ -14,9 +15,10 @@ const sidebarOpen = ref(!isMobile.value)
 // навигацию между ними — соединение не пересоздаётся на каждый переход.
 const realtime = useRealtimeEvents()
 // WO-UI-26 Доп.6/Доп.7: индикатор в шапке (ChannelStatusDot) читает состояние
-// ЭТОГО экземпляра через provide — свой экземпляр composable в точке всегда
-// «всё плохо» (refs живут внутри вызова и никто их не меняет).
-provide('zbpm-realtime', realtime)
+// ЭТОГО экземпляра через useRealtimeChannel (модульный синглтон refs —
+// provide/inject от setup к setup НЕ работает: inject в <script setup>
+// потомка резолвится раньше provide родителя при том же тике монтирования).
+useRealtimeChannel().set(realtime)
 onMounted(() => realtime.connect())
 onUnmounted(() => realtime.disconnect())
 </script>

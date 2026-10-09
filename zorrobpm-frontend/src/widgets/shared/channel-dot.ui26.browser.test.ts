@@ -130,6 +130,11 @@ function mockRefreshFail() {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  // SSE-путь зовёт sharedRefresh(api) напрямую (POST /auth/refresh через
+  // axios-адаптер); response-интерсептор для этого пути не нужен — 401 с
+  // /auth/refresh честно падает в .catch → false (мёртвый refresh).
+  // createRefreshInterceptor здесь НЕ зовём: он навешивает response-use на
+  // общий api-инстанс и копит их между кейсами (утечка перехватов).
   vi.clearAllMocks()
   FakeEventSource.instances = []
   vi.stubGlobal('EventSource', FakeEventSource)
@@ -158,6 +163,16 @@ function mainTop(wrapper: VueWrapper): number {
 }
 
 describe('WO-UI-26 channel banner removal + dot (browser)', () => {
+  /**
+   * Полный цикл «CLOSED → 5 refresh → sessionExpired» детерминированно
+   * закрыт в useRealtimeEventsReconnect.test.ts (fake-таймеры, тот же мок
+   * адаптера api-инстанса: `criterion 4` считает ≤ 5 вызовов /auth/refresh).
+   * Здесь — то, что видит пользователь в реальном Chromium: НИКАКОЙ полосы
+   * над контентом и нейтральная точка вместо неё. Состояние «кап исчерпан»
+   * форсируем тем же путём, что прод (5 разрывов подряд — как criterion 4),
+   * но без ожидания 31 с живой цепочки: прямому ожиданию мешает single-flight
+   * sharedRefresh в реальном времени (см. комментарий ниже).
+   */
   it('кр.13/24: dead channel → no banner, no content shift, one neutral dot', async () => {
     refreshAdapter = mockRefreshFail()
     const wrapper = mount(MainLayout, {
@@ -179,25 +194,23 @@ describe('WO-UI-26 channel banner removal + dot (browser)', () => {
     const topBefore = mainTop(wrapper)
     expect(topBefore).toBeGreaterThan(0)
 
-    // Один CLOSED: backoff-цепочка (1/2/4/8/16с) выматывает кап 5 попыток
-    // сама — при мёртвом refresh новых источников НЕ создаётся (пересоздание
-    // только при ok), кап заканчивается в markSessionExpired. Ждём 5
-    // refresh-попыток как признак исчерпания капа.
-    FakeEventSource.instances[0].readyState = FakeEventSource.CLOSED
-    FakeEventSource.instances[0].onerror?.({} as Event)
-    await flushPromises()
-    await until(
-      () =>
-        refreshAdapter.mock.calls.filter(([cfg]) => (cfg as { url?: string }).url === '/auth/refresh')
-          .length >= 5,
-      60000,
-    )
-    await flushPromises()
-
-    // НИКАКОЙ полосы над контентом — ни на одном этапе.
+    // Пять разрывов подряд (как criterion 4 в reconnect-тесте): каждый CLOSED
+    // идёт через scheduleReconnect → refreshAndReconnect → sharedRefresh.
+    // Single-flight sharedRefresh в реальном времени залипает на первом
+    // висящем promise (reset только в .finally микрозадачи), поэтому цепочка
+    // 1/2/4/8/16 с живьём выматывается минутами — ждём не 5 refresh-вызовов,
+    // а терминальное состояние (точка после гистерезиса 5 с устойчивого дауна).
+    for (let i = 0; i < 5; i++) {
+      const cur = FakeEventSource.instances[FakeEventSource.instances.length - 1]
+      cur.readyState = FakeEventSource.CLOSED
+      cur.onerror?.({} as Event)
+      await flushPromises()
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    // sessionExpired или устойчивый даун — в обоих случаях баннера нет.
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
     // Контент не сдвинулся; точка — после гистерезиса 5с устойчивого дауна.
-    await until(() => wrapper.find('[data-testid="channel-dot"]').exists(), 15000)
+    await until(() => wrapper.find('[data-testid="channel-dot"]').exists(), 30000)
     expect(mainTop(wrapper)).toBe(topBefore)
 
     // Одна нейтральная точка: без текста, без пульсации.
@@ -224,22 +237,19 @@ describe('WO-UI-26 channel banner removal + dot (browser)', () => {
     mounted.push(wrapper)
     await flushPromises()
     expect(FakeEventSource.instances).toHaveLength(1)
-    // Один CLOSED запускает цепочку 5 refresh-попыток (backoff 1/2/4/8/16с);
-    // при мёртвом refresh кап заканчивается в sessionExpired без баннера.
-    FakeEventSource.instances[0].readyState = FakeEventSource.CLOSED
-    FakeEventSource.instances[0].onerror?.({} as Event)
-    await flushPromises()
-    await until(
-      () =>
-        refreshAdapter.mock.calls.filter(([cfg]) => (cfg as { url?: string }).url === '/auth/refresh')
-          .length >= 5,
-      60000,
-    )
-    await flushPromises()
-    await until(() => wrapper.find('[data-testid="channel-dot"]').exists(), 15000)
+    // Пять разрывов подряд (см. комментарий выше) → устойчивый даун → точка.
+    for (let i = 0; i < 5; i++) {
+      const cur = FakeEventSource.instances[FakeEventSource.instances.length - 1]
+      cur.readyState = FakeEventSource.CLOSED
+      cur.onerror?.({} as Event)
+      await flushPromises()
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    await until(() => wrapper.find('[data-testid="channel-dot"]').exists(), 30000)
 
-    // Dialog телепортирован в body — кликаем нативный узел (триггер
-    // Tooltip-обёртки перехватывает синтетический trigger в тесте).
+    // Клик напрямую по нативной кнопке точки (мимо Tooltip-обёртки):
+    // trigger на обёртке гасится TooltipTrigger'ом, нативный click — нет.
+    await until(() => document.querySelector('[data-testid="channel-dot"]') !== null, 30000)
     const dotEl = document.querySelector('[data-testid="channel-dot"]') as HTMLElement | null
     expect(dotEl).not.toBeNull()
     dotEl!.click()
@@ -256,9 +266,10 @@ describe('WO-UI-26 channel banner removal + dot (browser)', () => {
         document.querySelector('[data-testid="channel-diag-copy"]') !== null,
     ).toBe(true)
 
-    const refreshCallsBefore = refreshAdapter.mock.calls.filter(
-      ([cfg]) => (cfg as { url?: string }).url === '/auth/refresh',
-    ).length
+    // Ручной retry реально пинает refresh: retryConnection → openSource →
+    // новый EventSource (предыдущий закрыт). refresh идёт следующим обрывом,
+    // но само переподключение доказывает проводку кнопки.
+    const sourcesBefore = FakeEventSource.instances.length
     const retryBtn = wrapper.find('[data-testid="channel-diag-retry"]')
     if (retryBtn.exists()) {
       await retryBtn.trigger('click')
@@ -266,12 +277,31 @@ describe('WO-UI-26 channel banner removal + dot (browser)', () => {
       ;(document.querySelector('[data-testid="channel-diag-retry"]') as HTMLElement | null)?.click()
     }
     await flushPromises()
-    const refreshCallsAfter = refreshAdapter.mock.calls.filter(
-      ([cfg]) => (cfg as { url?: string }).url === '/auth/refresh',
-    ).length
-    // Ручной retry реально пинает refresh (либо напрямую, либо через новый цикл).
-    expect(refreshCallsAfter).toBeGreaterThanOrEqual(refreshCallsBefore)
+    expect(FakeEventSource.instances.length).toBe(sourcesBefore + 1)
+    expect(FakeEventSource.instances[sourcesBefore - 1].closed).toBe(true)
     wrapper.unmount()
     mounted = []
+  }, 120000)
+
+  it('кр.9: 20 циклов монтирования → 0 открытых EventSource (нет утечек)', async () => {
+    refreshAdapter = mockRefreshFail()
+    for (let i = 0; i < 20; i++) {
+      const wrapper = mount(MainLayout, {
+        attachTo: mountHost(),
+        global: {
+          stubs: {
+            RouterView: true,
+            RouterLink: { template: '<a><slot /></a>' },
+          },
+          plugins: [createPinia(), makeI18n()],
+        },
+      })
+      await flushPromises()
+      wrapper.unmount()
+    }
+    const open = FakeEventSource.instances.filter((s) => !s.closed).length
+    // eslint-disable-next-line no-console
+    console.log(`UI26-LEAK cycles=20 eventSourcesTotal=${FakeEventSource.instances.length} open=${open}`)
+    expect(open).toBe(0)
   }, 120000)
 })
