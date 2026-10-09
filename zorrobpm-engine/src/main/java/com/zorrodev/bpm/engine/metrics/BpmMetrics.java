@@ -49,6 +49,13 @@ public class BpmMetrics {
     // --- Script bulkhead gauges + counters ---
     private final Counter scriptRejected;
     private final Counter scriptTimeout;
+    /**
+     * WO-ENG-35: сколько admission-ожиданий всё ещё произошло ВНУТРИ транзакции
+     * вызывающего (негейтованные пути + смешанный трафик + fallback при
+     * мгновенном отказе). Операторский сигнал: в идеале 0 после гейтования
+     * входов; рост = какой-то путь обходит гейт и держит соединение.
+     */
+    private final Counter scriptAdmissionInTx;
     private final AtomicLong scriptActiveWorkers = new AtomicLong(0);
     private final AtomicLong scriptQueueDepth = new AtomicLong(0);
     // WO-REL-46: конфигурированный размер FEEL-пула — знаменатель для Grafana-правила
@@ -191,6 +198,9 @@ public class BpmMetrics {
         this.scriptTimeout = Counter.builder("zbpm.script.timeout")
             .description("Script evaluations that timed out")
             .register(registry);
+        this.scriptAdmissionInTx = Counter.builder("zbpm.script.admission.in_tx")
+            .description("Script admission waits that happened inside the caller's transaction (ungated path or mixed-traffic fallback)")
+            .register(registry);
         Gauge.builder("zbpm.script.pool.active", scriptActiveWorkers, AtomicLong::doubleValue)
             .description("Active script evaluation threads")
             .register(registry);
@@ -332,6 +342,7 @@ public class BpmMetrics {
     // --- Script bulkhead ---
     public void scriptRejected() { scriptRejected.increment(); }
     public void scriptTimeout() { scriptTimeout.increment(); }
+    public void scriptAdmissionInTx() { scriptAdmissionInTx.increment(); }
 
     public void updateScriptPoolMetrics(ThreadPoolExecutor executor) {
         scriptActiveWorkers.set(executor.getActiveCount());

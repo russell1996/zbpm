@@ -2,7 +2,9 @@ package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.service.ActivityService;
+import com.zorrodev.bpm.engine.service.AdmissionLease;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.ScriptService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -33,6 +35,16 @@ class TimerBatchProcessorConcurrencyTest {
     @Mock private DBService dbService;
     @Mock private ActivityService activityService;
 
+    /**
+     * WO-ENG-35: admission-гейт в тестах — мок с no-op лизой (место «есть
+     * сразу»): эти тесты проверяют конкурентный claim, а не гейт.
+     */
+    private static ScriptService gatedScriptService() {
+        ScriptService scriptService = mock(ScriptService.class);
+        org.mockito.Mockito.lenient().when(scriptService.admitOutsideTx()).thenReturn(AdmissionLease.noop());
+        return scriptService;
+    }
+
     private static void setBatchSize(TimerBatchProcessor processor, int size) throws Exception {
         Field f = TimerBatchProcessor.class.getDeclaredField("batchSize");
         f.setAccessible(true);
@@ -48,7 +60,7 @@ class TimerBatchProcessorConcurrencyTest {
 
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run);
+        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run, gatedScriptService());
         setBatchSize(batchProcessor, 100);
 
         // Both "pollers" see the same due job (simulates race before SKIP LOCKED)
@@ -93,7 +105,7 @@ class TimerBatchProcessorConcurrencyTest {
 
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run);
+        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run, gatedScriptService());
         setBatchSize(batchProcessor, 100);
 
         when(dbService.findDueTimerJobsLocked(any(), anyInt())).thenReturn(List.of(job));
@@ -108,7 +120,7 @@ class TimerBatchProcessorConcurrencyTest {
     void noDueJobs_noFire() throws Exception {
         TimerJobExecutor executor = mock(TimerJobExecutor.class);
         TimerStartJobExecutor startExecutor = mock(TimerStartJobExecutor.class);
-        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run);
+        TimerBatchProcessor batchProcessor = new TimerBatchProcessor(dbService, executor, startExecutor, Runnable::run, gatedScriptService());
         setBatchSize(batchProcessor, 100);
 
         when(dbService.findDueTimerJobsLocked(any(), anyInt())).thenReturn(List.of());

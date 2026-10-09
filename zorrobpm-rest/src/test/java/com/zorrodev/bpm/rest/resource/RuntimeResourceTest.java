@@ -24,7 +24,6 @@ import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.FormArtifactService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
-import com.zorrodev.bpm.rest.resource.IncidentRuntimeOperations;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -60,10 +59,21 @@ class RuntimeResourceTest {
     @Mock private ProcessInstanceRuntimeOperations processInstanceRuntimeOperations;
     @Mock private ServiceTaskRuntimeOperations serviceTaskRuntimeOperations;
     @Mock private UserTaskRuntimeOperations userTaskRuntimeOperations;
+    @Mock private com.zorrodev.bpm.engine.service.ScriptService scriptService;
     @Mock private HttpServletRequest request;
 
     @InjectMocks
     private RuntimeResource resource;
+
+    /**
+     * WO-ENG-35: гейт admission в тестах — мок с no-op лизой (место «есть
+     * сразу»): эти тесты проверяют делегацию, а не гейт.
+     */
+    @org.junit.jupiter.api.BeforeEach
+    void gateOpen() {
+        org.mockito.Mockito.lenient().when(scriptService.admitOutsideTx())
+            .thenReturn(com.zorrodev.bpm.engine.service.AdmissionLease.noop());
+    }
 
     private com.zorrodev.bpm.engine.dto.IdDTO toEngineDTO(IdDTO expected) {
         return new com.zorrodev.bpm.engine.dto.IdDTO(expected.getId());
