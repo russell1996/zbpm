@@ -80,6 +80,24 @@ class FakeEventSource {
   }
 }
 
+
+// WO-UI-26 Доп.5: connect стал асинхронным (лидерство через Web Locks) —
+// в jsdom Web Locks нет (follower через 1.5с таймаут), поэтому стаб: первый
+// connect — сразу лидер.
+function stubLeaderLocks() {
+  const locks = {
+    request: (_name: string, _opts: unknown, cb: () => Promise<void>) => cb(),
+  }
+  Object.defineProperty(navigator, 'locks', { value: locks, configurable: true })
+}
+
+async function connectAndWait(rt: { connect: () => void }) {
+  stubLeaderLocks()
+  rt.connect()
+  await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
+}
+
+
 describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -124,7 +142,7 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
     vi.useFakeTimers()
     const adapter = mockRefreshOk()
     const rt = useRealtimeEvents()
-    rt.connect()
+    await connectAndWait(rt)
     expect(FakeEventSource.instances).toHaveLength(1)
     const first = FakeEventSource.instances[0]
     const url = first.url
@@ -146,7 +164,7 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
     vi.useFakeTimers()
     mockRefreshFail()
     const rt = useRealtimeEvents()
-    rt.connect()
+    await connectAndWait(rt)
     const first = FakeEventSource.instances[0]
     first.readyState = FakeEventSource.CLOSED
     first.onerror?.({} as Event)
@@ -164,7 +182,7 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
     vi.useFakeTimers()
     const adapter = mockRefreshFail()
     const rt = useRealtimeEvents()
-    rt.connect()
+    await connectAndWait(rt)
     // Каждая неудача переводит новый source в CLOSED и снова стреляет onerror:
     // эмулируем 10 подряд идущих разрывов.
     for (let i = 0; i < 10; i++) {
@@ -186,7 +204,7 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
   it('non-CLOSED error keeps legacy behaviour (no refresh, channel alive)', async () => {
     const adapter = mockRefreshOk()
     const rt = useRealtimeEvents()
-    rt.connect()
+    await connectAndWait(rt)
     const src = FakeEventSource.instances[0]
     src.readyState = FakeEventSource.OPEN
     src.onerror?.({} as Event)

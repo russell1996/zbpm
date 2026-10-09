@@ -98,20 +98,27 @@ describe('useRealtimeEvents (WO-UI-18 A)', () => {
   it('named event reaches all three stores via their handleEvent', async () => {
     const rt = useRealtimeEvents()
     rt.connect()
-    expect(FakeEventSource.instances).toHaveLength(1)
-    FakeEventSource.instances[0].emit('user-task.created', envelope('user-task.created', 41), '41')
-    await vi.dynamicImportSettled()
-    // dispatch идёт через настоящие handleEvent сторов — каждый зовёт свой refresh:
-    expect(taskService.getUserTasks).toHaveBeenCalled()
+    // WO-UI-26 Доп.5: connect асинхронен (лидерство через Web Locks) — ждём.
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
+    vi.mocked(taskService.getUserTask).mockResolvedValue({
+      id: 'nt41', code: 'c', name: 'N', processInstanceId: 'pi-1', processDefinitionId: 'pd-1',
+      formKey: null, status: 'CREATED', createdAt: '2026-09-24T00:00:00Z', completedAt: null,
+    })
+    // WO-UI-26 Доп.4: событие → адресный патч (один GET сущности), списки — нет.
+    FakeEventSource.instances[0].emit('user-task.created',
+      { ...envelope('user-task.created', 41), data: { activityId: 'nt41' } }, '41')
+    await vi.waitFor(() => expect(taskService.getUserTask).toHaveBeenCalledWith('nt41'))
+    expect(taskService.getUserTasks).not.toHaveBeenCalled()
     expect(instanceService.getProcessInstances).not.toHaveBeenCalled()
     expect(incidentService.getIncidents).not.toHaveBeenCalled()
     expect(rt.lastEventId.value).toBe('41')
     rt.disconnect()
   })
 
-  it('connect subscribes to every type routed by the stores', () => {
+  it('connect subscribes to every type routed by the stores', async () => {
     const rt = useRealtimeEvents()
     rt.connect()
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
     const src = FakeEventSource.instances[0]
     for (const type of REALTIME_EVENT_TYPES) {
       expect(src.listeners.get(type)?.length).toBeGreaterThanOrEqual(1)
@@ -136,24 +143,32 @@ describe('useRealtimeEvents (WO-UI-18 A)', () => {
     expect(buildStreamUrl().endsWith('/events/stream')).toBe(true)
   })
 
-  it('onerror keeps the channel open for native reconnect (criterion 3)', () => {
+  it('onerror keeps the channel open for native reconnect (criterion 3)', async () => {
     const rt = useRealtimeEvents()
     rt.connect()
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
     const src = FakeEventSource.instances[0]
     src.onerror?.({} as Event)
     expect(src.closed).toBe(false)
     expect(rt.isConnected.value).toBe(false)
     expect(rt.error.value).toBeTruthy()
-    // после разрыва канал жив — следующее событие всё ещё обрабатывается:
-    src.emit('incident.raised', envelope('incident.raised', 42), '42')
-    expect(incidentService.getIncidents).toHaveBeenCalled()
+    // после разрыва канал жив — следующее событие всё ещё обрабатывается
+    // (Доп.4: адресный патч одним GET сущности):
+    vi.mocked(incidentService.getIncident).mockResolvedValue({
+      id: 'inc42', activityId: 'a42', message: 'm', createdAt: '2026-09-24T00:00:00Z',
+      completedAt: null, processName: null, processInstanceId: 'pi-1', bpmnElementId: 'el-42', elementName: null,
+    })
+    src.emit('incident.raised', { ...envelope('incident.raised', 42), data: { incidentId: 'inc42' } }, '42')
+    await vi.waitFor(() => expect(incidentService.getIncident).toHaveBeenCalledWith('inc42'))
+    expect(incidentService.getIncidents).not.toHaveBeenCalled()
     expect(rt.lastEventId.value).toBe('42')
     rt.disconnect()
   })
 
-  it('disconnect closes the channel', () => {
+  it('disconnect closes the channel', async () => {
     const rt = useRealtimeEvents()
     rt.connect()
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
     rt.disconnect()
     expect(FakeEventSource.instances[0].closed).toBe(true)
   })
