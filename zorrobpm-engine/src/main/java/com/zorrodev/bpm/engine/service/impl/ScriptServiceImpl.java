@@ -56,13 +56,32 @@ public class ScriptServiceImpl implements ScriptService {
     /**
      * WO-ENG-35: резервация текущего потока, выданная гейтом (whole-op лиза)
      * или разовым разрешением (один eval вне гейтованного входа). Пока поле
-     * непусто, {@link #submitToPool} идёт напрямую в executor, не ожидая
-     * admission внутри транзакции. Поток пула сюда не пишет никогда (он
-     * исполняет, а не сабмитит) — дедлока «гейт ждёт пул, пул ждёт гейт» нет
-     * по построению.
+     * хранит ЖИВУЮ резервацию, {@link #submitToPool} идёт напрямую в executor,
+     * не ожидая admission внутри транзакции. Поток пула сюда не пишет никогда
+     * (он исполняет, а не сабмитит) — дедлока «гейт ждёт пул, пул ждёт гейт»
+     * нет по построению.
+     *
+     * <p>WO-ENG-35 раунд 2 (Б-1): значение — не голый семафор, а
+     * {@link Reservation} с флагом живости. Протухшая резервация (лиза закрыта,
+     * но holder не очищен — пропущенный {@code remove()}) НЕ даёт тихий
+     * fail-open: {@link #submitToPool} видит {@code live == false}, сносит
+     * holder, считает и предупреждает, и идёт обычным ограниченным путём
+     * (fail-closed). Тест: {@code AdmissionOutsideTxTest} (holder-пины +
+     * протухший holder).
      */
-    private final ThreadLocal<java.util.concurrent.Semaphore> reservationHolder =
+    private final ThreadLocal<Reservation> reservationHolder =
         new ThreadLocal<>();
+
+    /**
+     * WO-ENG-35 раунд 2 (Б-1): живая единица резервации. Флаг гаснет ровно
+     * когда слот возвращён (close лизы / завершение разового eval): holder,
+     * указывающий на погашенную резервацию, — протухший и доверять ему
+     * нельзя.
+     */
+    static final class Reservation {
+        final java.util.concurrent.atomic.AtomicBoolean live =
+            new java.util.concurrent.atomic.AtomicBoolean(true);
+    }
     /**
      * WO-REL-33 F22: пул ОДИН на все времена (final — никогда не заменяется).
      * Старой болезни «каждый timeout = новый executor + выжившие поколения»
@@ -180,10 +199,17 @@ public class ScriptServiceImpl implements ScriptService {
                 + "(e.g. idempotent request via IdempotencyFilter): "
                 + "bounded wait holds the transaction, counted in zbpm.script.admission.in_tx");
         }
-        if (reservationHolder.get() != null) {
+        if (reservationHolder.get() != null && reservationHolder.get().live.get()) {
             // Реентрантный вход того же потока (гейтованный вход зовёт
             // гейтованный вход): слот уже держит внешний владелец.
             return AdmissionLease.noop();
+        }
+        if (reservationHolder.get() != null) {
+            // WO-ENG-35 раунд 2 (Б-1): протухшая резервация, вытесненная новым
+            // гейтом, — сносим молча здесь (громкий учёт был там, где её
+            // ИСПОЛЬЗОВАЛИ: см. submitToPool — сюда доходят только после
+            // очистки или вообще без holder).
+            reservationHolder.remove();
         }
         boolean admitted = false;
         try {
@@ -201,17 +227,30 @@ public class ScriptServiceImpl implements ScriptService {
                 "Script execution rejected: pool overloaded, retry later",
                 (int) Math.max(1, queueWaitSeconds));
         }
-        reservationHolder.set(admissionGate);
-        return new WholeOpLease();
+        reservationHolder.set(new Reservation());
+        Reservation own = reservationHolder.get();
+        return new WholeOpLease(own);
     }
 
     /**
      * WO-ENG-35: whole-op лиза — слот держится всё время операции вызывающего
      * (все eval'ы операции идут напрямую), возвращается при закрытии.
      * Владелец — только выдавший поток; закрытие идемпотентно.
+     *
+     * <p>WO-ENG-35 раунд 2 (Б-1): close гасит флаг живости ПЕРВЫМ делом, а
+     * очистку holder — явно. Мутация «убрать {@code reservationHolder.remove()}»
+     * оставляет holder с погашенной резервацией: {@link #submitToPool} её
+     * распознаёт и идёт fail-closed путём (тест
+     * {@code holderClearedAfterClose_sameThread} краснеет прямо на
+     * неочищенном holder, а протухший путь — на счётчике).
      */
     private final class WholeOpLease implements AdmissionLease {
+        private final Reservation own;
         private boolean closed;
+
+        WholeOpLease(Reservation own) {
+            this.own = own;
+        }
 
         @Override
         public void close() {
@@ -219,9 +258,13 @@ public class ScriptServiceImpl implements ScriptService {
                 return;
             }
             closed = true;
+            own.live.set(false);
             // Только владелец: чужой поток лизу не видит (holder — ThreadLocal),
-            // реентрант получал noop и сюда не попадает.
-            reservationHolder.remove();
+            // реентрант получал noop и сюда не попадает. Сравнение по identity —
+            // holder мог держать только эту резервацию (см. admitOutsideTx).
+            if (reservationHolder.get() == own) {
+                reservationHolder.remove();
+            }
             admissionGate.release();
         }
     }
@@ -263,7 +306,16 @@ public class ScriptServiceImpl implements ScriptService {
         java.util.concurrent.FutureTask<Object> future = new java.util.concurrent.FutureTask<>(task);
         // WO-ENG-35: резервация этого потока (whole-op лиза гейта или разовое
         // разрешение) — место уже учтено в гейте, ждём ноль.
-        boolean reserved = reservationHolder.get() != null;
+        // WO-ENG-35 раунд 2 (Б-1): доверяем только ЖИВОЙ резервации. Протухшая
+        // (лиза закрыта, holder не очищен) — не тихий fail-open, а снос с
+        // учётом и обычный ограниченный путь ниже (fail-closed).
+        Reservation held = reservationHolder.get();
+        if (held != null && !held.live.get()) {
+            reservationHolder.remove();
+            staleReservationCleared(ref);
+            held = null;
+        }
+        boolean reserved = held != null;
         if (reserved) {
             try {
                 executor.execute(future);
@@ -277,16 +329,23 @@ public class ScriptServiceImpl implements ScriptService {
             // WO-ENG-35: негейтованный вход, но место прямо сейчас есть —
             // разовое разрешение на один eval: ждём ноль и здесь, слот
             // возвращается по завершении eval (finally в awaitWithTimeout).
-            reservationHolder.set(admissionGate);
+            Reservation one = new Reservation();
+            reservationHolder.set(one);
             try {
                 executor.execute(future);
-                return new SingleEvalFuture(future);
+                return new SingleEvalFuture(future, one);
             } catch (RejectedExecutionException raced) {
-                reservationHolder.remove();
+                one.live.set(false);
+                if (reservationHolder.get() == one) {
+                    reservationHolder.remove();
+                }
                 admissionGate.release();
                 // Проваливаемся в прежний ограниченный wait ниже.
             } catch (RuntimeException | Error e) {
-                reservationHolder.remove();
+                one.live.set(false);
+                if (reservationHolder.get() == one) {
+                    reservationHolder.remove();
+                }
                 admissionGate.release();
                 throw e;
             }
@@ -327,6 +386,19 @@ public class ScriptServiceImpl implements ScriptService {
     }
 
     /**
+     * WO-ENG-35 раунд 2 (Б-1): протухшая резервация использована вместо живой.
+     * Не тихий fail-open: сносим holder, считаем как in-tx (та же метрика, что
+     * у прочих внутритранзакционных ожиданий) и предупреждаем — дальше обычный
+     * ограниченный wait (при sustained-перегрузке он же даст 503, как всем).
+     */
+    private void staleReservationCleared(String ref) {
+        bpmMetrics.scriptAdmissionInTx();
+        log.warn("Stale script admission reservation on this thread ({}): "
+                + "lease already closed, holder cleared — bounded wait follows, "
+                + "counted in zbpm.script.admission.in_tx", ref);
+    }
+
+    /**
      * WO-ENG-35: метка «ожидание произошло внутри транзакции вызывающего»
      * (негейтованный путь, смешанный трафик, добивка после отказа прямого
      * сабмита). Операторский сигнал — см. {@code zbpm.script.admission.in_tx}.
@@ -345,19 +417,22 @@ public class ScriptServiceImpl implements ScriptService {
      */
     private final class SingleEvalFuture implements java.util.concurrent.Future<Object> {
         private final java.util.concurrent.Future<Object> delegate;
+        private final Reservation own;
         private boolean released;
 
-        SingleEvalFuture(java.util.concurrent.Future<Object> delegate) {
+        SingleEvalFuture(java.util.concurrent.Future<Object> delegate, Reservation own) {
             this.delegate = delegate;
+            this.own = own;
         }
 
         private synchronized void releaseOnce() {
             if (!released) {
                 released = true;
+                own.live.set(false);
                 // Свой поток и свой слот: holder мог перезаписаться только
                 // whole-op лизой этого же потока (вложенный гейтованный вход —
                 // noop, holder не трогает); чистим только если там наш слот.
-                if (reservationHolder.get() == admissionGate) {
+                if (reservationHolder.get() == own) {
                     reservationHolder.remove();
                 }
                 admissionGate.release();

@@ -433,6 +433,145 @@ class AdmissionOutsideTxTest {
             .isEqualTo(2);
     }
 
+    /**
+     * WO-ENG-35 раунд 2 (Б-1, находка красной команды): резервация обязана не
+     * просачиваться между запросами на ОДНОМ переиспользуемом потоке пула.
+     *
+     * <p>Конструкция: один долгоживущий поток (как Tomcat worker) выполняет
+     * ДВА «запроса» подряд — admit→eval→close, затем снова admit→eval→close —
+     * плюс «запрос» с исключением внутри скоупа лизы. Все holder-проверки
+     * делаются ВНУТРИ потока-владельца (ThreadLocal читается только своим
+     * потоком — проверка снаружи видела бы чужой null и была бы вакуумной).
+     *
+     * <p>POF-мутация M-D (в ПРОД-коде): убрать {@code reservationHolder.remove()}
+     * из {@code WholeOpLease.close} (оставить {@code live.set(false)} +
+     * {@code release()}) → holder после close НЕ пуст → этот тест КРАСНЫЙ
+     * (на живой ветке красная команда показала 9/9 GREEN без такого теста).
+     */
+    @Test
+    @Timeout(value = 120, unit = TimeUnit.SECONDS)
+    void holderClearedAfterClose_sameThread_noLeakBetweenRequests() throws Exception {
+        newSvc(10);
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure =
+            new java.util.concurrent.atomic.AtomicReference<>();
+        Thread worker = new Thread(() -> {
+            try {
+                for (int request = 1; request <= 2; request++) {
+                    final int req = request;
+                    AdmissionLease lease = svc.admitOutsideTx();
+                    try {
+                        assertThat(holderLive())
+                            .as("запрос %d: holder жив внутри скоупа", req)
+                            .isTrue();
+                        assertThat(svc.runWithBudget(() -> "r" + req, "req-" + req))
+                            .isEqualTo("r" + req);
+                    } finally {
+                        lease.close();
+                    }
+                    assertThat(holderPresent())
+                        .as("запрос %d: holder пуст после close (иначе — просачивание)", req)
+                        .isFalse();
+                }
+                // Запрос с исключением внутри скоупа: try-with-resources всё
+                // равно закрывает лизу.
+                try (AdmissionLease lease = svc.admitOutsideTx()) {
+                    assertThat(holderLive()).as("holder жив до исключения").isTrue();
+                    throw new IllegalStateException("boom-in-scope");
+                } catch (IllegalStateException expected) {
+                    assertThat(expected).hasMessage("boom-in-scope");
+                }
+                assertThat(holderPresent())
+                    .as("holder пуст и после исключения в скоупе")
+                    .isFalse();
+            } catch (Throwable t) {
+                failure.set(t);
+            }
+        }, "holder-reuse-probe");
+        worker.start();
+        worker.join(60_000);
+        assertThat(worker.isAlive())
+            .as("поток-проба завершился, а не завис")
+            .isFalse();
+        if (failure.get() != null) {
+            throw new AssertionError("holder-изоляция нарушена внутри потока", failure.get());
+        }
+        assertThat(permits())
+            .as("все слоты возвращены после трёх запросов одного потока")
+            .isEqualTo(2);
+    }
+
+    /**
+     * WO-ENG-35 раунд 2 (Б-1): протухший holder — не тихий fail-open.
+     *
+     * <p>Симуляция: holder потока указывает на ПОГАШЕННУЮ резервацию
+     * ({@code live == false} — как после close без {@code remove()}), пермиты
+     * при этом СВОБОДНЫ. Если бы submit доверял любому не-null holder
+     * (мутация «убрать live-проверку»), eval прошёл бы мгновенно и БЕЗ счёта —
+     * защита молча выключена для потока. Правильно: holder сносится, eval идёт
+     * обычным путём, факт считается ({@code in-tx} +1), результат — успех
+     * (место реально есть, сбрасывать нечего).
+     *
+     * <p>POF-мутация (в ПРОД-коде): {@code held != null && !held.live.get()}
+     * → считать резервацией (или удалить stale-ветку целиком) → дельта in-tx
+     * 0.0 вместо 1.0 → этот тест КРАСНЫЙ СТАБИЛЬНО (факты, не тайминг).
+     */
+    @Test
+    void staleReservation_failClosed_countedNotSilent() throws Exception {
+        newSvc(10);
+        double inTxBefore = inTxCount();
+        assertThat(permits()).isEqualTo(2);
+
+        // Протухшая резервация в holder ТЕКУЩЕГО потока (runWithBudget ниже
+        // идёт на нём же — ThreadLocal совпадёт).
+        ScriptServiceImpl.Reservation stale = new ScriptServiceImpl.Reservation();
+        stale.live.set(false);
+        setHolder(stale);
+
+        assertThat(svc.runWithBudget(() -> "stale-ok", "stale-eval"))
+            .as("eval при протухшем holder выполняется (место есть)")
+            .isEqualTo("stale-ok");
+        assertThat(inTxCount() - inTxBefore)
+            .as("протухший holder посчитан (не тихий fail-open)")
+            .isEqualTo(1.0);
+        assertThat(holderPresent())
+            .as("протухший holder снесён, а не оставлен гнить")
+            .isFalse();
+        assertThat(permits())
+            .as("пермиты целы: протухший holder чужого слота не трогал")
+            .isEqualTo(2);
+    }
+
+    /** Holder текущего потока пуст? (рефлексия — поле приватное). */
+    private boolean holderPresent() throws Exception {
+        java.lang.reflect.Field f = ScriptServiceImpl.class.getDeclaredField("reservationHolder");
+        f.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        ThreadLocal<?> holder = (ThreadLocal<?>) f.get(svc);
+        return holder.get() != null;
+    }
+
+    /** Holder текущего потока указывает на ЖИВУЮ резервацию? */
+    private boolean holderLive() throws Exception {
+        java.lang.reflect.Field f = ScriptServiceImpl.class.getDeclaredField("reservationHolder");
+        f.setAccessible(true);
+        Object res = ((ThreadLocal<?>) f.get(svc)).get();
+        if (res == null) {
+            return false;
+        }
+        java.lang.reflect.Field live = res.getClass().getDeclaredField("live");
+        live.setAccessible(true);
+        return ((java.util.concurrent.atomic.AtomicBoolean) live.get(res)).get();
+    }
+
+    /** Положить значение в holder текущего потока (для симуляции протухшего). */
+    private void setHolder(Object value) throws Exception {
+        java.lang.reflect.Field f = ScriptServiceImpl.class.getDeclaredField("reservationHolder");
+        f.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        ThreadLocal<Object> holder = (ThreadLocal<Object>) f.get(svc);
+        holder.set(value);
+    }
+
     @Test
     void gatedEvaluateExpression_functional() {
         newSvc(10);
