@@ -13,14 +13,122 @@ const props = defineProps<{
   completedElementIds?: string[]
   /** Camunda Operate-style token counts shown as a badge on top of each element. */
   elementCounts?: Record<string, number>
+  /**
+   * WO-UI-25 (критерий 8): плоскость drill-down как id ФИГУРЫ подпроцесса
+   * (не plane-id с суффиксом — та же форма, что в ?plane= и в elementClick).
+   * null/undefined = корневая плоскость. Реставрация — тем же вызовом, что
+   * делает оверлей drill-down (canvas.setRootElement(findRoot(planeId))).
+   */
+  planeElementId?: string | null
 }>()
 
 const emit = defineEmits<{
   elementClick: [elementId: string]
+  /** WO-UI-25: смена плоскости (drill-down, крошка, программное). null = корень. */
+  planeChange: [elementId: string | null]
 }>()
 
 const container = ref<HTMLDivElement>()
 let viewer: InstanceType<typeof NavigatedViewer> | null = null
+/** Последняя применённая плоскость — защита от петли planeChange→prop→set. */
+let appliedPlane: string | null | undefined = undefined
+/** Корневая плоскость (plane процесса верхнего уровня, id без суффикса
+ * _plane) — возврат в корень без поиска. Вычисляется после importXML. */
+let initialRoot: { id: string } | null = null
+
+function findProcessRootPlane(): { id: string } | null {
+  if (!viewer) return null
+  try {
+    // Живым Chromium доказано: elementRegistry.getAll() plane-roots НЕ
+    // содержит — только элементы АКТИВНОЙ plane (процесса верхнего уровня
+    // в реестре вообще нет). Поэтому корень ищем через definitions-модель
+    // (bpmn:Process среди rootElements) + canvas.findRoot(processId).
+    // API: viewer.getDefinitions(), НЕ viewer.get('definitions') (такого
+    // сервиса нет — проверено по BaseViewer.js).
+    const definitions = (viewer as unknown as {
+      getDefinitions?: () => { rootElements?: { $type?: string; id?: string }[] } | undefined
+    }).getDefinitions?.()
+    const canvas = viewer.get('canvas') as {
+      findRoot: (id: string) => { id: string } | null
+    }
+    for (const re of definitions?.rootElements ?? []) {
+      if (re.$type !== 'bpmn:Process' || !re.id) continue
+      const plane = canvas.findRoot(re.id)
+      if (plane) return plane
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+/** Подавляем эхо root.set, вызванного нашей же реставрацией. */
+let restoringPlane = false
+
+function planeIdOf(shapeId: string): string {
+  return `${shapeId}_plane`
+}
+
+function shapeIdOfPlane(planeId: string): string | null {
+  return planeId.endsWith('_plane') ? planeId.slice(0, -'_plane'.length) : null
+}
+
+function currentPlaneShapeId(): string | null {
+  if (!viewer) return null
+  try {
+    const canvas = viewer.get('canvas') as { getRootElement: () => { id: string } }
+    return shapeIdOfPlane(canvas.getRootElement().id)
+  } catch {
+    return null
+  }
+}
+
+/** Применить planeElementId к уже отрисованной диаграмме (без пересоздания). */
+function applyPlane(): void {
+  if (!viewer) return
+  const want = props.planeElementId ?? null
+  if (want === appliedPlane) return
+  try {
+    const canvas = viewer.get('canvas') as {
+      findRoot: (id: string) => { id: string } | null
+      setRootElement: (root: { id: string }) => void
+      zoom: (arg: string) => void
+    }
+    const elementRegistry = viewer.get('elementRegistry') as {
+      get: (id: string) => unknown
+    }
+    if (want === null) {
+      // Корень: плоскость, активная сразу после importXML (сохранена в
+      // initialRoot — прямой getRootElements падает внутри diagram-js на
+      // диаграммах с несколькими plane).
+      if (initialRoot && currentPlaneShapeId() !== null) {
+        restoringPlane = true
+        try {
+          canvas.setRootElement(initialRoot)
+        } finally {
+          restoringPlane = false
+        }
+        try {
+          canvas.zoom('fit-viewport')
+        } catch {
+          // нулевой размер контейнера — не фатально
+        }
+      }
+    } else {
+      // Фигура обязана существовать в реестре — иначе plane из чужой
+      // диаграммы (устаревший deep link после передеплоя): остаёмся в корне.
+      if (!elementRegistry.get(want)) return
+      const plane = canvas.findRoot(planeIdOf(want))
+      if (!plane) return
+      restoringPlane = true
+      canvas.setRootElement(plane)
+      canvas.zoom('fit-viewport')
+      restoringPlane = false
+    }
+    appliedPlane = want
+  } catch (err) {
+    console.error('[BpmnViewer] Failed to apply plane:', err)
+  }
+}
 
 async function render() {
   if (!container.value || !props.xml) return
@@ -35,14 +143,41 @@ async function render() {
 
   try {
     await viewer.importXML(props.xml)
-    const canvas = viewer.get('canvas') as { zoom: (arg: string) => void; addMarker: (id: string, cls: string) => void; removeMarker: (id: string, cls: string) => void; getRootElement: () => { id: string } }
-    canvas.zoom('fit-viewport')
-
-    applyHighlights()
-    applyCountOverlays()
-    setupClickHandler()
   } catch (err) {
     console.error('Failed to render BPMN:', err)
+    return
+  }
+  // WO-UI-25: обработчики и реставрация плоскости — ДО маркеров и вне их
+  // try/catch. Раньше один отсутствующий на текущей плоскости id (например
+  // активность ВНУТРИ схлопнутого подпроцесса — её нет в реестре корневой
+  // плоскости) ронял applyHighlights исключением, и всё ниже — клики,
+  // plane-handler, applyPlane — не выполнялось вообще: viewer был немым.
+  setupClickHandler()
+  setupPlaneHandler()
+  // WO-UI-25: реставрация плоскости ПОСЛЕ отрисовки (deep link, F5) —
+  // appliedPlane сбрасывается на каждый import: новый xml = новый граф.
+  // initialRoot — plane ПРОЦЕССА верхнего уровня (НЕ getRootElement сразу
+  // после importXML: при нескольких plane в DI import открывает первую plane
+  // по порядку DI, а это может быть плоскость подпроцесса — живым Chromium
+  // доказано: SubProcess_1_plane вместо корня).
+  appliedPlane = undefined
+  initialRoot = findProcessRootPlane()
+  applyPlane()
+  try {
+    const canvas = viewer.get('canvas') as { zoom: (arg: string) => void }
+    canvas.zoom('fit-viewport')
+  } catch {
+    // нулевой размер контейнера (скрытый таб) — не фатально
+  }
+  try {
+    applyHighlights()
+  } catch (err) {
+    console.error('Failed to apply BPMN highlights:', err)
+  }
+  try {
+    applyCountOverlays()
+  } catch (err) {
+    console.error('Failed to apply BPMN overlays:', err)
   }
 }
 
@@ -72,8 +207,8 @@ function applyHighlights() {
   if (!viewer) return
   const canvas = viewer.get('canvas') as { addMarker: (id: string, cls: string) => void; removeMarker: (id: string, cls: string) => void }
 
-  // Clear all markers
-  const root = (viewer.get('canvas') as { getRootElement: () => { id: string } }).getRootElement()
+  // Clear all markers (без getRootElement: до выбора плоскости он бросает
+  // внутри diagram-js, а здесь вообще не нужен)
   const elementRegistry = viewer.get('elementRegistry') as { forEach: (fn: (el: { id: string }) => void) => void }
   elementRegistry.forEach((el: { id: string }) => {
     canvas.removeMarker(el.id, 'highlight-active')
@@ -81,26 +216,28 @@ function applyHighlights() {
     canvas.removeMarker(el.id, 'highlight-completed')
   })
 
-  // Apply active markers
-  if (props.activeElementIds) {
-    for (const id of props.activeElementIds) {
-      canvas.addMarker(id, 'highlight-active')
+  // Маркеры — по одному id за try: активность ВНУТРИ схлопнутого подпроцесса
+  // отсутствует в реестре текущей (корневой) плоскости, и addMarker на неё
+  // бросает. Один такой id раньше ронял весь проход (см. render выше).
+  function mark(ids: string[] | undefined, cls: string) {
+    if (!ids) return
+    for (const id of ids) {
+      try {
+        canvas.addMarker(id, cls)
+      } catch {
+        // id нет на текущей плоскости — не подсвечиваем, идём дальше
+      }
     }
   }
+
+  // Apply active markers
+  mark(props.activeElementIds, 'highlight-active')
 
   // Apply incident markers
-  if (props.incidentElementIds) {
-    for (const id of props.incidentElementIds) {
-      canvas.addMarker(id, 'highlight-incident')
-    }
-  }
+  mark(props.incidentElementIds, 'highlight-incident')
 
   // Apply completed markers
-  if (props.completedElementIds) {
-    for (const id of props.completedElementIds) {
-      canvas.addMarker(id, 'highlight-completed')
-    }
-  }
+  mark(props.completedElementIds, 'highlight-completed')
 }
 
 function setupClickHandler() {
@@ -111,6 +248,27 @@ function setupClickHandler() {
     // clicking a text label yields the "<id>_label" element — resolve it to the real element
     const id = e.element.labelTarget?.id || e.element.id
     if (id) emit('elementClick', id)
+  })
+}
+
+/**
+ * WO-UI-25 (критерий 8): пользовательская смена плоскости (drill-down
+ * оверлей, крошки DrilldownBreadcrumbs) наружу через planeChange — страница
+ * пишет её в ?plane=. Эхо нашей программной реставрации подавляется флагом
+ * restoringPlane, иначе петля planeChange→prop→applyPlane.
+ */
+function setupPlaneHandler() {
+  if (!viewer) return
+  const eventBus = viewer.get('eventBus') as {
+    on: (event: string, fn: (e: { element: { id: string } }) => void) => void
+  }
+  eventBus.on('root.set', (e: { element: { id: string } }) => {
+    if (restoringPlane || !e.element) return
+    const shapeId = shapeIdOfPlane(e.element.id)
+    if (shapeId !== appliedPlane) {
+      appliedPlane = shapeId
+      emit('planeChange', shapeId)
+    }
   })
 }
 
@@ -133,10 +291,15 @@ function fitViewport() {
 }
 
 watch(() => props.xml, () => { render() })
+// WO-UI-25: внешняя простановка плоскости (F5/deep link/back — через prop,
+// пользовательский drill-down — через planeChange наружу) без пересоздания.
 watch(() => props.activeElementIds, () => { applyHighlights() }, { deep: true })
 watch(() => props.incidentElementIds, () => { applyHighlights() }, { deep: true })
 watch(() => props.completedElementIds, () => { applyHighlights() }, { deep: true })
 watch(() => props.elementCounts, () => { applyCountOverlays() }, { deep: true })
+// WO-UI-25: внешняя простановка плоскости (back/forward, deep link, сброс
+// в корень) — без пересоздания viewer, только setRootElement.
+watch(() => props.planeElementId, () => { applyPlane() })
 
 // WO-ACL-11 criterion 39: on window resize the diagram is recalculated — bpmn-js
 // has its own call for that (canvas.zoom('fit-viewport')), we just re-invoke it.

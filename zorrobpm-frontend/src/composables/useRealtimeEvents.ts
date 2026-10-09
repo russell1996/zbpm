@@ -5,6 +5,7 @@ import { useTaskStore } from '@/stores/task'
 import { useIncidentStore } from '@/stores/incident'
 import api from '@/services/api'
 import { sharedRefresh } from '@/services/refreshInterceptor'
+import { publishRealtimeEvent } from '@/services/realtimeBus'
 
 /**
  * WO-UI-18, часть A — живой realtime-канал для встроенного SPA.
@@ -39,16 +40,52 @@ import { sharedRefresh } from '@/services/refreshInterceptor'
 // новый тип, его нужно добавить и сюда, иначе событие молча не дойдёт:
 // именованные SSE-события без слушателя никуда не падают (нет onmessage-фолбэка,
 // сервер всегда ставит .name()).
+// WO-UI-25 (критерий 2): подписано ВСЁ, что сервер реально шлёт UI
+// (DomainEventType минус осознанный ignore-list контрактного теста).
+// activity.completed — главный «двигательный» тип (~70% прод-потока),
+// user-task.assigned/unassigned — смена исполнителя без смены статуса.
 export const REALTIME_EVENT_TYPES = [
   'process-instance.started',
   'process-instance.completed',
   'process-instance.cancelled',
+  'activity.completed',
   'user-task.created',
   'user-task.completed',
+  'user-task.assigned',
+  'user-task.unassigned',
   'service-task.created',
   'incident.raised',
   'incident.resolved',
 ] as const
+
+/**
+ * WO-UI-25 — общее здоровье realtime-канала для подписчиков шины.
+ *
+ * useRealtimeEvents() создаёт локальные ref на вызов (у MainLayout свой
+ * экземпляр), а детальной странице инстанса нужен тот же сигнал для
+ * фолбэк-опроса и индикатора — поэтому каждый экземпляр зеркалит своё
+ * состояние сюда. В проде экземпляр один (MainLayout), last-writer-wins
+ * в тестах с несколькими экземплярами — приемлемо и задокументировано.
+ */
+export const sharedRealtimeHealth = {
+  isConnected: ref(false),
+  /** Канал был жив хотя бы раз — отличает «ещё подключаемся» от «упал». */
+  wasConnected: ref(false),
+  realtimeDown: ref(false),
+  sessionExpired: ref(false),
+}
+
+function mirrorHealth(patch: {
+  isConnected?: boolean
+  wasConnected?: boolean
+  realtimeDown?: boolean
+  sessionExpired?: boolean
+}): void {
+  if (patch.isConnected !== undefined) sharedRealtimeHealth.isConnected.value = patch.isConnected
+  if (patch.wasConnected !== undefined) sharedRealtimeHealth.wasConnected.value = patch.wasConnected
+  if (patch.realtimeDown !== undefined) sharedRealtimeHealth.realtimeDown.value = patch.realtimeDown
+  if (patch.sessionExpired !== undefined) sharedRealtimeHealth.sessionExpired.value = patch.sessionExpired
+}
 
 // Тот же baseURL-резолвинг, что в services/api.ts: EventSource обязан идти на
 // тот же origin/base, иначе cookie-auth не приложится.
@@ -117,6 +154,9 @@ export function useRealtimeEvents() {
     useProcessStore().handleEvent(envelope)
     useTaskStore().handleEvent(envelope)
     useIncidentStore().handleEvent(envelope)
+    // WO-UI-25: шина для подписчиков с собственным фильтром (детальная
+    // страница инстанса) — транспорт один, потребителей двое.
+    publishRealtimeEvent(envelope)
   }
 
   function onNamedEvent(event: Event) {
@@ -145,6 +185,8 @@ export function useRealtimeEvents() {
       sessionExpired.value = false
       realtimeDown.value = false
       reconnectAttempts = 0
+      // WO-UI-25: зеркало для подписчиков шины (индикатор + фолбэк-опрос).
+      mirrorHealth({ isConnected: true, wasConnected: true, realtimeDown: false, sessionExpired: false })
     }
     // WO-UI-18: намеренно НЕ закрываем source на transient-ошибке — нативный
     // SSE-автореконнект (reconnectTime(3000) от сервера) сам поднимет
@@ -154,6 +196,7 @@ export function useRealtimeEvents() {
     // если refresh мёртв — честный sessionExpired вместо вечного «retrying».
     source.onerror = () => {
       isConnected.value = false
+      mirrorHealth({ isConnected: false })
       if (isClosed(source)) {
         scheduleReconnect()
       } else {
@@ -215,6 +258,7 @@ export function useRealtimeEvents() {
     sessionExpired.value = true
     realtimeDown.value = false
     error.value = 'Session expired, please sign in again'
+    mirrorHealth({ realtimeDown: false, sessionExpired: true })
   }
 
   // WO-REL-57: канал мёртв при живой сессии — честный сигнал + ручной retry
@@ -223,12 +267,14 @@ export function useRealtimeEvents() {
     realtimeDown.value = true
     sessionExpired.value = false
     error.value = 'Realtime unavailable, retrying…'
+    mirrorHealth({ realtimeDown: true, sessionExpired: false })
   }
 
   function retryConnection() {
     reconnectAttempts = 0
     realtimeDown.value = false
     error.value = null
+    mirrorHealth({ realtimeDown: false })
     if (eventSource) {
       eventSource.close()
       eventSource = null
@@ -255,6 +301,7 @@ export function useRealtimeEvents() {
     lastRefreshOk = null
     sessionExpired.value = false
     realtimeDown.value = false
+    mirrorHealth({ isConnected: false, realtimeDown: false, sessionExpired: false })
     if (eventSource) {
       eventSource.close()
       eventSource = null

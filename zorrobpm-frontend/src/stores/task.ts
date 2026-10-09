@@ -178,6 +178,10 @@ export const useTaskStore = defineStore('task', () => {
     switch (envelope.type) {
       case 'user-task.created':
       case 'user-task.completed':
+      // WO-UI-25 (критерий 2): смена исполнителя не меняет статус, но меняет
+      // видимость/ответственность — список перечитываем тем же фильтром.
+      case 'user-task.assigned':
+      case 'user-task.unassigned':
         fetchUserTasks(lastUserTasksQuery)
         break
       case 'service-task.created':
