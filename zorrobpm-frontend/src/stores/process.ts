@@ -165,6 +165,45 @@ export const useProcessStore = defineStore('process', () => {
     }
   }
 
+  // WO-UI-25 (критерий 3): живое обновление activities БЕЗ сброса пагинации.
+  // fetchActivities перезапускает окно с 0-й страницы (кнопка «догрузить ещё»
+  // теряет уже подгруженное), а здесь перечитывается ровно то окно, которое
+  // пользователь уже открыл (0..loadedActivityPages-1, обычно 1 запрос).
+  // activity.completed намеренно НЕ идёт через process.handleEvent списком:
+  // высокочастотный тип обновляет только открытую детальную страницу через
+  // useInstanceLiveUpdates (дебаунс), списки инстансов он не меняет.
+  async function refreshActivities(id: string) {
+    const pages = Math.max(loadedActivityPages, 1)
+    const myRequest = ++activitiesRequest
+    try {
+      let all: ActivityInstance[] = []
+      let total = 0
+      for (let p = 0; p < pages; p++) {
+        const page = await instanceService.getProcessInstanceActivitiesPaged(
+          id, p, currentActivitiesPageSize)
+        if (myRequest !== activitiesRequest) return
+        if (p === 0) {
+          all = page.data
+          total = page.totalElements
+        } else {
+          all = [...all, ...page.data]
+        }
+        // Сервер отдал короткую страницу — дальше страниц нет, лишний
+        // запрос не делаем (окно могло сжаться между чтениями).
+        if (page.data.length < currentActivitiesPageSize) {
+          total = page.totalElements
+          break
+        }
+      }
+      currentActivities.value = all
+      currentActivitiesTotal.value = total
+      hasMoreActivities.value = all.length < total
+    } catch (e) {
+      if (myRequest !== activitiesRequest) return
+      error.value = e instanceof Error ? e.message : 'Failed to load activities'
+    }
+  }
+
   async function fetchSubprocesses(id: string) {
     try {
       const result = await instanceService.getProcessInstances({ parentProcessInstanceId: id, pageIndex: 0, pageSize: 100 })
@@ -241,6 +280,7 @@ export const useProcessStore = defineStore('process', () => {
     fetchInstance,
     fetchActivities,
     fetchMoreActivities,
+    refreshActivities,
     fetchSubprocesses,
     fetchVariables,
     startInstance,
