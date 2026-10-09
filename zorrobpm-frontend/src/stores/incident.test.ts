@@ -15,18 +15,29 @@ describe('incidentStore handleEvent', () => {
     vi.clearAllMocks()
   })
 
-  it('incident.raised refreshes incident list', async () => {
+  // WO-UI-26 Доп.4: событие → адресный патч (один GET сущности), список — нет.
+  it('incident.raised patches one row via single-entity GET, no list refetch', async () => {
     const store = useIncidentStore()
-    store.handleEvent({ sequence: 1, id: 't1', type: 'incident.raised', version: 1, occurredAt: '2026-07-20T10:00:00Z', data: {} })
-    await vi.dynamicImportSettled()
-    expect(incidentService.getIncidents).toHaveBeenCalled()
+    vi.mocked(incidentService.getIncident).mockResolvedValue({
+      id: 'inc9', activityId: 'a9', message: 'm', createdAt: '2026-07-20T10:00:00Z',
+      completedAt: null, processName: null, processInstanceId: 'pi-1', bpmnElementId: 'el-9', elementName: null,
+    })
+    store.handleEvent({ sequence: 1, id: 't1', type: 'incident.raised', version: 1, occurredAt: '2026-07-20T10:00:00Z', data: { incidentId: 'inc9' } })
+    await vi.waitFor(() => expect(incidentService.getIncident).toHaveBeenCalledWith('inc9'))
+    expect(incidentService.getIncidents).not.toHaveBeenCalled()
+    expect(store.loading).toBe(false)
   })
 
-  it('incident.resolved refreshes incident list', async () => {
+  it('incident.resolved patches one row via single-entity GET, no list refetch', async () => {
     const store = useIncidentStore()
-    store.handleEvent({ sequence: 2, id: 't2', type: 'incident.resolved', version: 1, occurredAt: '2026-07-20T10:00:00Z', data: {} })
-    await vi.dynamicImportSettled()
-    expect(incidentService.getIncidents).toHaveBeenCalled()
+    vi.mocked(incidentService.getIncident).mockResolvedValue({
+      id: 'inc9', activityId: 'a9', message: 'm', createdAt: '2026-07-20T10:00:00Z',
+      completedAt: '2026-07-20T10:00:00Z', processName: null, processInstanceId: 'pi-1', bpmnElementId: 'el-9', elementName: null,
+    })
+    store.handleEvent({ sequence: 2, id: 't2', type: 'incident.resolved', version: 1, occurredAt: '2026-07-20T10:00:00Z', data: { incidentId: 'inc9' } })
+    await vi.waitFor(() => expect(incidentService.getIncident).toHaveBeenCalledWith('inc9'))
+    expect(incidentService.getIncidents).not.toHaveBeenCalled()
+    expect(store.loading).toBe(false)
   })
 
   it('unrelated event does not trigger refresh', () => {

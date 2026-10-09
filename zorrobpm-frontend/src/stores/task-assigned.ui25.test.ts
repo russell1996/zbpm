@@ -31,18 +31,29 @@ describe('WO-UI-25 criterion 2: task store handles assign/unassign events', () =
     vi.clearAllMocks()
   })
 
-  it('user-task.assigned refetches the user-task list', async () => {
+  // WO-UI-26 Доп.4: assign/unassign — адресный патч одним GET сущности
+  // (assignee из data), список — нет.
+  it('user-task.assigned patches one row via single-entity GET, no list refetch', async () => {
     const store = useTaskStore()
-    store.handleEvent(envelope('user-task.assigned'))
-    await vi.dynamicImportSettled()
-    expect(taskService.getUserTasks).toHaveBeenCalled()
+    vi.mocked(taskService.getUserTask).mockResolvedValue({
+      id: 'a1', code: 'c', name: 'A', processInstanceId: 'pi-1', processDefinitionId: 'pd-1',
+      formKey: null, status: 'CREATED', createdAt: '2026-10-09T00:00:00Z', completedAt: null,
+      assignee: 'petrov',
+    } as never)
+    store.handleEvent({ ...envelope('user-task.assigned'), data: { activityId: 'a1' } })
+    await vi.waitFor(() => expect(taskService.getUserTask).toHaveBeenCalledWith('a1'))
+    expect(taskService.getUserTasks).not.toHaveBeenCalled()
   })
 
-  it('user-task.unassigned refetches the user-task list', async () => {
+  it('user-task.unassigned patches one row via single-entity GET, no list refetch', async () => {
     const store = useTaskStore()
-    store.handleEvent(envelope('user-task.unassigned'))
-    await vi.dynamicImportSettled()
-    expect(taskService.getUserTasks).toHaveBeenCalled()
+    vi.mocked(taskService.getUserTask).mockResolvedValue({
+      id: 'a1', code: 'c', name: 'A', processInstanceId: 'pi-1', processDefinitionId: 'pd-1',
+      formKey: null, status: 'CREATED', createdAt: '2026-10-09T00:00:00Z', completedAt: null,
+    })
+    store.handleEvent({ ...envelope('user-task.unassigned'), data: { activityId: 'a1' } })
+    await vi.waitFor(() => expect(taskService.getUserTask).toHaveBeenCalledWith('a1'))
+    expect(taskService.getUserTasks).not.toHaveBeenCalled()
   })
 
   it('assign/unassign do not touch the service-task list', async () => {
