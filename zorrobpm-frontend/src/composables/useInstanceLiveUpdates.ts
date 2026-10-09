@@ -111,10 +111,16 @@ export function useInstanceLiveUpdates(options: {
     if (dead) {
       liveState.value = 'polling'
       startPoll()
-    } else if (health.isConnected.value || !health.wasConnected.value) {
-      // Канал жив — либо страница только открылась (initial fetch покрывает).
+    } else if (health.isConnected.value) {
+      // Канал жив — данные идут.
       liveState.value = 'live'
       stopPoll()
+    } else if (!health.wasConnected.value) {
+      // B-2 (verifier): холодный старт/deep link — SSE ещё не установлен,
+      // initial fetch покрывает первую отрисовку. Зелёное «live» здесь врало
+      // бы; честное состояние — reconnecting (канал в пути) + опрос-страж.
+      liveState.value = 'reconnecting'
+      startPoll()
     } else {
       // Был жив и упал, нативный автореконнект в полёте — данные не идут,
       // опрашиваем, пока канал не поднимется или не будет объявлен мёртвым.

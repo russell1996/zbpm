@@ -64,17 +64,19 @@ describe('useInstanceViewState (WO-UI-25 criterion 8)', () => {
     wrapper.unmount()
   })
 
-  it('local change lands in the address via replace (no history entry)', async () => {
+  it('local change lands in the address via replace (back skips tab clicks)', async () => {
     const router = await makeRouter('/processes/instances/pi-1')
     const { wrapper, state } = await mountState(router)
     state.tab.value = 'history'
     state.element.value = 'Sub_Task'
-    state.plane.value = 'SubProcess_1'
-    state.activitiesPage.value = 1
     await flushPromises()
-    expect(router.currentRoute.value.query).toEqual({
-      tab: 'history', element: 'Sub_Task', plane: 'SubProcess_1', page: '1',
-    })
+    expect(router.currentRoute.value.query).toEqual({ tab: 'history', element: 'Sub_Task' })
+    // O-2: replace, не push — история не засорена: back уходит со страницы,
+    // а не «назад по табам».
+    await router.back()
+    await flushPromises()
+    // Стартовой записи в memory history нет — остались на месте.
+    expect(router.currentRoute.value.path).toBe('/processes/instances/pi-1')
     wrapper.unmount()
   })
 
