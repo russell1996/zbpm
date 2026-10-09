@@ -123,11 +123,15 @@ describe('ProcessInstanceDetail — WO-VT-3 round 2 IA (E-VT3-1)', () => {
   })
 
   it('legacy ?tab=presets redirects to ?tab=variables without errors', async () => {
-    routeHolder.query = { tab: 'presets' }
+    // Остальные параметры адреса (?element/?plane/?page) при редиректе
+    // НЕ теряются (явное требование CTO по пересадке).
+    routeHolder.query = { tab: 'presets', element: 'taskA', plane: 'sub1', page: '2' }
     const w = render()
     await flushPromises()
     expect(mockReplace).toHaveBeenCalledWith(
-      expect.objectContaining({ query: expect.objectContaining({ tab: 'variables' }) }),
+      expect.objectContaining({
+        query: expect.objectContaining({ tab: 'variables', element: 'taskA', plane: 'sub1', page: '2' }),
+      }),
     )
     expect((w.vm as unknown as { activeTab: string }).activeTab).toBe('variables')
   })
