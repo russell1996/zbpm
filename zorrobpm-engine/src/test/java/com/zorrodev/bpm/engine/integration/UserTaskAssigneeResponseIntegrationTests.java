@@ -6,6 +6,7 @@ import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.contract.model.UserTask;
+import com.zorrodev.bpm.engine.PostgresIT;
 import com.zorrodev.bpm.engine.TestMain;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
@@ -13,6 +14,7 @@ import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -173,6 +175,10 @@ public class UserTaskAssigneeResponseIntegrationTests {
      * битый JSON в НЕРЕЛЕВАНТНОЙ переменной не ломает MI-спавн. Валидации
      * {@code variables} при старте нет, значение достижимо публичным API.
      * На ветке до фикса — инцидент и 0 задач (как на master — 2 задачи).
+     *
+     * <p>H2-вариант (гоняется в обычном surefire-прогоне). PG-правда того же
+     * сценария — {@link BrokenUnrelatedJsonPgIT#criterion7pg} (тот же BPMN,
+     * те же переменные, реальный PostgreSQL через {@code PostgresIT}).
      */
     @Transactional
     @Test
@@ -186,6 +192,55 @@ public class UserTaskAssigneeResponseIntegrationTests {
         assertThat(tasks).extracting(UserTask::getAssignee)
             .containsExactlyInAnyOrder("21346", "78901");
         assertThat(incidentRepository.findAll(IncidentRepository.byProcessInstanceId(pi))).isEmpty();
+    }
+
+    /**
+     * WO-IN-4 раунд 2, Б-1: PG-правда сценария criterion7 — тот же BPMN и те же
+     * переменные, но на реальном PostgreSQL (H2 ≠ PG по JSON-парсингу и чтению
+     * scope — класс P-17/P-22). Гоняется через failsafe ({@code -Dgroups=pg},
+     * {@code ci/run-pg-tests.sh}), не через surefire: профиль {@code pgtest}
+     * + {@code PostgresIT} сносят контекст под PG.
+     */
+    @Tag("pg")
+    public static class BrokenUnrelatedJsonPgIT extends PostgresIT {
+
+        @Autowired
+        private ProcessDefinitionService processDefinitionService;
+        @Autowired
+        private RuntimeService runtimeService;
+        @Autowired
+        private QueryService queryService;
+        @Autowired
+        private IncidentRepository incidentRepository;
+
+        @Test
+        void criterion7pg_brokenUnrelatedJsonDoesNotBreakMiSpawnOnPostgres() throws Exception {
+            String bpmn = Files.readString(Paths.get("src/test/files/test-in4-mi-assignee.bpmn"));
+            ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+            StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+            dto.setProcessDefinitionId(model.getId());
+            ProcessVariable employees = new ProcessVariable();
+            employees.setName("employees");
+            employees.setType(ProcessVariableType.JSON);
+            employees.setValue("[21346, 78901]");
+            ProcessVariable candidateGroup = new ProcessVariable();
+            candidateGroup.setName("candidateGroup");
+            candidateGroup.setType(ProcessVariableType.STRING);
+            candidateGroup.setValue("sales");
+            ProcessVariable junk = new ProcessVariable();
+            junk.setName("junk");
+            junk.setType(ProcessVariableType.JSON);
+            junk.setValue("not-json{{{_");
+            dto.setVariables(List.of(employees, candidateGroup, junk));
+            UUID pi = runtimeService.startProcessInstance(dto).getId();
+            UserTaskQuery q = new UserTaskQuery();
+            q.setProcessInstanceId(pi);
+            List<UserTask> tasks = queryService.findUserTasks(q, null).getData();
+            assertThat(tasks).hasSize(2);
+            assertThat(tasks).extracting(UserTask::getAssignee)
+                .containsExactlyInAnyOrder("21346", "78901");
+            assertThat(incidentRepository.findAll(IncidentRepository.byProcessInstanceId(pi))).isEmpty();
+        }
     }
 
     /**
