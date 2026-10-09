@@ -1,4 +1,11 @@
 // @vitest-environment jsdom
+// jsdom lacks PointerEvent capture APIs that reka-ui's SelectTrigger calls on pointerdown.
+if (!HTMLElement.prototype.hasPointerCapture) {
+  HTMLElement.prototype.hasPointerCapture = () => false
+  HTMLElement.prototype.setPointerCapture = () => {}
+  HTMLElement.prototype.releasePointerCapture = () => {}
+}
+
 /**
  * WO-VT-1 раунд 2 (Б-3): InstanceMessagePanel блокирует publish при
  * невалидных строках (pickerInvalid) — как 5 соседних страниц.
@@ -41,15 +48,10 @@ describe('InstanceMessagePanel — invalid guard (WO-VT-1 Б-3)', () => {
     await flushPromises()
     const picker = w.findComponent(PresetPicker)
     expect(picker.exists()).toBe(true)
-    await picker.findAll('button').find((b) => b.text().includes('presetAddVariable'))!.trigger('click')
-    await picker.find('input[id^="pv-name-"]').setValue('cfg')
-    await picker.find('select[id^="pv-type-"]').setValue('JSON')
-    await flushPromises()
-    // NOTE: LONG/DOUBLE rows render <input type="number"> — DOM-санитизация
-    // превращает любой нечисловой ввод в '' (ask-путь), поэтому невалидный
-    // (не ask) ввод проверяется через JSON-textarea: '{invalid}' — это
-    // pickerInvalid=true при пустом askMissing.
-    await picker.find('textarea[id^="pv-value-"]').setValue('{invalid}')
+    // NOTE: значение правится через emit редактора (shadcn-Textarea не
+    // отдаёт DOM value для setValue как нативный textarea).
+    const editor = picker.findComponent({ name: 'VariablesEditor' })
+    editor.vm.$emit('update:modelValue', [{ name: 'cfg', type: 'JSON', value: '{invalid}', allowEmptyString: null }])
     await flushPromises()
     const pvm = picker.vm as unknown as { missingAsk: string[]; hasErrors: boolean }
     expect(pvm.missingAsk).toEqual([])
@@ -68,10 +70,8 @@ describe('InstanceMessagePanel — invalid guard (WO-VT-1 Б-3)', () => {
     await w.find('#msg-correlation').setValue('corr-1')
     await flushPromises()
     const picker = w.findComponent(PresetPicker)
-    await picker.findAll('button').find((b) => b.text().includes('presetAddVariable'))!.trigger('click')
-    await picker.find('input[id^="pv-name-"]').setValue('n')
-    await picker.find('select[id^="pv-type-"]').setValue('LONG')
-    await picker.find('input[id^="pv-value-"]').setValue('7')
+    const editor = picker.findComponent({ name: 'VariablesEditor' })
+    editor.vm.$emit('update:modelValue', [{ name: 'n', type: 'LONG', value: '7', allowEmptyString: null }])
     await flushPromises()
     const publishBtn = w.findAll('button').find((b) => b.text().trim() === 'presetPublish')!
     expect((publishBtn.element as HTMLButtonElement).disabled).toBe(false)

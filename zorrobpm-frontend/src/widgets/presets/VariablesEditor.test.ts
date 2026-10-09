@@ -65,9 +65,12 @@ describe('VariablesEditor', () => {
     const w = mount(VariablesEditor, {
       props: { modelValue: [{ name: 'b', type: 'BOOLEAN', value: 'false' }] },
     })
-    const sw = w.find('button[role="switch"]')
-    expect(sw.attributes('aria-checked')).toBe('false')
-    await sw.trigger('click')
+    // WO-UI-27: shadcn Switch — кликаем рут SwitchRoot (reka меняет
+    // checked через update:checked, нативный клик jsdom не всегда доходит).
+    const sw = w.findComponent({ name: 'SwitchRoot' })
+    expect(sw.exists()).toBe(true)
+    sw.vm.$emit('update:checked', true)
+    await w.vm.$nextTick()
     const emitted = w.emitted('update:modelValue')![0][0] as Array<{ value: string }>
     expect(emitted[0].value).toBe('true')
   })
@@ -91,14 +94,13 @@ describe('VariablesEditor', () => {
     expect((input.element as HTMLInputElement).value).toBe('{{seq}}')
   })
 
-  it('row menu duplicates and deletes with inline confirm', async () => {
+  it('WO-UI-27: row menu and duplicate are gone (× deletes in one click)', () => {
     const w = mount(VariablesEditor, {
       props: { modelValue: [{ name: 'a', type: 'STRING', value: 'x' }] },
     })
-    await w.find('[data-testid="ve-row-menu"]').trigger('click')
-    await w.find('[data-testid="ve-row-menu-duplicate"]').trigger('click')
-    const dup = w.emitted('update:modelValue')![0][0] as Array<{ name: string }>
-    expect(dup).toHaveLength(2)
+    expect(w.find('[data-testid="ve-row-menu"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('presetDuplicateRow')
+    expect(w.find('[data-testid="ve-row-delete"]').exists()).toBe(true)
   })
 
   it('raw mode: invalid JSON blocks apply, valid JSON replaces the table', async () => {

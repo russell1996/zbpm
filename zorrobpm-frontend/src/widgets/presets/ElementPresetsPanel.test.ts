@@ -62,7 +62,7 @@ describe('ElementPresetsPanel', () => {
     expect(mockList).toHaveBeenCalledWith({ key: 'k', kind: 'USER_TASK', ref: 't1' })
   })
 
-  it('existing presets render cards with ⋯ menu (edit/duplicate/export/delete inside)', async () => {
+  it('WO-UI-27: cards expose edit/export/delete, no duplicate item', async () => {
     mockList.mockResolvedValue([{ ...PRESET }])
     const w = render()
     await flushPromises()
@@ -72,12 +72,13 @@ describe('ElementPresetsPanel', () => {
     await w.find('[data-testid="preset-card"] [data-testid="row-menu-button"]').trigger('click')
     await flushPromises()
     expect(w.text()).toContain('presetEdit')
-    expect(w.text()).toContain('presetDuplicate')
+    // WO-UI-27 доп.2: «Дублировать» убран совсем.
+    expect(w.text()).not.toContain('presetDuplicate')
     expect(w.text()).toContain('presetExport')
     expect(w.text()).toContain('presetCreateNew')
   })
 
-  it('delete via ⋯ menu needs confirm, then calls the service', async () => {
+  it('WO-UI-27: delete via ⋯ menu is one click, quiet undo toast', async () => {
     mockList.mockResolvedValue([{ ...PRESET }])
     const w = render()
     await flushPromises()
@@ -85,11 +86,11 @@ describe('ElementPresetsPanel', () => {
     await flushPromises()
     const delItem = w.find('[data-testid="row-menu-item-delete"]')
     await delItem.trigger('click')
-    expect(mockDelete).not.toHaveBeenCalled()
-    expect(w.text()).toContain('presetDeleteRowConfirm')
-    await w.findAll('button').find((b) => b.text().includes('presetDeleteRowYes'))!.trigger('click')
     await flushPromises()
+    // Без confirm: сервис вызван сразу, тост тихий (не красный confirm).
     expect(mockDelete).toHaveBeenCalledWith('p1')
+    expect(mockToast.success).toHaveBeenCalled()
+    expect(w.text()).not.toContain('presetDeleteRowConfirm')
   })
 
   it('favorite toggle calls the service and flips the star', async () => {

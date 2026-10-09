@@ -1,7 +1,7 @@
 import { toast } from 'vue-sonner'
 
 export function useToast() {
-  function success(message: string, options?: { action?: { label: string; onClick: () => void } }) {
+  function success(message: string, options?: { action?: { label: string; onClick: () => void }; duration?: number }) {
     toast.success(message, options)
   }
 

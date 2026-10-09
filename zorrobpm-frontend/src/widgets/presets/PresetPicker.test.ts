@@ -1,4 +1,11 @@
 // @vitest-environment jsdom
+// jsdom lacks PointerEvent capture APIs that reka-ui's SelectTrigger calls on pointerdown.
+if (!HTMLElement.prototype.hasPointerCapture) {
+  HTMLElement.prototype.hasPointerCapture = () => false
+  HTMLElement.prototype.setPointerCapture = () => {}
+  HTMLElement.prototype.releasePointerCapture = () => {}
+}
+
 /**
  * WO-VT-1 (фронт): PresetPicker — «Ручной ввод | Из шаблона», предпросмотр с
  * правкой копии, блокировка по «спросить», скрытие при выключенном флаге.
@@ -73,13 +80,22 @@ describe('PresetPicker', () => {
     await tabs[1].trigger('click')
     await flushPromises()
     expect(mockList).toHaveBeenCalledWith({ key: 'k', kind: 'START' })
-    expect(w.text()).toContain('base')
-    await w.find('#preset-select').setValue('p1')
+    // WO-UI-27: выбор шаблона — shadcn-Select (опции телепортированы в body).
+    const trigger = w.find('[data-testid="preset-select"]')
+    expect(trigger.exists()).toBe(true)
+    trigger.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
     await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
+    const opt = document.querySelector('[role="option"]') as HTMLElement
+    expect(opt, 'preset option renders').not.toBeNull()
+    opt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
     expect(mockGet).toHaveBeenCalledWith('p1')
-    // копия переменных — в редакторе (видны оба имени)
-    expect(w.html()).toContain('value="n"')
-    expect(w.html()).toContain('value="ask"')
+    // копия переменных — в редакторе (видны оба имени; shadcn-Input не
+    // гарантирует value-атрибут в html — проверяем DOM-значения).
+    const names = w.findAll('input[id^="pv-name-"]').map((el) => (el.element as HTMLInputElement).value)
+    expect(names).toEqual(expect.arrayContaining(['n', 'ask']))
   })
 
   it('ask-fields are reported and block apply', async () => {
@@ -87,8 +103,13 @@ describe('PresetPicker', () => {
     const tabs = w.findAll('[role="tab"]')
     await tabs[1].trigger('click')
     await flushPromises()
-    await w.find('#preset-select').setValue('p1')
+    const trigger2 = w.find('[data-testid="preset-select"]')
+    trigger2.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
     await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
+    ;(document.querySelector('[role="option"]') as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
     const vm = w.vm as unknown as { missingAsk: string[]; canApply: boolean }
     expect(vm.missingAsk).toEqual(['ask'])
     expect(vm.canApply).toBe(false)
@@ -99,8 +120,13 @@ describe('PresetPicker', () => {
     const tabs = w.findAll('[role="tab"]')
     await tabs[1].trigger('click')
     await flushPromises()
-    await w.find('#preset-select').setValue('p1')
+    const t3 = w.find('[data-testid="preset-select"]')
+    t3.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
     await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
+    ;(document.querySelector('[role="option"]') as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
     // заполняем ask-поле руками в копии
     const askInput = w.find('input[id="pv-value-1"]')
     await askInput.setValue('123e4567-e89b-12d3-a456-426614174000')
