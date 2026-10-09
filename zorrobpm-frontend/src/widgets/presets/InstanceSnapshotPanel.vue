@@ -49,6 +49,10 @@ function kindLabel(kind: string): string {
 const snapshotVars = ref<PresetVariable[]>([])
 
 function openDialog() {
+  // WO-VT-3 HOLD r1 (RT-5): программное открытие при 0 переменных не имеет
+  // смысла — стоим молча (кнопка и так disabled; сохранение всё равно
+  // заблокировано save-guard'ом).
+  if (!props.instanceVariables.length) return
   snapshotVars.value = props.instanceVariables.map((v) => ({
     name: v.name,
     type: v.type as PresetVariable['type'],

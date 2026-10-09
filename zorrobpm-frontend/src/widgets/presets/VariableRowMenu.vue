@@ -51,15 +51,36 @@ function close() {
 }
 
 function choose(id: string) {
+  // WO-VT-3 HOLD r1 (RT-3): фокус возвращается на кнопку ⋯ — клавиатурный
+  // пользователь не теряет место после выбора пункта.
   open.value = false
   document.removeEventListener('click', onDocumentClick)
   emit('select', id)
+  btnRef.value?.focus()
 }
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     e.stopPropagation()
     close()
+    return
+  }
+  // WO-VT-3 HOLD r1 (RT-4): стрелочная навигация в role=menu (ArrowUp/Down —
+  // по пунктам с зацикливанием, Home/End — к краям), как обещают
+  // role=menu/menuitem скринридеру.
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return
+  const items = [...(menuRef.value?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
+  if (!items.length) return
+  e.preventDefault()
+  const idx = items.indexOf(document.activeElement as HTMLButtonElement)
+  if (e.key === 'Home' || (e.key === 'ArrowUp' && (idx < 0 || idx === 0))) {
+    ;(e.key === 'Home' ? items[0] : items[items.length - 1]).focus()
+  } else if (e.key === 'End' || (e.key === 'ArrowDown' && idx === items.length - 1)) {
+    ;(e.key === 'End' ? items[items.length - 1] : items[0]).focus()
+  } else if (e.key === 'ArrowDown') {
+    items[idx + 1].focus()
+  } else if (e.key === 'ArrowUp') {
+    items[idx - 1].focus()
   }
 }
 

@@ -25,6 +25,12 @@ export function usePresetModal(
 
   function onKeydown(e: KeyboardEvent) {
     if (!openRef.value) return
+    // WO-VT-3 HOLD r1 (RT-1): JSON-фулскрин поверх диалога обрабатывает Esc
+    // сам (Esc-возврат в редактор с сохранением черновика). Ловушка диалога
+    // его не трогает — иначе Esc закрывал бы весь диалог с потерей ввода
+    // (бриф §2 требует ровно обратного).
+    const target = e.target as HTMLElement | null
+    if (target?.closest?.('[data-preset-fs]')) return
     if (e.key === 'Escape') {
       e.stopPropagation()
       onClose()

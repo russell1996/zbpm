@@ -116,6 +116,44 @@ function duplicateRow(i: number) {
   const copy = { ...props.modelValue[i] }
   const next = [...props.modelValue.slice(0, i + 1), copy, ...props.modelValue.slice(i + 1)]
   emit('update:modelValue', next)
+  // WO-VT-3 HOLD r1 (RT-3): фокус назад на кнопку ⋯ (меню размонтировано —
+  // фокус иначе падает в body и клавиатурный пользователь теряет место).
+  focusRowMenu(i)
+}
+
+function focusRowMenu(i: number) {
+  void nextTick().then(() => {
+    const btns = document.querySelectorAll('[data-testid="ve-row-menu"]')
+    ;(btns[i] as HTMLElement | undefined)?.focus()
+  })
+}
+
+/**
+ * WO-VT-3 HOLD r1 (RT-4): стрелочная навигация в меню строки (ArrowUp/Down —
+ * по пунктам с зацикливанием, Home/End — к краям), как обещают
+ * role=menu/menuitem. Хендлер делегирован на контейнер меню.
+ */
+function onRowMenuKeydown(e: KeyboardEvent, i: number) {
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End' && e.key !== 'Escape') return
+  const menu = (e.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="menuitem"]')
+  if (!menu.length) return
+  if (e.key === 'Escape') {
+    menuOpen.value = null
+    focusRowMenu(i)
+    return
+  }
+  e.preventDefault()
+  const items = [...menu]
+  const idx = items.indexOf(document.activeElement as HTMLButtonElement)
+  if (e.key === 'Home' || (e.key === 'ArrowUp' && (idx < 0 || idx === 0))) {
+    ;(e.key === 'Home' ? items[0] : items[items.length - 1]).focus()
+  } else if (e.key === 'End' || (e.key === 'ArrowDown' && idx === items.length - 1)) {
+    ;(e.key === 'End' ? items[items.length - 1] : items[0]).focus()
+  } else if (e.key === 'ArrowDown') {
+    items[idx + 1].focus()
+  } else if (e.key === 'ArrowUp') {
+    items[idx - 1].focus()
+  }
 }
 
 function removeRow(i: number) {
@@ -143,6 +181,9 @@ const jsonFs = ref<number | null>(null)
 const jsonFsText = ref('')
 const jsonFsError = ref<string | null>(null)
 const jsonLineCount = ref(0)
+// WO-VT-3 HOLD r1 (RT-1): для какой строки живёт черновик фулскрина.
+// Esc-возврат черновик не сбрасывает; сброс — только после «Применить».
+const jsonFsDraftFor = ref<number | null>(null)
 let formatTimer: ReturnType<typeof setTimeout> | null = null
 
 function autoGrow(el: HTMLTextAreaElement | null) {
@@ -188,10 +229,37 @@ function toggleJsonLines(i: number) {
 }
 
 function openJsonFullscreen(i: number) {
-  jsonFsText.value = props.modelValue[i].value
+  // WO-VT-3 HOLD r1 (RT-1): повторное открытие той же строки после
+  // Esc-возврата НЕ затирает черновик (бриф §2: «без потери»). Новая строка
+  // или применённый черновик — загружаем из props.
+  if (i !== jsonFsDraftFor.value) {
+    jsonFsText.value = props.modelValue[i].value
+    jsonFsDraftFor.value = i
+  }
   jsonFsError.value = null
-  jsonLineCount.value = props.modelValue[i].value.split('\n').length
+  jsonLineCount.value = (jsonFsText.value || '').split('\n').length
   jsonFs.value = i
+  // WO-VT-3 HOLD r1 (RT-1): фокус сразу в фулскрин — Esc-возврат и Ctrl+Enter
+  // работают без предварительного клика.
+  void nextTick().then(() => {
+    ;(document.querySelector(`#${idp.value}-jsonfs`) as HTMLElement | null)?.focus()
+  })
+}
+
+/**
+ * WO-VT-3 HOLD r1 (RT-1): Esc-возврат из фулскрина — закрывается ТОЛЬКО
+ * фулскрин, черновик jsonFsText цел (следующее открытие видит набранное),
+ * фокус возвращается в мини-редактор строки. Диалог при этом не трогаем:
+ * ловушку usePresetModal от Esc внутри фулскрина отводит guard по
+ * [data-preset-fs] (бриф §2: «Esc-возврат»).
+ */
+function closeJsonFullscreen() {
+  if (jsonFs.value === null) return
+  const i = jsonFs.value
+  jsonFs.value = null
+  void nextTick().then(() => {
+    ;(document.querySelector(`#${idp.value}-value-${i}`) as HTMLElement | null)?.focus()
+  })
 }
 
 function applyJsonFullscreen() {
@@ -204,6 +272,20 @@ function applyJsonFullscreen() {
   }
   patchRow(jsonFs.value, { value: jsonFsText.value })
   jsonFs.value = null
+  // Черновик применён — следующее открытие берёт свежее из props.
+  jsonFsDraftFor.value = null
+}
+
+/**
+ * WO-VT-3 HOLD r1 (RT-2): применить содержимое открытого фулскрина перед
+ * внешним save (Ctrl+Enter из диалога). Возвращает false, если JSON невалиден
+ * (фулскрин остаётся открыт с ошибкой — сохранять нельзя, иначе набранное
+ * молча выброшено).
+ */
+function commitFullscreen(): boolean {
+  if (jsonFs.value === null) return true
+  applyJsonFullscreen()
+  return jsonFs.value === null
 }
 
 function onModeKeydown(e: KeyboardEvent) {
@@ -235,7 +317,7 @@ function focusField(i: number) {
   el?.focus()
 }
 
-defineExpose({ focusField })
+defineExpose({ focusField, commitFullscreen, closeJsonFullscreen })
 </script>
 
 <template>
@@ -354,6 +436,7 @@ defineExpose({ focusField })
                 v-if="menuOpen === i"
                 role="menu"
                 class="absolute right-0 top-9 z-20 min-w-36 rounded-md border border-border bg-card shadow-lg p-1"
+                @keydown="onRowMenuKeydown($event, i)"
               >
                 <button
                   type="button"
@@ -590,12 +673,13 @@ defineExpose({ focusField })
       </div>
     </div>
 
-    <!-- JSON на весь экран: поверх модалки, Esc — назад без потери. -->
+    <!-- JSON на весь экран: поверх модалки, Esc — возврат без потери. -->
     <div
       v-if="jsonFs !== null"
+      data-preset-fs
       class="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4"
-      @click.self="jsonFs = null"
-      @keydown.escape="jsonFs = null"
+      @click.self="closeJsonFullscreen()"
+      @keydown.escape.stop="closeJsonFullscreen()"
     >
       <div class="bg-card rounded-lg shadow-lg w-full max-w-3xl max-h-[90vh] flex flex-col p-4 gap-2" role="dialog" aria-modal="true" :aria-label="t('presetJsonFullscreen')">
         <div class="flex items-center gap-2">
@@ -615,7 +699,7 @@ defineExpose({ focusField })
         />
         <p v-if="jsonFsError" role="alert" class="text-xs text-red-500">{{ jsonFsError }}</p>
         <div class="flex justify-end gap-2">
-          <button type="button" class="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted h-8" @click="jsonFs = null">
+          <button type="button" class="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted h-8" @click="closeJsonFullscreen()">
             {{ t('cancel') }}
           </button>
           <button type="button" class="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 h-8" @click="applyJsonFullscreen">
