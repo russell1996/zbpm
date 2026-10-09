@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ref, type Ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h } from 'vue'
-import { publishRealtimeEvent, resetRealtimeBusForTest } from '@/services/realtimeBus'
+import { publishRealtimeEvent, resetRealtimeBusForTest, listenerCountForTest } from '@/services/realtimeBus'
 import { useInstanceLiveUpdates } from './useInstanceLiveUpdates'
 import type { EventEnvelope } from '@/types/api'
 
@@ -150,10 +150,13 @@ describe('useInstanceLiveUpdates (WO-UI-25)', () => {
     wrapper.unmount()
   })
 
-  it('criterion 5: unmount unsubscribes AND removes the listener from the bus', async () => {
+  it('criterion 5: unmount removes the listener from the bus (no leak)', async () => {
     const { wrapper, refresh } = mountHook({ instanceId: 'pi-1' })
-    // O-1: утечка в Set маскировалась disposed-guard — считаем слушателей.
+    // O-1 (verifier раунд 2): disposed-guard глушит УТЁКШИЙ слушатель, поэтому
+    // «нет refresh» утечку не доказывает — инспектируем сам Set шины.
+    expect(listenerCountForTest()).toBe(1)
     const second = mountHook({ instanceId: 'pi-1' })
+    expect(listenerCountForTest()).toBe(2)
     publishRealtimeEvent(envelope('activity.completed', 'pi-1'))
     await vi.advanceTimersByTimeAsync(300)
     const both = (refresh as ReturnType<typeof vi.fn>).mock.calls.length
@@ -163,7 +166,9 @@ describe('useInstanceLiveUpdates (WO-UI-25)', () => {
     ;(refresh as ReturnType<typeof vi.fn>).mockClear()
     ;(second.refresh as ReturnType<typeof vi.fn>).mockClear()
     wrapper.unmount()
+    expect(listenerCountForTest()).toBe(1)
     second.wrapper.unmount()
+    expect(listenerCountForTest()).toBe(0)
     publishRealtimeEvent(envelope('activity.completed', 'pi-1'))
     await vi.advanceTimersByTimeAsync(1000)
     expect(refresh).not.toHaveBeenCalled()

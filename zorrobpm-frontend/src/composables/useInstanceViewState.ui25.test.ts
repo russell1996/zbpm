@@ -70,13 +70,14 @@ describe('useInstanceViewState (WO-UI-25 criterion 8)', () => {
     state.tab.value = 'history'
     state.element.value = 'Sub_Task'
     await flushPromises()
+    const full = router.currentRoute.value.fullPath
     expect(router.currentRoute.value.query).toEqual({ tab: 'history', element: 'Sub_Task' })
-    // O-2: replace, не push — история не засорена: back уходит со страницы,
-    // а не «назад по табам».
+    // O-2 (verifier раунд 2): replace, не push — back() это no-op (тот же
+    // fullPath+query). При push back откатил бы query к раннему → RED.
     await router.back()
     await flushPromises()
-    // Стартовой записи в memory history нет — остались на месте.
-    expect(router.currentRoute.value.path).toBe('/processes/instances/pi-1')
+    expect(router.currentRoute.value.fullPath).toBe(full)
+    expect(router.currentRoute.value.query).toEqual({ tab: 'history', element: 'Sub_Task' })
     wrapper.unmount()
   })
 

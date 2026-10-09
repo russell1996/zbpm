@@ -36,3 +36,8 @@ export function subscribeRealtimeEvents(fn: RealtimeListener): () => void {
 export function resetRealtimeBusForTest(): void {
   listeners.clear()
 }
+
+/** Только для тестов: размер множества подписчиков (доказательство отписки). */
+export function listenerCountForTest(): number {
+  return listeners.size
+}
