@@ -75,4 +75,24 @@ describe('InstanceSnapshotPanel — WO-VT-3 round 2 (E-VT3-1 Б)', () => {
       expect.objectContaining({ name: 'process-definition-detail', params: { id: 'def1' } }),
     )
   })
+
+  it('WO-UI-27 BUG-2: Ctrl+Enter inside the snapshot dialog saves (keydown reaches content)', async () => {
+    const w = mount(InstanceSnapshotPanel, {
+      props: {
+        processKey: 'test-proc',
+        processDefinitionId: 'def1',
+        instanceVariables: [{ name: 'a', type: 'LONG', value: '1' }],
+      },
+    })
+    await w.findAll('button')[0].trigger('click')
+    await flushPromises()
+    const snapName = document.querySelector('#snap-name') as HTMLInputElement
+    snapName.value = 'snap-1'
+    snapName.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    snapName.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    await flushPromises()
+    expect(mockCreate).toHaveBeenCalled()
+    w.unmount()
+  })
 })

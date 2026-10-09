@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/select'
 import {
   Dialog,
-  DialogContent,
+  DialogScrollContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -60,6 +60,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: PresetVariable[]): void
+  /** Ctrl+Enter в JSON-фулскрине: применено, просим родителя сохранить. */
+  (e: 'requestSave'): void
 }>()
 
 const { t } = useI18n()
@@ -213,6 +215,24 @@ function jsonValid(i: number): boolean {
   return formatJsonValue(v).error === null
 }
 
+/**
+ * WO-UI-27 п.3б: номера строк. Гаттер — те же font-mono/text-sm/line-height
+ * 1.4, что у textarea (иначе строки разъезжаются), скролл синхронизируется.
+ */
+function gutterNumbers(n: number): string {
+  return Array.from({ length: n }, (_, k) => String(k + 1)).join('\n')
+}
+
+function syncGutter(i: number, e: Event) {
+  const g = document.querySelector(`#${idp.value}-gutter-${i}`)
+  if (g) g.scrollTop = (e.target as HTMLTextAreaElement).scrollTop
+}
+
+function syncFsGutter(e: Event) {
+  const g = document.querySelector(`#${idp.value}-jsonfs-gutter`)
+  if (g) g.scrollTop = (e.target as HTMLTextAreaElement).scrollTop
+}
+
 function autoGrow(el: HTMLTextAreaElement | null) {
   if (!el) return
   el.style.height = 'auto'
@@ -221,11 +241,12 @@ function autoGrow(el: HTMLTextAreaElement | null) {
   el.style.height = Math.min(el.scrollHeight, max) + 'px'
 }
 
-function onJsonInput(i: number, el: HTMLTextAreaElement) {
-  patchRow(i, { value: el.value })
+function onJsonInput(i: number, text: string) {
+  // shadcn-Textarea эмитит СТРОКУ (не элемент): хранить набранное как есть.
+  patchRow(i, { value: text })
   // Набранное — как есть (кэш shown обновится на следующий shownJson).
-  jsonShown.value[i] = { raw: el.value, shown: el.value }
-  autoGrow(el)
+  jsonShown.value[i] = { raw: text, shown: text }
+  autoGrow(document.querySelector(`#${idp.value}-value-${i}`) as HTMLTextAreaElement | null)
 }
 
 function onJsonBlur(i: number) {
@@ -297,11 +318,16 @@ function onFsEscape(e: Event) {
   closeJsonFullscreen()
 }
 
-/** Ctrl+Enter в фулскрине — применить (RT-2, как onDialogKeydown снаружи). */
+/** Ctrl+Enter в фулскрине — применить + попросить сохранить (RT-2).
+ * Фулскрин — shadcn-портал в document.body: keydown НЕ всплывает в диалог
+ * родителя, поэтому вместо всплытия — явный emit (родитель решает, что
+ * значит «сохранить»: PresetEditorDialog — save, остальные игнорируют). */
 function onFsKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
     e.preventDefault()
     applyJsonFullscreen()
+    // jsonFs === null значит «применено», иначе — ошибка, стоим.
+    if (jsonFs.value === null) emit('requestSave')
   }
 }
 
@@ -561,21 +587,30 @@ defineExpose({ focusField, commitFullscreen, closeJsonFullscreen })
                     {{ t('presetJsonFullscreen') }}
                   </Button>
                 </div>
-                <Textarea
-                  :id="`${idp}-value-${i}`"
-                  :model-value="shownJson(i)"
-                  :placeholder="t('presetJsonPlaceholder')"
-                  :disabled="disabled"
-                  spellcheck="false"
-                  :aria-invalid="rowError(i) ? 'true' : 'false'"
-                  :aria-describedby="rowError(i) ? `${idp}-err-${i}` : undefined"
-                  wrap="off"
-                  class="w-full px-2 py-1 font-mono bg-transparent border-0 focus-visible:ring-0 resize-y json-autogrow"
-                  style="min-height: calc(8 * 1.4em + 8px); max-height: 40vh; field-sizing: content;"
-                  @update:model-value="onJsonInput(i, $event as unknown as HTMLTextAreaElement)"
-                  @blur="onJsonBlur(i)"
-                  @keydown="onJsonKeydown(i, $event)"
-                />
+                <div class="flex items-stretch">
+                  <div
+                    :id="`${idp}-gutter-${i}`"
+                    :data-testid="`ve-json-gutter-${i}`"
+                    aria-hidden="true"
+                    class="shrink-0 select-none overflow-hidden border-r border-border py-1 pl-1 pr-2 text-right font-mono text-sm leading-[1.4] whitespace-pre text-muted-foreground"
+                  >{{ gutterNumbers(jsonLineCount(i)) }}</div>
+                  <Textarea
+                    :id="`${idp}-value-${i}`"
+                    :model-value="shownJson(i)"
+                    :placeholder="t('presetJsonPlaceholder')"
+                    :disabled="disabled"
+                    spellcheck="false"
+                    :aria-invalid="rowError(i) ? 'true' : 'false'"
+                    :aria-describedby="rowError(i) ? `${idp}-err-${i}` : undefined"
+                    wrap="off"
+                    class="w-full min-w-0 flex-1 px-2 py-1 font-mono leading-[1.4] bg-transparent border-0 focus-visible:ring-0 resize-y json-autogrow"
+                    style="min-height: calc(8 * 1.4em + 8px); max-height: 40vh; field-sizing: content;"
+                    @update:model-value="onJsonInput(i, String($event))"
+                    @blur="onJsonBlur(i)"
+                    @keydown="onJsonKeydown(i, $event)"
+                    @scroll="syncGutter(i, $event)"
+                  />
+                </div>
               </div>
             </template>
             <template v-else-if="modelValue[i].type === 'UUID'">
@@ -729,30 +764,37 @@ defineExpose({ focusField, commitFullscreen, closeJsonFullscreen })
     <!-- JSON на весь экран: shadcn Dialog (WO-UI-27 доп.3), Esc — возврат
          без потери (RT-1), Ctrl+Enter — применить (RT-2). -->
     <Dialog :open="jsonFs !== null" @update:open="(v) => { if (!v) closeJsonFullscreen() }">
-      <DialogContent
-        data-preset-fs
-        class="flex flex-col gap-2 p-4"
-        style="width: min(96vw, 1600px); max-width: min(96vw, 1600px); height: 92vh; max-height: 92vh;"
-        :aria-label="t('presetJsonFullscreen')"
+      <DialogScrollContent
+        class="flex flex-col gap-2 p-4 w-[min(96vw,1600px)] max-w-[95vw] h-[92vh]"
         @escape-key-down="onFsEscape"
         @pointer-down-outside="(e) => e.preventDefault()"
         @interact-outside="(e) => e.preventDefault()"
       >
+        <div data-preset-fs class="flex min-h-0 flex-1 flex-col gap-2">
         <DialogHeader class="flex-row items-center gap-2 space-y-0">
           <DialogTitle class="font-mono text-sm truncate flex-1">{{ jsonFs !== null ? modelValue[jsonFs].name : '' }}</DialogTitle>
           <span class="text-xs text-muted-foreground font-mono">{{ t('presetJsonLines', { n: jsonFsText.split('\n').length }) }}</span>
         </DialogHeader>
         <DialogDescription class="sr-only">{{ t('presetJsonFullscreen') }}</DialogDescription>
         <Label :for="`${idp}-jsonfs`" class="sr-only">{{ t('presetVarValue') }}</Label>
-        <Textarea
-          :id="`${idp}-jsonfs`"
-          :model-value="jsonFsText"
-          spellcheck="false"
-          wrap="off"
-          class="flex-1 min-h-0 w-full font-mono"
-          @update:model-value="jsonFsText = String($event)"
-          @keydown="onFsKeydown"
-        />
+        <div class="flex min-h-0 flex-1 items-stretch overflow-hidden rounded-md border border-input bg-background">
+          <div
+            :id="`${idp}-jsonfs-gutter`"
+            data-testid="ve-jsonfs-gutter"
+            aria-hidden="true"
+            class="shrink-0 select-none overflow-hidden border-r border-border py-2 pl-2 pr-2 text-right font-mono text-sm leading-[1.4] whitespace-pre text-muted-foreground"
+          >{{ gutterNumbers(jsonFsText.split('\n').length) }}</div>
+          <Textarea
+            :id="`${idp}-jsonfs`"
+            :model-value="jsonFsText"
+            spellcheck="false"
+            wrap="off"
+            class="flex-1 min-h-0 min-w-0 font-mono leading-[1.4] border-0 bg-transparent"
+            @update:model-value="jsonFsText = String($event)"
+            @keydown="onFsKeydown"
+            @scroll="syncFsGutter($event)"
+          />
+        </div>
         <p v-if="jsonFsError" role="alert" class="text-xs text-red-500">{{ jsonFsError }}</p>
         <DialogFooter class="gap-2">
           <Button type="button" variant="outline" size="sm" @click="closeJsonFullscreen()">
@@ -762,7 +804,8 @@ defineExpose({ focusField, commitFullscreen, closeJsonFullscreen })
             {{ t('presetApplyRaw') }}
           </Button>
         </DialogFooter>
-      </DialogContent>
+        </div>
+      </DialogScrollContent>
     </Dialog>
   </div>
 </template>

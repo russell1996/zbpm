@@ -241,32 +241,26 @@ describe('WO-VT-3 audit: VariablesEditor', () => {
     }
   })
 
-  it.each([360, 520, 960])('FIVE @%ipx: удаление — меню ⋯ и inline-подтверждение внутри карточки', async (w) => {
+  it.each([360, 520, 960])('FIVE @%ipx: удаление — крестик × в один клик, без меню и confirm (WO-UI-27)', async (w) => {
     const wrapper = mountAt(VariablesEditor, { modelValue: FIVE }, w)
     await flushPromises()
-    // WO-VT-3: кнопки «Удалить» в строке больше нет — удаление через ⋯.
+    // WO-UI-27 доп.1–2: меню ⋯ в карточке НЕТ — удаление крестиком × в один
+    // клик, без confirm; undo — тихим тостом.
     const cards = [...document.querySelectorAll('[data-testid="ve-card"]')] as HTMLElement[]
     expect(cards.length).toBe(5)
     const first = cards[0]
-    const menu = first.querySelector('[data-testid="ve-row-menu"]') as HTMLElement
-    expect(menu, 'row ⋯ menu button exists').toBeTruthy()
+    expect(first.querySelector('[data-testid="ve-row-menu"]'), 'no ⋯ menu in card').toBeFalsy()
+    const del = first.querySelector('[data-testid="ve-row-delete"]') as HTMLButtonElement
+    expect(del, 'row × button exists').toBeTruthy()
     const mc = first.getBoundingClientRect()
-    const mb = menu.getBoundingClientRect()
+    const mb = del.getBoundingClientRect()
     expect(mb.right).toBeLessThanOrEqual(mc.right + 1)
-    // Открываем меню, жмём «Удалить» — inline-подтверждение внутри карточки.
-    ;(menu as HTMLButtonElement).click()
+    expect(Math.min(mb.width, mb.height), 'hit area >=32px').toBeGreaterThanOrEqual(32)
+    // Один клик — строка удалена (эмит), без плашки подтверждения.
+    del.click()
     await flushPromises()
-    const delItem = first.querySelector('[data-testid="ve-row-menu-delete"]') as HTMLButtonElement
-    expect(delItem).toBeTruthy()
-    delItem.click()
-    await flushPromises()
-    const confirmBox = first.querySelector('[data-testid="ve-delete-confirm"]') as HTMLElement
-    expect(confirmBox).toBeTruthy()
-    const cc = first.getBoundingClientRect()
-    const cb = confirmBox.getBoundingClientRect()
-    expect(cb.right).toBeLessThanOrEqual(cc.right + 1)
-    expect(cb.left).toBeGreaterThanOrEqual(cc.left - 1)
-    expect(wrapper.emitted('update:modelValue')).toBeFalsy()
+    expect(first.querySelector('[data-testid="ve-delete-confirm"]'), 'no confirm box').toBeFalsy()
+    expect(wrapper.emitted('update:modelValue'), 'one click deletes').toBeTruthy()
     wrapper.unmount()
   })
 
@@ -495,13 +489,16 @@ describe('WO-VT-3 audit: PresetManagerPanel + message/snapshot', () => {
       520,
     )
     await flushPromises()
-    await w.find('#preset-name').setValue('t1')
+    // WO-UI-27 доп.3: диалог — shadcn-портал, имя — в document.
+    const dcName = document.querySelector('#preset-name') as HTMLInputElement
+    dcName.value = 't1'
+    dcName.dispatchEvent(new Event('input', { bubbles: true }))
     await flushPromises()
-    const save = w.findAll('button').find((b) => /Сохранить/.test(b.text()))!
+    const save = [...document.querySelectorAll('button')].find((b) => /Сохранить/.test(b.textContent ?? ''))!
     // Настоящий даблклик: два события подряд БЕЗ await между ними (второй
     // обработчик стартует, пока первый ещё в полёте — guard saving ловит).
-    const p1 = save.trigger('click')
-    const p2 = save.trigger('click')
+    const p1 = (async () => (save as HTMLButtonElement).click())()
+    const p2 = (async () => (save as HTMLButtonElement).click())()
     await p1
     await p2
     await flushPromises()
@@ -685,7 +682,10 @@ describe('WO-VT-3 HOLD r1: JSON-фулскрин не теряет ввод (RT-
       960,
     )
     await flushPromises()
-    await w.find('#preset-name').setValue('t1')
+    // WO-UI-27 доп.3: диалог — shadcn-портал, имя — в document.
+    const rtName = document.querySelector('#preset-name') as HTMLInputElement
+    rtName.value = 't1'
+    rtName.dispatchEvent(new Event('input', { bubbles: true }))
     await flushPromises()
     // Открываем фулскрин JSON через тулбар поля.
     const fsBtn = [...document.querySelectorAll('button')].find((b) =>
@@ -747,23 +747,44 @@ describe('WO-VT-3 HOLD r1: JSON-фулскрин не теряет ввод (RT-
 
 describe('WO-VT-3 HOLD r1 оформительские: меню ⋯ и guard снимка (RT-3/RT-4/RT-5)', () => {
   it('RT-3: выбор пункта меню ⋯ возвращает фокус на кнопку меню', async () => {
-    mountAt(VariablesEditor, { modelValue: [{ name: 'a', type: 'STRING', value: 'x' }] }, 520)
+    // WO-UI-27: в карточке переменной меню нет (крестик ×); VariableRowMenu
+    // живёт в панели элементных шаблонов — монтируем напрямую с безобидными
+    // пунктами (выбор edit в панели открывал бы диалог и уводил фокус).
+    const { default: RowMenu } = await import('@/widgets/presets/VariableRowMenu.vue')
+    const w = mountAt(
+      RowMenu,
+      {
+        label: 'menu',
+        items: [
+          { id: 'a', label: 'Alpha' },
+          { id: 'b', label: 'Beta' },
+        ],
+        onSelect: () => {},
+      },
+      520,
+    )
     await flushPromises()
-    const menuBtn = document.querySelector('[data-testid="ve-row-menu"]') as HTMLButtonElement
+    const menuBtn = document.querySelector('[data-testid="row-menu-button"]') as HTMLButtonElement
+    expect(menuBtn, 'menu button renders').toBeTruthy()
     menuBtn.click()
     await flushPromises()
-    const dupItem = document.querySelector('[data-testid="ve-row-menu-duplicate"]') as HTMLButtonElement
-    expect(dupItem, 'duplicate item renders').toBeTruthy()
-    dupItem.click()
+    const item = document.querySelector('[data-testid="row-menu-item-a"]') as HTMLButtonElement
+    expect(item, 'item renders').toBeTruthy()
+    item.click()
     await flushPromises()
-    // RED: choose() не возвращал фокус (activeElement === body).
+    // Фокус возвращается после закрытия dismissable-слоя (~30 мс).
+    await new Promise((r) => setTimeout(r, 150))
+    // RED (VT-3): choose() не возвращал фокус (activeElement === body).
     expect(document.activeElement).toBe(menuBtn)
+    w.unmount()
   })
 
   it('RT-4: ArrowDown/ArrowUp двигают фокус по пунктам меню', async () => {
-    mountAt(VariablesEditor, { modelValue: [{ name: 'a', type: 'STRING', value: 'x' }] }, 520)
+    ;(listPresets as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue([longPreset(1)])
+    mountAt(ElementPresetsPanel, { processKey: 'orderProcess', targetKind: 'START', targetRef: null }, 520)
     await flushPromises()
-    const menuBtn = document.querySelector('[data-testid="ve-row-menu"]') as HTMLButtonElement
+    await flushPromises()
+    const menuBtn = document.querySelector('[data-testid="row-menu-button"]') as HTMLButtonElement
     menuBtn.click()
     await flushPromises()
     const items = [...document.querySelectorAll('[role="menuitem"]')] as HTMLButtonElement[]
