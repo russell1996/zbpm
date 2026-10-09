@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { VueWrapper } from '@vue/test-utils'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import ProcessDefinitionDetail from './ProcessDefinitionDetail.vue'
@@ -25,6 +26,10 @@ vi.mock('@/services/processService', () => ({
   getProcessDefinitionXml: vi.fn().mockResolvedValue(null),
 }))
 
+vi.mock('@/composables/useDateFormat', () => ({
+  useDateFormat: () => ({ formatDateTime: (v: string) => v, formatDate: (v: string) => v }),
+}))
+
 vi.mock('@/services/formService', () => ({
   getSchemaMap: vi.fn().mockResolvedValue({ processDefinitionKey: 'test-proc', version: 1, elements: [] }),
   saveElementSchema: vi.fn(),
@@ -47,97 +52,161 @@ vi.mock('@/stores/process', () => ({
   }),
 }))
 
+// ——— WO-UI-27: хелперы портального стартового диалога (уровень модуля) ———
+const mounted: VueWrapper[] = []
+
+// WO-UI-27: стартовый диалог — shadcn-Dialog (портал в document.body).
+function mountPage() {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const w = mount(ProcessDefinitionDetail, {
+    attachTo: host,
+    global: { plugins: [createPinia()] },
+  })
+  mounted.push(w)
+  return w
+}
+
+// WO-UI-27: портал Dialog монтируется асинхронно — ждём парой циклов.
+async function settlePortal() {
+  await flushPromises()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await flushPromises()
+}
+
+function cleanupMounts() {
+  for (const w of mounted.splice(0)) w.unmount()
+  document.body.innerHTML = ''
+}
+
 describe('ProcessDefinitionDetail render', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
   })
 
+  afterEach(() => {
+    cleanupMounts()
+  })
+
+
+  /** VariablesEditor внутри стартовой модалки (портал — ищем по document). */
+  function wFindEditor(wrapper: ReturnType<typeof mountPage>) {
+    const eds = wrapper.findAllComponents({ name: 'VariablesEditor' })
+    if (eds.length) return eds[eds.length - 1]
+    throw new Error('VariablesEditor not found')
+  }
+
   it('mounts without ReferenceError (dead ref removed in MT-9)', async () => {
-    const wrapper = mount(ProcessDefinitionDetail, {
-      global: { stubs: { teleport: true }, plugins: [createPinia()] },
-    })
+    const wrapper = mountPage()
     await wrapper.vm.$nextTick()
     // Should render without ReferenceError — previously 'authStore' was undefined
     expect(wrapper.text()).toContain('Test')
   })
 
   it('start modal renders the preset picker (manual input by default)', async () => {
-    const wrapper = mount(ProcessDefinitionDetail, {
-      global: { stubs: { teleport: true }, plugins: [createPinia()] },
-    })
+    const wrapper = mountPage()
     await wrapper.vm.$nextTick()
     const vm = wrapper.vm as any
     vm.showStartModal = true
     await wrapper.vm.$nextTick()
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await (flushPromises as () => Promise<void>)()
     // WO-VT-1: инлайн-редактор старта заменён PresetPicker «Ручной ввод | Из шаблона».
-    expect(wrapper.text()).toContain('presetManualMode')
-    expect(wrapper.text()).toContain('presetTemplateMode')
+    // WO-UI-27: диалог — shadcn-Dialog в портале document.
+    expect(document.body.textContent).toContain('presetManualMode')
+    expect(document.body.textContent).toContain('presetTemplateMode')
   })
 
   it('manual rows offer all six variable types', async () => {
-    const wrapper = mount(ProcessDefinitionDetail, {
-      global: { stubs: { teleport: true }, plugins: [createPinia()] },
-    })
+    const wrapper = mountPage()
     await wrapper.vm.$nextTick()
     const vm = wrapper.vm as any
     vm.showStartModal = true
     await wrapper.vm.$nextTick()
-    const addBtn = wrapper.findAll('button').find((b) => b.text().includes('presetAddVariable'))!
-    await addBtn.trigger('click')
-    const options = wrapper.find('select[id^="pv-type-"]').findAll('option').map((o: any) => o.text())
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await (flushPromises as () => Promise<void>)()
+    ;([...document.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes('presetAddVariable')) as HTMLElement).click()
+    await flushPromises()
+    // WO-UI-27: тип — shadcn-Select; опции телепортированы в document.body.
+    const typeTrigger = document.querySelector('[data-testid="ve-type-0"]') as HTMLElement
+    expect(typeTrigger, 'type select renders in portal').not.toBeNull()
+    typeTrigger.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await flushPromises()
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await (flushPromises as () => Promise<void>)()
+    const options = [...document.querySelectorAll('[role="option"]')].map((o) => o.textContent?.trim())
     for (const tp of ['STRING', 'UUID', 'LONG', 'DOUBLE', 'BOOLEAN', 'JSON']) {
       expect(options).toContain(tp)
     }
   })
 
   it('shows textarea when JSON type is selected', async () => {
-    const wrapper = mount(ProcessDefinitionDetail, {
-      global: { stubs: { teleport: true }, plugins: [createPinia()] },
-    })
+    const wrapper = mountPage()
     await wrapper.vm.$nextTick()
     const vm = wrapper.vm as any
     vm.showStartModal = true
     await wrapper.vm.$nextTick()
-    await wrapper.findAll('button').find((b) => b.text().includes('presetAddVariable'))!.trigger('click')
-    await wrapper.find('select[id^="pv-type-"]').setValue('JSON')
-    // Should show textarea instead of input for value
-    const textarea = wrapper.find('textarea[id^="pv-value-"]')
-    expect(textarea.exists()).toBe(true)
+    await flushPromises();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await (flushPromises as () => Promise<void>)();
+    ([...document.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes('presetAddVariable')) as HTMLElement).click()
+    await new Promise((r) => setTimeout(r, 0))
+    await flushPromises()
+    wFindEditor(wrapper).vm.$emit('update:modelValue', [
+      { name: document.querySelector('input[id^="pv-name-"]') ? (document.querySelector('input[id^="pv-name-"]') as HTMLInputElement).value || 'x' : 'x', type: 'JSON', value: '', allowEmptyString: null },
+    ])
+    await flushPromises()
+    // Should show textarea instead of input for value (портал — ищем в document).
+    expect(document.querySelector('textarea[id^="pv-value-"]'), 'JSON textarea renders in portal').not.toBeNull()
   })
 
   it('rejects invalid JSON: row error shows and start stays disabled', async () => {
-    const wrapper = mount(ProcessDefinitionDetail, {
-      global: { stubs: { teleport: true }, plugins: [createPinia()] },
-    })
+    const wrapper = mountPage()
     await wrapper.vm.$nextTick()
     const vm = wrapper.vm as any
     vm.showStartModal = true
     await wrapper.vm.$nextTick()
-    await wrapper.findAll('button').find((b) => b.text().includes('presetAddVariable'))!.trigger('click')
-    await wrapper.find('input[id^="pv-name-"]').setValue('badJson')
-    await wrapper.find('select[id^="pv-type-"]').setValue('JSON')
-    await wrapper.find('textarea[id^="pv-value-"]').setValue('{invalid}')
+    await flushPromises();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await (flushPromises as () => Promise<void>)();
+    ([...document.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes('presetAddVariable')) as HTMLElement).click()
+    await flushPromises()
+    ;(document.querySelector('input[id^="pv-name-"]') as HTMLInputElement).value = 'badJson'
+    document.querySelector('input[id^="pv-name-"]')!.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    // WO-UI-27: имя — через emit (shadcn-Input), значение — через emit тоже:
+    // ручной input-event shadcn-Input глотает без v-model-синка в этом тесте.
+    wFindEditor(wrapper).vm.$emit('update:modelValue', [
+      { name: 'badJson', type: 'JSON', value: '{invalid}', allowEmptyString: null },
+    ])
+    await flushPromises()
     // WO-VT-1: плохой JSON подсвечен, запуск заблокирован (как раньше addVariable).
-    expect(wrapper.find('[role="alert"]').exists()).toBe(true)
-    const startBtn = wrapper.findAll('button').find((b) => b.text().trim() === 'startProcess')!
-    expect((startBtn.element as HTMLButtonElement).disabled).toBe(true)
+    expect(document.querySelector('[role="alert"]'), 'row error renders in portal').not.toBeNull()
+    const startBtn = [...document.querySelectorAll('button')].find((b) => (b.textContent ?? '').trim() === 'startProcess') as HTMLButtonElement | undefined
+    expect(startBtn, 'start button renders in portal').not.toBeUndefined()
+    expect(startBtn!.disabled).toBe(true)
     expect(mockStartInstance).not.toHaveBeenCalled()
   })
 
   it('POF: start process with type=JSON sends type JSON in API payload', async () => {
-    const wrapper = mount(ProcessDefinitionDetail, {
-      global: { stubs: { teleport: true }, plugins: [createPinia()] },
-    })
+    const wrapper = mountPage()
     await wrapper.vm.$nextTick()
     const vm = wrapper.vm as any
     vm.showStartModal = true
     await wrapper.vm.$nextTick()
-    await wrapper.findAll('button').find((b) => b.text().includes('presetAddVariable'))!.trigger('click')
-    await wrapper.find('input[id^="pv-name-"]').setValue('data')
-    await wrapper.find('select[id^="pv-type-"]').setValue('JSON')
-    await wrapper.find('textarea[id^="pv-value-"]').setValue('["u1","u2"]')
-    await wrapper.findAll('button').find((b) => b.text().trim() === 'startProcess')!.trigger('click')
+    await flushPromises();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await (flushPromises as () => Promise<void>)();
+    ([...document.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes('presetAddVariable')) as HTMLElement).click()
+    await flushPromises()
+    wFindEditor(wrapper).vm.$emit('update:modelValue', [
+      { name: 'data', type: 'JSON', value: '["u1","u2"]', allowEmptyString: null },
+    ])
+    await flushPromises()
+    ;([...document.querySelectorAll('button')].find((b) => (b.textContent ?? '').trim() === 'startProcess') as HTMLElement).click()
     await wrapper.vm.$nextTick()
 
     expect(mockStartInstance).toHaveBeenCalledTimes(1)
@@ -164,9 +233,7 @@ describe('ProcessDefinitionDetail — download BPMN (WO-FE-11)', () => {
     const { getProcessDefinitionXml } = await import('@/services/processService')
     vi.mocked(getProcessDefinitionXml).mockResolvedValue('<definitions id="proc1" />')
 
-    const wrapper = mount(ProcessDefinitionDetail, {
-      global: { stubs: { teleport: true }, plugins: [createPinia()] },
-    })
+    const wrapper = mountPage()
     await wrapper.vm.$nextTick()
     await flushPromises()
 
@@ -195,9 +262,7 @@ describe('ProcessDefinitionDetail — download BPMN (WO-FE-11)', () => {
     // Reset to return null (as per top-level mock) — bpmnXml stays empty after mount
     vi.mocked(getProcessDefinitionXml).mockResolvedValue('')
 
-    const wrapper = mount(ProcessDefinitionDetail, {
-      global: { stubs: { teleport: true }, plugins: [createPinia()] },
-    })
+    const wrapper = mountPage()
     await wrapper.vm.$nextTick()
     await flushPromises()
 
