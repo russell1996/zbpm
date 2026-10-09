@@ -136,6 +136,39 @@ function until(cond: () => boolean, timeout = 15000): Promise<void> {
   })
 }
 
+/**
+ * WO-UI-26 Н-8: кадры за всплеск. База порога — измерение стенда («до»:
+ * longtasks=0 на том же всплеске 50 событий): ни один кадр > 100 мс сверх
+ * базы. Мерим: N последовательных rAF-кадров за всплеск, каждый обязан
+ * уложиться в 100 мс (кадр = время между соседними rAF-тиками; долгий тик =
+ * заблокированный main thread). Базу longtasks=0 подтверждает отсутствие
+ * записей PerformanceObserver('longtask') за окно (где поддерживается).
+ */
+async function worstFrameDuring(fn: () => void, frames = 30): Promise<{ worstMs: number; longtasks: number }> {
+  const longtaskEntries: number[] = []
+  let observer: PerformanceObserver | null = null
+  try {
+    if (typeof PerformanceObserver !== 'undefined') {
+      observer = new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) longtaskEntries.push(e.duration)
+      })
+      observer.observe({ entryTypes: ['longtask'] })
+    }
+  } catch {
+    observer = null
+  }
+  let worstMs = 0
+  let last = await new Promise<number>((resolve) => requestAnimationFrame((t) => resolve(t)))
+  fn()
+  for (let i = 0; i < frames; i++) {
+    const t = await new Promise<number>((resolve) => requestAnimationFrame((t2) => resolve(t2)))
+    worstMs = Math.max(worstMs, t - last)
+    last = t
+  }
+  observer?.disconnect()
+  return { worstMs, longtasks: longtaskEntries.length }
+}
+
 let mounted: VueWrapper[] = []
 let hosts: HTMLElement[] = []
 
@@ -203,16 +236,19 @@ describe('WO-UI-26 burst 50 events on live TaskList (browser)', () => {
     const listCallsBefore = mockGetUserTasks.mock.calls.length
 
     const N = 50
-    for (let i = 1; i <= N; i++) {
-      FakeEventSource.instances[0].emit(
-        'user-task.created',
-        {
-          sequence: i, id: `e-${i}`, type: 'user-task.created', version: 1,
-          occurredAt: '2026-09-24T00:00:00Z', data: { activityId: `t${i}` },
-        },
-        String(i),
-      )
-    }
+    // Н-8: кадры меряем ЗА всплеск (всплеск внутри worstFrameDuring).
+    const { worstMs, longtasks } = await worstFrameDuring(() => {
+      for (let i = 1; i <= N; i++) {
+        FakeEventSource.instances[0].emit(
+          'user-task.created',
+          {
+            sequence: i, id: `e-${i}`, type: 'user-task.created', version: 1,
+            occurredAt: '2026-09-24T00:00:00Z', data: { activityId: `t${i}` },
+          },
+          String(i),
+        )
+      }
+    })
     // Все 50 адресных патчей применены (1 начальная + 50 новых строк).
     await until(() => (store.userTasks?.data.length ?? 0) >= 51, 20000)
     await new Promise((r) => setTimeout(r, 500))
@@ -224,6 +260,9 @@ describe('WO-UI-26 burst 50 events on live TaskList (browser)', () => {
     expect(loadingCycles).toBe(0)
     // Кр.15: верх таблицы не сдвинулся (layout shift = 0).
     expect(table()?.getBoundingClientRect().top).toBe(topBefore)
+    // Н-8/кр.4: ни одного кадра > 100 мс за всплеск, longtasks = 0 (как «до»).
+    expect(worstMs).toBeLessThan(100)
+    expect(longtasks).toBe(0)
     wrapper.unmount()
     mounted = []
   }, 60000)

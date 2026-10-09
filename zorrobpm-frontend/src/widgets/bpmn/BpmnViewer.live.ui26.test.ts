@@ -111,4 +111,43 @@ describe('BpmnViewer live markers (WO-UI-26 кр.12)', () => {
     expect(canvasOf().canvas.addMarker).toHaveBeenCalledWith('taskA', 'highlight-active')
     wrapper.unmount()
   })
+
+  it('Н-7 token-count: счётчики MI/активных токенов — бейджи поверх элементов', async () => {
+    const wrapper = mount(BpmnViewer, {
+      props: { xml: '<defs/>', activeElementIds: ['taskA'], elementCounts: { taskA: 2, taskB: 5 } },
+    })
+    await flushPromises()
+    const inst = registry.instances[registry.instances.length - 1] as {
+      overlays: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> }
+    }
+    // Старые бейджи сняты, новые — по одному на элемент с count > 0.
+    expect(inst.overlays.remove).toHaveBeenCalledWith({ type: 'token-count' })
+    expect(inst.overlays.add).toHaveBeenCalledWith(
+      'taskA', 'token-count', expect.objectContaining({ html: expect.stringContaining('>2<') }),
+    )
+    expect(inst.overlays.add).toHaveBeenCalledWith(
+      'taskB', 'token-count', expect.objectContaining({ html: expect.stringContaining('>5<') }),
+    )
+    // Нулевой счётчик — бейджа нет.
+    inst.overlays.add.mockClear()
+    await wrapper.setProps({ elementCounts: { taskA: 0 } })
+    await flushPromises()
+    expect(inst.overlays.add).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('Н-6: prefers-reduced-motion guard присутствует (пульс инцидента гасится)', async () => {
+    // CSS-инвариант: самого keyframes pulse-red недостаточно — проверяем guard
+    // в исходнике компонента (прецедент: stream-url mirroring тест читает
+    // исходник, т.к. jsdom не считает компоновку).
+    const { readFileSync } = await import('fs')
+    const { resolve, dirname } = await import('path')
+    const { fileURLToPath } = await import('url')
+    const source = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), 'BpmnViewer.vue'),
+      'utf-8',
+    )
+    expect(source).toContain('prefers-reduced-motion')
+    expect(source).toContain('pulse-red')
+  })
 })

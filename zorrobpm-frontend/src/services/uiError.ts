@@ -26,3 +26,28 @@ export function clearUiError(): void {
 export function useLastUiError(): Ref<{ message: string; at: string } | null> {
   return lastUiError
 }
+
+/**
+ * WO-UI-26 Н-5: предикат «упал dynamic-import чанка» (плановое обновление,
+ * обрыв сети посреди подгрузки). router.onError (WO-MT-9e) видит только
+ * навигационные чанки; НЕ-навигационные dynamic import вне роутера падают в
+ * unhandledrejection — их ведём на ту же панель App.vue.
+ */
+export function isChunkLoadError(reason: unknown): boolean {
+  const message = reason instanceof Error ? reason.message : String(reason)
+  return /Failed to fetch dynamically imported module|Loading chunk .* failed/i.test(message)
+}
+
+/**
+ * WO-UI-26 Н-5: обработчик unhandledrejection для main.ts. Чанковые ошибки —
+ * на панель (с preventDefault, причина в консоли через reportUiError);
+ * остальные — НЕ трогаем (не проглатываем чужую логику, return false).
+ */
+export function handleUnhandledRejection(event: PromiseRejectionEvent): boolean {
+  if (isChunkLoadError(event.reason)) {
+    event.preventDefault()
+    reportUiError(event.reason)
+    return true
+  }
+  return false
+}

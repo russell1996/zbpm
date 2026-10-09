@@ -4,7 +4,7 @@ import App from './App.vue'
 import router from './app/router'
 import i18n from './app/i18n'
 import { setupApiInterceptors } from './services/interceptors'
-import { reportUiError } from './services/uiError'
+import { reportUiError, handleUnhandledRejection } from './services/uiError'
 // WO-ACL-8 criterion 38: Golos Text font via @fontsource (self-hosted, CSP-safe).
 import '@fontsource/golos-text/400.css'
 import '@fontsource/golos-text/500.css'
@@ -31,5 +31,14 @@ setupApiInterceptors()
 // WO-UI-26 Доп.1 (кр.11): вместо белого экрана — понятная панель в App.vue
 // (причина не проглатывается: reportUiError всегда пишет в console.error).
 app.config.errorHandler = (err) => reportUiError(err)
+
+// WO-UI-26 Н-5: dynamic-import ВНЕ роутера (ленивые виджеты/чанки, подгружаемые
+// не навигацией) — router.onError (WO-MT-9e) их не видит: необработанный
+// reject «Failed to fetch dynamically imported module» раньше оставлял белый
+// экран без панели. Теперь — та же панель App.vue (причина в консоли).
+// Остальные unhandledrejection НЕ трогаем (не проглатываем чужую логику).
+window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+  handleUnhandledRejection(event)
+})
 
 app.mount('#app')

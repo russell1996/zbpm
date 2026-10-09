@@ -14,7 +14,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import App from './App.vue'
-import { reportUiError, clearUiError } from './services/uiError'
+import { reportUiError, clearUiError, isChunkLoadError, handleUnhandledRejection } from './services/uiError'
 import en from './locales/en.json'
 import ru from './locales/ru.json'
 import kz from './locales/kz.json'
@@ -78,5 +78,38 @@ describe('App.vue error fallback (WO-UI-26 кр.11)', () => {
     } finally {
       errSpy.mockRestore()
     }
+  })
+
+  it('Н-5: unhandledrejection dynamic-import вне роутера → панель, не белый экран', () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const reason = new Error('Failed to fetch dynamically imported module: ./chunk-abc.js')
+      const event = {
+        reason,
+        preventDefault: vi.fn(),
+      } as unknown as PromiseRejectionEvent
+      expect(handleUnhandledRejection(event)).toBe(true)
+      expect(event.preventDefault).toHaveBeenCalled()
+      // Та же панель, что у errorHandler (причина видна, не проглочена).
+      const wrapper = mount(App, { attachTo: document.body, global: { plugins: [i18n] } })
+      const fallback = wrapper.find('[data-testid="ui-error-fallback"]')
+      expect(fallback.exists()).toBe(true)
+      expect(fallback.text()).toContain('Failed to fetch dynamically imported module')
+      expect(errSpy).toHaveBeenCalled()
+      wrapper.unmount()
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+
+  it('Н-5: чужой unhandledrejection НЕ трогаем (не проглатываем)', () => {
+    const event = {
+      reason: new Error('ordinary business logic failure'),
+      preventDefault: vi.fn(),
+    } as unknown as PromiseRejectionEvent
+    expect(handleUnhandledRejection(event)).toBe(false)
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(isChunkLoadError(new Error('Loading chunk 42 failed'))).toBe(true)
+    expect(isChunkLoadError(new Error('ordinary failure'))).toBe(false)
   })
 })
