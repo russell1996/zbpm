@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, toRef, watch } from 'vue'
+import { computed, nextTick, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import VariablesEditor from './VariablesEditor.vue'
 import type {
@@ -74,9 +74,24 @@ function requestClose() {
 }
 usePresetModal(openRef, dialogRef, requestClose)
 
+// WO-VT-3 HOLD r1 (RT-2): доступ к commitFullscreen() редактора.
+const variablesEditor = ref<InstanceType<typeof VariablesEditor> | null>(null)
+
 function onDialogKeydown(e: KeyboardEvent) {
   onCtrlEnter(e, () => {
-    if (!formError.value && !saving.value) void save()
+    void (async () => {
+      // WO-VT-3 HOLD r1 (RT-2): если открыт JSON-фулскрин — сначала применяем
+      // набранное в variables (иначе save уйдёт со старым значением и правки
+      // молча выброшены). Невалидный JSON — стоим (фулскрин открыт с ошибкой).
+      if (variablesEditor.value && !variablesEditor.value.commitFullscreen()) return
+      // patchRow идёт через emit дочернего редактора — ждём, пока v-model
+      // синхронизируется (один nextTick гоняемо недостаточен: emit → prop →
+      // ref родителя требует полного цикла обновления).
+      await nextTick()
+      await nextTick()
+      await nextTick()
+      if (!formError.value && !saving.value) void save()
+    })()
   })
 }
 
@@ -414,7 +429,7 @@ function historyJson(vars: PresetVariable[] | null): string {
           {{ targetKind }}{{ targetRef ? ` · ${targetRef}` : '' }}
         </div>
 
-        <VariablesEditor v-model="variables" id-prefix="pe" />
+        <VariablesEditor ref="variablesEditor" v-model="variables" id-prefix="pe" />
 
         <div v-if="conflict" class="space-y-2 rounded-md border border-amber-400 bg-amber-50/50 p-3 dark:bg-amber-950/20">
           <p role="alert" class="text-sm text-amber-700 dark:text-amber-300">{{ t('presetVersionConflict') }}</p>

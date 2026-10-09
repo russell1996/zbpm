@@ -279,6 +279,20 @@ describe('WO-VT-3 audit: VariablesEditor', () => {
     expect(area.getBoundingClientRect().height).toBeGreaterThanOrEqual(lineH * 8)
   })
 
+  it('мелкий JSON @960: min-height держит пол 8 строк (M-b: регресс пола)', async () => {
+    // WO-VT-3 HOLD r1 (M-b): 60К-тест меряет выросшее поле (autoGrow до
+    // 40vh) и НЕ ловит снятие min-height — этот тест прибивает пол напрямую
+    // на мелком значении (высота < 40vh, autoGrow не растёт).
+    mountAt(VariablesEditor, { modelValue: [{ name: 'j', type: 'JSON', value: '{"a":1}' }] }, 960)
+    await flushPromises()
+    const area = document.querySelector('[id^="pv-value-"]') as HTMLElement
+    const cs = getComputedStyle(area)
+    const lineH = parseFloat(cs.lineHeight || '20')
+    // Пол задан CSS min-height (8 строк), а не атрибутом rows.
+    expect(parseFloat(cs.minHeight)).toBeGreaterThanOrEqual(lineH * 8 - 1)
+    expect(area.getBoundingClientRect().height).toBeGreaterThanOrEqual(lineH * 8 - 1)
+  })
+
   it('имя 60 символов @360: без переполнения и обрезки смысла', async () => {
     mountAt(VariablesEditor, { modelValue: NAME_60 }, 360)
     await flushPromises()
@@ -655,5 +669,129 @@ describe('WO-VT-3 round 2 IA (CTO E-VT3-1): actions menu fits the header', () =>
     // вылезающих элементов, а не ширина контейнера).
     expect(overflowing(document.body)).toEqual([])
     await page.screenshot({ path: SHOT('after-instance-actions-360') })
+  })
+})
+
+describe('WO-VT-3 HOLD r1: JSON-фулскрин не теряет ввод (RT-1/RT-2)', () => {
+  const JSON_ROWS: PresetVariable[] = [{ name: 'stages', type: 'JSON', value: '{"a":1}' }]
+
+  async function openDialogWithFs() {
+    const svc = await import('@/services/presetService')
+    const createMock = svc.createPreset as unknown as { mockClear: () => void; mock: { calls: unknown[][] } }
+    createMock.mockClear()
+    const w = mountAt(
+      PresetEditorDialog,
+      { open: true, processKey: 'k', targetKind: 'START', targetRef: null, initialVariables: JSON_ROWS },
+      960,
+    )
+    await flushPromises()
+    await w.find('#preset-name').setValue('t1')
+    await flushPromises()
+    // Открываем фулскрин JSON через тулбар поля.
+    const fsBtn = [...document.querySelectorAll('button')].find((b) =>
+      (b.textContent ?? '').includes(ru.presetJsonFullscreen),
+    ) as HTMLButtonElement
+    expect(fsBtn, 'fullscreen button renders').toBeTruthy()
+    fsBtn.click()
+    await flushPromises()
+    const fsArea = document.querySelector('[id$="-jsonfs"]') as HTMLTextAreaElement
+    expect(fsArea, 'fullscreen textarea opens').toBeTruthy()
+    return { w, createMock, fsArea }
+  }
+
+  it('RT-1: Esc в фулскрине возвращает в редактор, диалог НЕ закрывается, текст цел', async () => {
+    const { w, fsArea } = await openDialogWithFs()
+    // Ввод — как реальный набор (execCommand/insertText; голый value= +
+    // синтетический input v-model в этом Chromium не кормит — проверено пробой).
+    fsArea.focus()
+    document.execCommand('selectAll', false)
+    document.execCommand('insertText', false, '{"a":1,"b":2}')
+    await flushPromises()
+    fsArea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    // RED на 0fa5ef7d: ловушка usePresetModal закрывает ДИАЛОГ (emitted close
+    // truthy), фулскрин остаётся открыт — ввод потерян вместе с диалогом.
+    expect(w.emitted('close'), 'dialog must NOT close on Esc in fullscreen').toBeUndefined()
+    expect(document.querySelector('[role="dialog"]'), 'dialog stays open').toBeTruthy()
+    expect(document.querySelector('[id$="-jsonfs"]'), 'fullscreen closed by Esc-return').toBeFalsy()
+    // Набранное сохранено в черновике фулскрина — повторное открытие видит его.
+    const fsBtn2 = [...document.querySelectorAll('button')].find((b) =>
+      (b.textContent ?? '').includes(ru.presetJsonFullscreen),
+    ) as HTMLButtonElement
+    fsBtn2.click()
+    await flushPromises()
+    const fsArea2 = document.querySelector('[id$="-jsonfs"]') as HTMLTextAreaElement
+    expect(fsArea2.value).toContain('"b":2')
+    w.unmount()
+  })
+
+  it('RT-2: Ctrl+Enter в фулскрине сохраняет НАБРАННОЕ, а не старое', async () => {
+    const { w, createMock, fsArea } = await openDialogWithFs()
+    fsArea.focus()
+    document.execCommand('selectAll', false)
+    document.execCommand('insertText', false, '{"a":1,"b":2}')
+    await flushPromises()
+    fsArea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    await flushPromises()
+    await flushPromises()
+    // RED на 0fa5ef7d: save() вызван со старым variables — createPreset 1 раз
+    // БЕЗ набранного; правки молча выброшены.
+    expect(createMock.mock.calls.length).toBe(1)
+    const payload = createMock.mock.calls[0][0] as { variables: Array<{ value: string }> }
+    // value — строка JSON; парсим и проверяем поле (в сериализованном виде
+    // кавычки экранированы, toContain('"b":2') там ложно падает).
+    expect(JSON.parse(payload.variables[0].value)).toEqual({ a: 1, b: 2 })
+    w.unmount()
+  })
+})
+
+describe('WO-VT-3 HOLD r1 оформительские: меню ⋯ и guard снимка (RT-3/RT-4/RT-5)', () => {
+  it('RT-3: выбор пункта меню ⋯ возвращает фокус на кнопку меню', async () => {
+    mountAt(VariablesEditor, { modelValue: [{ name: 'a', type: 'STRING', value: 'x' }] }, 520)
+    await flushPromises()
+    const menuBtn = document.querySelector('[data-testid="ve-row-menu"]') as HTMLButtonElement
+    menuBtn.click()
+    await flushPromises()
+    const dupItem = document.querySelector('[data-testid="ve-row-menu-duplicate"]') as HTMLButtonElement
+    expect(dupItem, 'duplicate item renders').toBeTruthy()
+    dupItem.click()
+    await flushPromises()
+    // RED: choose() не возвращал фокус (activeElement === body).
+    expect(document.activeElement).toBe(menuBtn)
+  })
+
+  it('RT-4: ArrowDown/ArrowUp двигают фокус по пунктам меню', async () => {
+    mountAt(VariablesEditor, { modelValue: [{ name: 'a', type: 'STRING', value: 'x' }] }, 520)
+    await flushPromises()
+    const menuBtn = document.querySelector('[data-testid="ve-row-menu"]') as HTMLButtonElement
+    menuBtn.click()
+    await flushPromises()
+    const items = [...document.querySelectorAll('[role="menuitem"]')] as HTMLButtonElement[]
+    expect(items.length).toBeGreaterThanOrEqual(2)
+    items[0].focus()
+    items[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await flushPromises()
+    // RED: стрелки не обрабатывались — фокус стоял на месте.
+    expect(document.activeElement).toBe(items[1])
+    ;(document.activeElement as HTMLButtonElement).dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }),
+    )
+    await flushPromises()
+    expect(document.activeElement).toBe(items[0])
+  })
+
+  it('RT-5: программное открытие снимка при 0 переменных не открывает диалог', async () => {
+    const w = mountAt(
+      InstanceSnapshotPanel,
+      { processKey: 'k', processDefinitionId: 'def1', instanceVariables: [] },
+      520,
+    )
+    await flushPromises()
+    const panel = w.findComponent(InstanceSnapshotPanel)
+    ;(panel.vm as unknown as { openDialog: () => void }).openDialog()
+    await flushPromises()
+    // RED: диалог открывался в обход :disabled (пустой список, сохранять нечего).
+    expect(document.querySelector('[role="dialog"]')).toBeFalsy()
+    w.unmount()
   })
 })
