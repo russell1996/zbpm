@@ -223,7 +223,11 @@ public class ElementSupport {
         return raw;
     }
 
-    /** WO-IN-4: тот же scope-resolve, переменные подтягивает сам (root+scope merge). */
+    /** WO-IN-4: тот же scope-resolve, переменные подтягивает сам (root+scope merge).
+     * WO-IN-4 раунд 2: живых вызывающих нет (MI-путь идёт через
+     * {@link #resolveExpressionInScopeByNames}); оставлен для совместимости,
+     * новые вызывающие обязаны использовать ByNames-вариант (Б-1: полный merge
+     * scope eager-парсит чужие JSON и роняет резолв на битом нерелевантном). */
     public String resolveExpressionInScope(String raw, UUID processInstanceId, UUID scopeId) {
         if (raw == null || raw.isBlank()) return null;
         return resolveExpressionInScope(raw, processInstanceId,
