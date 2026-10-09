@@ -12,7 +12,18 @@
 # он не попадает (runtime копирует только jar).
 README.md
 # The frontend builds from its own context (zorrobpm-frontend/Dockerfile); keep it out of the backend image
-zorrobpm-frontend
+# 2026-10-09: EXCEPT one file — DomainEventTypeSnapshotTest (zorrobpm-contract) reads
+# ../zorrobpm-frontend/src/composables/backend-event-types.json in `docker build --target test`;
+# without the carve-out test:backend is red only in CI (same class as docker-compose.yml for
+# HttpConnectorComposeWiringTest and integration-quickstart.md for C836WorkerConfirmEnvBindingTest).
+# Directory itself must stay sendable (zorrobpm-frontend/*, not zorrobpm-frontend) — otherwise
+# nothing inside can be re-included. Only this JSON returns, never the whole frontend.
+zorrobpm-frontend/*
+!zorrobpm-frontend/src
+zorrobpm-frontend/src/*
+!zorrobpm-frontend/src/composables
+zorrobpm-frontend/src/composables/*
+!zorrobpm-frontend/src/composables/backend-event-types.json
 # 2026-10-06: docs исключаем КРОМЕ одного файла — C836WorkerConfirmEnvBindingTest (starter) читает
 # docs/guides/integration-quickstart.md от корня репозитория; в `docker build --target test` его не было
 # (test:backend красный на 03752e3b). Каталог исключается как `docs/*`, иначе внутри ничего не вернуть.
