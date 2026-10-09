@@ -1,5 +1,6 @@
-package com.zorrodev.bpm.contract.dto.event;
+package com.zorrodev.bpm.engine.event;
 
+import com.zorrodev.bpm.contract.dto.event.DomainEventType;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,8 +15,16 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-UI-25 post-merge CI fix: снимок {@code backend-event-types.json} обязан
- * повторять строковые значения {@link DomainEventType} один в один.
+ * WO-UI-25-CI-FIX2: снимок {@code backend-event-types.json} обязан повторять
+ * строковые значения {@link DomainEventType} один в один.
+ *
+ * <p>Перенесён из {@code zorrobpm-contract} (пакет
+ * {@code ...contract.dto.event}): собственный {@code src/test} дал contract
+ * тестовую базу, и SELFTEST-кейс {@code contract src + test anywhere -> PASS}
+ * в {@code ci/test-gate-selftest.sh} покраснел на master f44c4ba3
+ * (pipeline 177188, job test:gate). Engine имеет тестовую базу и зависит от
+ * contract — гейт снова зелёный без правки {@code ci/}. Логика теста
+ * побайтово та же, что проверена мутациями в WO-UI-25-CI-FIX.
  *
  * <p>Фронт-тест {@code realtime-event-contract.ui25.test.ts} читает ТОЛЬКО этот
  * снимок: фронт-сборка в CI ({@code docker build}, контекст
@@ -39,7 +48,7 @@ class DomainEventTypeSnapshotTest {
     void filesUnderTestExist() {
         // Молча сверять отсутствующий снимок нельзя — иначе тест «зелёный» в вакууме.
         assertThat(Files.isRegularFile(SNAPSHOT))
-            .as("backend-event-types.json доступен из модуля zorrobpm-contract")
+            .as("backend-event-types.json доступен из модуля zorrobpm-engine")
             .isTrue();
     }
 
