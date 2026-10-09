@@ -378,6 +378,15 @@ onUnmounted(() => {
   0%, 100% { filter: drop-shadow(0 0 2px rgba(239, 68, 68, 0.3)); }
   50% { filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.6)); }
 }
+
+/* WO-UI-26 Н-6 (кр.12): уважаем prefers-reduced-motion — бесконечный пульс
+   инцидента гасится, остаётся статичная красная обводка (состояние видно,
+   вестибулярных триггеров нет). */
+@media (prefers-reduced-motion: reduce) {
+  .bpmn-container :deep(.djs-shape.highlight-incident .djs-visual > :is(rect, path, circle, polygon)) {
+    animation: none;
+  }
+}
 </style>
 
 <!-- not scoped: bpmn-js overlay HTML is injected outside this component's scope -->

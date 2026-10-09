@@ -19,6 +19,8 @@ import api from '@/services/api'
 import TaskList from '@/pages/tasks/TaskList.vue'
 import MainLayout from '@/layouts/MainLayout.vue'
 import { useRealtimeEvents } from '@/composables/useRealtimeEvents'
+import { useRealtimeChannel } from '@/composables/useRealtimeChannel'
+import { resetSseFanoutForTest } from '@/services/sseFanout'
 import ru from '@/locales/ru.json'
 import en from '@/locales/en.json'
 import kz from '@/locales/kz.json'
@@ -28,10 +30,16 @@ import '@/style.css'
 vi.mock('vue-router', () => ({
   useRoute: () => ({ params: {}, path: '/' }),
   useRouter: () => ({ push: mockRouterPush }),
+  RouterLink: { template: '<a><slot /></a>' },
 }))
 const mockRouterPush = vi.hoisted(() => vi.fn())
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ user: { id: 'u1', username: 'op' }, isSuperAdmin: true }),
+  useAuthStore: () => ({ user: { id: 'u1', username: 'op' }, isSuperAdmin: true, logout: vi.fn() }),
+}))
+// WO-UI-26: HeaderBar (с точкой канала) читает useUiStore напрямую — без
+// мока падает, точка не рендерится (поймано сравнением с channel-dot тестом).
+vi.mock('@/stores/ui', () => ({
+  useUiStore: () => ({ darkMode: false, toggleDarkMode: vi.fn() }),
 }))
 vi.mock('@/stores/breadcrumb', () => ({
   useBreadcrumbStore: () => ({ setCrumbLabel: vi.fn() }),
@@ -44,9 +52,10 @@ vi.mock('@/composables/useDateFormat', () => ({
 }))
 
 const mockGetUserTasks = vi.hoisted(() => vi.fn())
+const mockGetUserTaskOne = vi.hoisted(() => vi.fn())
 vi.mock('@/services/taskService', () => ({
   getUserTasks: mockGetUserTasks,
-  getUserTask: vi.fn().mockResolvedValue(null),
+  getUserTask: mockGetUserTaskOne,
   completeUserTask: vi.fn().mockResolvedValue(undefined),
   getServiceTasks: vi.fn().mockResolvedValue({ data: [], totalElements: 0, pageIndex: 0, pageSize: 100 }),
   getServiceTask: vi.fn().mockResolvedValue(null),
@@ -131,12 +140,18 @@ function mountHost(): HTMLElement {
   return host
 }
 
-function until(cond: () => boolean, timeout = 8000): Promise<void> {
+function until(cond: () => boolean, timeout = 8000, label = ''): Promise<void> {
   return new Promise((resolve, reject) => {
     const start = Date.now()
     const tick = () => {
-      if (cond()) return resolve()
-      if (Date.now() - start > timeout) return reject(new Error('timeout waiting for condition'))
+      let ok = false
+      try {
+        ok = cond()
+      } catch (e) {
+        return reject(new Error(`until[${label}] threw: ${(e as Error).message}`))
+      }
+      if (ok) return resolve()
+      if (Date.now() - start > timeout) return reject(new Error(`timeout waiting for condition [${label}]`))
       requestAnimationFrame(tick)
     }
     tick()
@@ -177,13 +192,25 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
   FakeEventSource.instances = []
+  useRealtimeChannel().resetForTest()
+  resetSseFanoutForTest()
   vi.stubGlobal('EventSource', FakeEventSource)
+  // WO-UI-26 Доп.5: лидерство детерминировано — сразу лидер (иначе connect
+  // висит на Web-Locks таймауте как follower и EventSource не открывается).
+  Object.defineProperty(navigator, 'locks', {
+    value: { request: (_n: string, _o: unknown, cb: () => Promise<void>) => cb() },
+    configurable: true,
+  })
   refreshAdapter = mockRefreshOk()
 })
 
 afterEach(() => {
   vi.unstubAllGlobals()
   ;(api.defaults as Record<string, unknown>).adapter = originalAdapter
+  // WO-UI-26: модульный синглтон канала + fanout переживают unmount —
+  // сбрасываем между кейсами, иначе следующий кейс читает чужой инстанс.
+  useRealtimeChannel().resetForTest()
+  resetSseFanoutForTest()
   for (const w of mounted) w.unmount()
   mounted = []
   for (const h of hosts) h.remove()
@@ -223,16 +250,19 @@ describe('WO-UI-22 SSE reconnect in a real browser', () => {
       .toHaveLength(1)
 
     // Новый источник жив: событие долетает до списка без reload страницы.
-    mockGetUserTasks.mockResolvedValue({
-      data: [taskRow('t1'), taskRow('t2')], totalElements: 2, pageIndex: 0, pageSize: 10,
-    })
+    // WO-UI-26 Доп.4: адресный патч — событие несёт activityId, стор делает
+    // один GET сущности (getUserTask), список не перезапрашивает.
+    mockGetUserTaskOne.mockResolvedValue(taskRow('t2'))
+    mockGetUserTasks.mockClear()
     FakeEventSource.instances[1].emit(
       'user-task.created',
-      { sequence: 78, id: 'e-78', type: 'user-task.created', version: 1, occurredAt: '2026-09-24T00:00:00Z', data: {} },
+      { sequence: 78, id: 'e-78', type: 'user-task.created', version: 1, occurredAt: '2026-09-24T00:00:00Z', data: { activityId: 't2' } },
       '78',
     )
     await flushPromises()
     await until(() => taskRowsText(wrapper).some((t) => t.includes('Task t2')))
+    expect(mockGetUserTaskOne).toHaveBeenCalledWith('t2')
+    expect(mockGetUserTasks).not.toHaveBeenCalled()
 
     const rows = wrapper.findAll('tbody tr')
     expect(rows.length).toBe(2)
@@ -243,12 +273,21 @@ describe('WO-UI-22 SSE reconnect in a real browser', () => {
     mounted = []
   })
 
-  it('criterion 3 (UI): dead refresh shows the banner, Sign in routes to login', async () => {
-    mockRefreshFail()
+  it('criterion 3 (UI): dead refresh shows NO banner — neutral dot + dialog (WO-UI-26)', async () => {
+    // WO-UI-26 Доп.2/Доп.7 ЗАМЕНИЛ контракт WO-UI-22: баннер [role="alert"]
+    // «Session expired» + кнопка «Войти» над контентом УБРАНЫ (layout shift).
+    // Вместо них — нейтральная точка в шапке (гистерезис 5 с) + shadcn-диалог
+    // «Состояние канала» с кнопкой «Повторить сейчас» (ручной retry — только
+    // внутри панели, не кнопка слева сверху). Тест переписан на новый контракт;
+    // мутация «вернуть баннер в MainLayout» роняет его (alert найден).
+    // ВАЖНО: beforeEach ставит mockRefreshOk — здесь нужен МЁРТВЫЙ refresh.
+    refreshAdapter = mockRefreshFail()
     const wrapper = mount(MainLayout, {
       attachTo: mountHost(),
       global: {
-        stubs: { teleport: true, RouterView: true, SidebarNavShadcn: true, HeaderBar: true },
+        // HeaderBar НЕ стаблим: точка канала живёт внутри него (застабленный
+        // HeaderBar точку не рендерит — как поймано при переписывании).
+        stubs: { teleport: true, RouterView: true, SidebarNavShadcn: true },
         plugins: [createPinia(), makeI18n()],
       },
     })
@@ -257,22 +296,35 @@ describe('WO-UI-22 SSE reconnect in a real browser', () => {
     expect(FakeEventSource.instances).toHaveLength(1)
     expect(wrapper.find('[role="alert"]').exists()).toBe(false)
 
-    // Разрыв за разрывом: кап 5 попыток выматывается backoff-таймерами.
-    for (let i = 0; i < 6 && FakeEventSource.instances.length === 1; i++) {
-      const cur = FakeEventSource.instances[0]
+    // Разрыв за разрывом (как в моём channel-dot тесте — там цикл 5 подряд
+    // зелёный 10/10): каждый CLOSED идёт в scheduleReconnect; условие
+    // `length === 1` НЕ ставим — при живом refresh новый источник создаётся,
+    // и старый цикл вис на первом же пересоздании.
+    for (let i = 0; i < 5; i++) {
+      const cur = FakeEventSource.instances[FakeEventSource.instances.length - 1]
       cur.readyState = FakeEventSource.CLOSED
       cur.onerror?.({} as Event)
-      await new Promise((r) => setTimeout(r, 1100))
       await flushPromises()
+      await new Promise((r) => setTimeout(r, 100))
     }
-    await until(() => wrapper.find('[role="alert"]').exists(), 15000)
-    const alert = wrapper.find('[role="alert"]')
-    expect(alert.text()).toContain('Session expired')
-    const btn = alert.find('button')
-    expect(btn.exists()).toBe(true)
-    await btn.trigger('click')
-    // Именованный роут — base '/ui/' подставит сам history, без дубля /ui/ui.
-    expect(mockRouterPush).toHaveBeenCalledWith({ name: 'login' })
+    // НИКАКОГО баннера — ни на одном этапе; вместо него точка в шапке.
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    await until(() => wrapper.find('[data-testid="channel-dot"]').exists(), 30000, 'channel-dot')
+    const dot = wrapper.find('[data-testid="channel-dot"]')
+    expect(dot.exists()).toBe(true)
+    // Клик → диалог «Состояние канала» с retry внутри панели.
+    const dotEl = document.querySelector('[data-testid="channel-dot"]') as HTMLElement | null
+    expect(dotEl).not.toBeNull()
+    dotEl!.click()
+    await flushPromises()
+    await until(() => document.querySelector('[data-testid="channel-dialog"]') !== null, 8000, 'channel-dialog')
+    const retry = document.querySelector('[data-testid="channel-diag-retry"]') as HTMLElement | null
+    expect(retry).not.toBeNull()
+    const sourcesBefore = FakeEventSource.instances.length
+    retry!.click()
+    await flushPromises()
+    // Ручной retry переподключает канал (новый EventSource, старый закрыт).
+    expect(FakeEventSource.instances.length).toBe(sourcesBefore + 1)
     wrapper.unmount()
     mounted = []
   })

@@ -85,6 +85,24 @@ class FakeEventSource {
   }
 }
 
+
+// WO-UI-26 Доп.5: connect стал асинхронным (лидерство через Web Locks) —
+// в jsdom Web Locks нет (follower через 1.5с таймаут), поэтому стаб: первый
+// connect — сразу лидер.
+function stubLeaderLocks() {
+  const locks = {
+    request: (_name: string, _opts: unknown, cb: () => Promise<void>) => cb(),
+  }
+  Object.defineProperty(navigator, 'locks', { value: locks, configurable: true })
+}
+
+async function connectAndWait(rt: { connect: () => void }) {
+  stubLeaderLocks()
+  rt.connect()
+  await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
+}
+
+
 describe('WO-REL-57: live session + dead realtime channel', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -117,7 +135,7 @@ describe('WO-REL-57: live session + dead realtime channel', () => {
     vi.useFakeTimers()
     mockRefreshOk()
     const rt = useRealtimeEvents()
-    rt.connect()
+    await connectAndWait(rt)
     expect(FakeEventSource.instances).toHaveLength(1)
 
     // Каждый новый источник сервер режет сразу: эмулируем 6 разрывов
@@ -155,7 +173,7 @@ describe('WO-REL-57: live session + dead realtime channel', () => {
     })
     ;(api.defaults as Record<string, unknown>).adapter = adapter
     const rt = useRealtimeEvents()
-    rt.connect()
+    await connectAndWait(rt)
     for (let i = 0; i < 6; i++) {
       const cur = FakeEventSource.instances[FakeEventSource.instances.length - 1]
       cur.readyState = FakeEventSource.CLOSED
@@ -176,7 +194,7 @@ describe('WO-REL-57: live session + dead realtime channel', () => {
     vi.useFakeTimers()
     mockRefreshOk()
     const rt = useRealtimeEvents()
-    rt.connect()
+    await connectAndWait(rt)
     for (let i = 0; i < 6; i++) {
       const cur = FakeEventSource.instances[FakeEventSource.instances.length - 1]
       cur.readyState = FakeEventSource.CLOSED
