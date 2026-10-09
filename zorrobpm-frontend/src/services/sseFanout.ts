@@ -115,26 +115,36 @@ export function subscribeFanout(fn: SseFanoutListener): () => void {
 /**
  * Попытаться стать лидером. Резолвится `true` — эта вкладка держит EventSource;
  * `false` — другая вкладка лидер (или нет Web Locks — тогда каждая сама).
- * Держать `held()` вызванным, пока вкладка — лидер; отпустить при уходе.
+ *
+ * Переизбрание (кр.21, HOLD раунд 1): follower НЕ засыпает на 1500 мс таймауте
+ * навсегда. `locks.request` без ограничения висит в очереди: смерть лидера =
+ * браузер отдаёт лок следующему = колбэк follower вызывается = handle
+ * вызывает `onPromoted` (follower открывает свой EventSource с Last-Event-ID
+ * и объявляет себя `leader`). 1500 мс таймаут — только чтобы НЕ-лидер не
+ * висел без UI-статуса: после него резолвится `leader:false` (подписка на
+ * ретрансляцию), а висящий request продолжает ждать повышения.
  */
 export function acquireSseLeadership(onRevoked: () => void): Promise<{
   leader: boolean
   held: () => void
   release: () => void
+  /** Ставится вызывающим: смерть лидера → follower становится лидером. */
+  onPromoted: (fn: () => void) => void
 }> {
   ensureTabId()
   ensureChannel()
   const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
   if (!locks || typeof locks.request !== 'function') {
     // Fallback: без Web Locks каждая вкладка сама (как до WO).
-    return Promise.resolve({ leader: true, held: () => {}, release: () => {} })
+    return Promise.resolve({ leader: true, held: () => {}, release: () => {}, onPromoted: () => {} })
   }
   return new Promise((resolve) => {
     let settled = false
-    // Web Locks: колбэк держится, пока удерживаем лок; resolve вызывается
-    // один раз — при получении лока (лидер) либо по таймауту (follower).
-    // ВАЖНО: re-acquire после освобождения НЕ делаем автоматически — новый
-    // вызов acquireSseLeadership нужен явно (иначе гонка resolve/re-request).
+    // Повышение follower после смерти лидера (ставит вызывающий).
+    let promoted: (() => void) | null = null
+    const onPromoted = (fn: () => void): void => {
+      promoted = fn
+    }
     const release = () => {
       if (releaseLock) {
         const r = releaseLock
@@ -161,12 +171,20 @@ export function acquireSseLeadership(onRevoked: () => void): Promise<{
             isLeader = true
             lockHeld = true
             publishFanout({ kind: 'leader', tabId: ensureTabId() })
-            resolve({ leader: true, held: () => {}, release })
+            resolve({ leader: true, held: () => {}, release, onPromoted })
+          } else if (promoted) {
+            // Лок дождался очереди ПОСЛЕ follower-таймаута: повышение.
+            isLeader = true
+            lockHeld = true
+            publishFanout({ kind: 'leader', tabId: ensureTabId() })
+            const p = promoted
+            promoted = null
+            p()
           }
         }),
     )
     // Если лок занят другой вкладкой — request ждёт; через таймаут считаем
-    // себя follower (лок освободится — станет лидером позже через re-acquire).
+    // себя follower (лок освободится — станет лидером через onPromoted).
     setTimeout(() => {
       if (!settled) {
         settled = true
@@ -177,6 +195,7 @@ export function acquireSseLeadership(onRevoked: () => void): Promise<{
           release: () => {
             // follower ничего не держит — нечего отпускать
           },
+          onPromoted,
         })
       }
     }, 1500)

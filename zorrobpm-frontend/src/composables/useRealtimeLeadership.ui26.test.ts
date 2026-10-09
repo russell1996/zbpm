@@ -208,4 +208,45 @@ describe('useRealtimeEvents leader-tab (WO-UI-26 Доп.5)', () => {
     releaseLockForTest()
     expect(SSE_FANOUT_CHANNEL).toBe('zbpm-sse-fanout')
   })
+
+  it('кр.21/Б-1: смерть лидера → follower открывает РОВНО ОДИН новый EventSource', async () => {
+    // Две вкладки: лидер (держит лок+ES) и follower (висит в очереди лока).
+    const leader = useRealtimeEvents()
+    leader.connect()
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
+    expect(leader.isLeaderTab()).toBe(true)
+
+    const follower = useRealtimeEvents()
+    follower.connect()
+    // follower-таймаут 1500 мс: нужны реальные таймеры для этого ожидания.
+    vi.useRealTimers()
+    try {
+      await new Promise((r) => setTimeout(r, 1700))
+    } finally {
+      vi.useFakeTimers()
+    }
+    await Promise.resolve()
+    expect(follower.isLeaderTab()).toBe(false)
+    expect(FakeEventSource.instances).toHaveLength(1)
+
+    // Смерть лидера: закрыл вкладку (disconnect = close ES + release lock).
+    leader.disconnect()
+    releaseLockForTest()
+    // Стаб отдаёт лок ждущему follower → onPromoted → свой EventSource.
+    await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2))
+    expect(follower.isLeaderTab()).toBe(true)
+    // Ровно один новый — не два и не ноль (переизбрание, а не шторм/молчание).
+    expect(FakeEventSource.instances.filter((s) => !s.closed)).toHaveLength(1)
+    // Новый лидер живой: событие через его ES диспатчится сторам.
+    vi.mocked(incidentService.getIncident).mockResolvedValue({
+      id: 'inc99', activityId: 'a-9', message: 'x', createdAt: '2026-09-24',
+      completedAt: null, processName: null, processInstanceId: 'pi-9', bpmnElementId: 'el-9', elementName: null,
+    })
+    FakeEventSource.instances[1].emit('incident.raised',
+      { ...envelope('incident.raised', 101), data: { incidentId: 'inc99' } }, '101')
+    await vi.waitFor(() => expect(incidentService.getIncident).toHaveBeenCalledWith('inc99'))
+    follower.disconnect()
+    leader.disconnect()
+  })
+
 })
