@@ -2,7 +2,9 @@ package com.zorrodev.bpm.engine.scheduler;
 
 import com.zorrodev.bpm.engine.dto.TimerJob;
 import com.zorrodev.bpm.engine.dto.TimerStartJob;
+import com.zorrodev.bpm.engine.service.AdmissionLease;
 import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.ScriptService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,6 +43,14 @@ public class TimerBatchProcessor {
     private final TimerJobExecutor timerJobExecutor;
     private final TimerStartJobExecutor timerStartJobExecutor;
     private final Executor timerExecutor;
+    /**
+     * WO-ENG-35 (NEW2-16): admission-гейт script-пула. Каждый fire ждёт место
+     * ЗДЕСЬ (poll-поток, вне REQUIRES_NEW-транзакции fire) и держит лизу всё
+     * время fire: sustained-перегрузка даёт ту же ошибку fire (запись +
+     * повтор позже), но ожидание окна не удерживает соединение. Отказ гейта
+     * (503) ловится тем же catch ниже — как обычная ошибка fire.
+     */
+    private final ScriptService scriptService;
 
     @Value("${zorrobpm.timer.batch-size:100}")
     private int batchSize;
@@ -48,11 +58,13 @@ public class TimerBatchProcessor {
     public TimerBatchProcessor(DBService dbService,
                                TimerJobExecutor timerJobExecutor,
                                TimerStartJobExecutor timerStartJobExecutor,
-                               @Qualifier("timerExecutor") Executor timerExecutor) {
+                               @Qualifier("timerExecutor") Executor timerExecutor,
+                               ScriptService scriptService) {
         this.dbService = dbService;
         this.timerJobExecutor = timerJobExecutor;
         this.timerStartJobExecutor = timerStartJobExecutor;
         this.timerExecutor = timerExecutor;
+        this.scriptService = scriptService;
     }
 
     public void processBatch() {
@@ -62,7 +74,9 @@ public class TimerBatchProcessor {
         List<CompletableFuture<Void>> futures = new ArrayList<>(dueJobs.size());
         for (TimerJob job : dueJobs) {
             futures.add(CompletableFuture.runAsync(() -> {
-                try {
+                // WO-ENG-35: лиза — до fire (см. поле); try — общий с fire,
+                // отказ гейта идёт тем же путём ошибки fire.
+                try (AdmissionLease ignored = scriptService.admitOutsideTx()) {
                     timerJobExecutor.fire(job);
                 } catch (Exception e) {
                     log.error("Failed to fire timer job {} (activity {})", job.getId(), job.getActivityId(), e);
@@ -78,7 +92,8 @@ public class TimerBatchProcessor {
         List<TimerStartJob> dueStartJobs = dbService.findDueTimerStartJobsLocked(now, batchSize);
         for (TimerStartJob job : dueStartJobs) {
             futures.add(CompletableFuture.runAsync(() -> {
-                try {
+                // WO-ENG-35: см. выше — та же лиза до fire.
+                try (AdmissionLease ignored = scriptService.admitOutsideTx()) {
                     timerStartJobExecutor.fire(job.getId(), job.getProcessDefinitionId(), job.getElementId(), job.getDueAt(), job.getRemainingCount());
                 } catch (Exception e) {
                     log.error("Failed to fire timer start job {} (definition {})", job.getId(), job.getProcessDefinitionId(), e);

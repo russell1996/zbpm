@@ -1,6 +1,8 @@
 package com.zorrodev.bpm.engine.listener;
 
+import com.zorrodev.bpm.engine.service.AdmissionLease;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.tracing.TracingSupport;
 import com.zorrodev.bpm.exchange.ServiceTaskCompleted;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
@@ -33,6 +35,7 @@ import static org.mockito.Mockito.verify;
 class ServiceTaskCompleteListenerTraceTest {
 
     @Mock private RuntimeService runtimeService;
+    @Mock private ScriptService scriptService;
 
     private InMemorySpanExporter exporter;
     private ServiceTaskCompleteListener listener;
@@ -46,7 +49,12 @@ class ServiceTaskCompleteListenerTraceTest {
         TracingSupport tracing = new TracingSupport(OpenTelemetrySdk.builder()
             .setTracerProvider(provider)
             .build());
-        listener = new ServiceTaskCompleteListener(runtimeService, tracing);
+        // WO-ENG-35: гейт admission — мок с no-op лизой (место «есть сразу»);
+        // транзакционное тело — настоящий процессор на мок-RuntimeService.
+        org.mockito.Mockito.when(scriptService.admitOutsideTx())
+            .thenReturn(AdmissionLease.noop());
+        listener = new ServiceTaskCompleteListener(tracing, scriptService,
+            new ServiceTaskCompletionProcessor(runtimeService));
         MDC.clear();
     }
 

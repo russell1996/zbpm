@@ -28,4 +28,34 @@ public interface ScriptService {
      *         {@code EngineException}) проходит наружу как есть
      */
     Object runWithBudget(java.util.concurrent.Callable<Object> task, String codeRef);
+
+    /**
+     * WO-ENG-35 (NEW2-16): резервирует место в script-пуле ДО открытия
+     * транзакции вызывающего. Вызывающий (REST-вход, AMQP-слушатель, fire
+     * таймера) держит возвращённую лизу всё время операции ({@code try}-with-resources);
+     * пока лиза открыта, все {@code evaluate*}/{@code runWithBudget} этого потока
+     * идут в пул напрямую, не ожидая admission внутри транзакции.
+     *
+     * <p>Вызывать ВНЕ транзакции. Вызов внутри транзакции НЕ падает, а
+     * деградирует к прежнему поведению (ограниченное ожидание внутри +
+     * счётчик {@code zbpm.script.admission.in_tx} + WARN): fail-fast здесь
+     * был бы хуже болезни — легитимный путь запроса с
+     * {@code Idempotency-Key} идёт через {@code IdempotencyFilter}, который
+     * выполняет цепочку (включая контроллер) внутри своей транзакции, и
+     * жёсткий отказ превращал бы его в 500. Вынос гейта до фильтра —
+     * отдельная эскалация (фильтр в {@code rest/security}, рядом с G-C);
+     * до неё такие пути считаются и видны оператору, а не ломаются.
+     *
+     * <p>Таймаут ожидания — то же окно {@code script-queue-wait-seconds}, отказ —
+     * тот же {@link com.zorrodev.bpm.engine.service.ScriptOverloadException}
+     * (503), что и у внутритранзакционного пути: видимое поведение при
+     * перегрузке не меняется, меняется только то, ЧТО удерживается во время
+     * ожидания (ничего вместо транзакции+соединения).
+     *
+     * @return лиза; закрыть в {@code finally} (иначе слот утечёт —
+     *         пермиты конечны, утечка видна как рост отказов до перезапуска)
+     * @throws com.zorrodev.bpm.engine.service.ScriptOverloadException если место
+     *         не освободилось за окно ожидания
+     */
+    AdmissionLease admitOutsideTx();
 }
