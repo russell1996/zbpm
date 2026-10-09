@@ -96,7 +96,15 @@ class SseNginxBufferingLiveIT {
         assertThat(accelName).isEqualTo("X-Accel-Buffering");
         assertThat(cacheValue).isEqualTo("no-cache, no-transform");
 
-        workDir = Files.createTempDirectory("rel70-sse-backend");
+        // REL70_WORKDIR (только для отладки стенда): фиксированная папка
+        // вместо tmp — backend.log переживает --rm контейнер maven.
+        String fixedWork = System.getenv("REL70_WORKDIR");
+        if (fixedWork != null && !fixedWork.isBlank()) {
+            workDir = Path.of(fixedWork);
+            Files.createDirectories(workDir);
+        } else {
+            workDir = Files.createTempDirectory("rel70-sse-backend");
+        }
         writeBackend(workDir, accelName, cacheName, cacheValue);
 
         List<String> cmd = new ArrayList<>();
@@ -381,7 +389,11 @@ class SseNginxBufferingLiveIT {
                     URI.create("http://127.0.0.1:" + backendPort + "/events/stream").toURL()
                         .openConnection();
                 c.setConnectTimeout(1_000);
-                c.setReadTimeout(3_000);
+                // Spring коммитит заголовки SSE-ответа только на первой
+                // записи: в RED-эмуляции (без hello — тишина до heartbeat
+                // 15с, как прод до фикса) заголовки приходят только тогда.
+                // Это готовность стенда, не измерение — щедрый таймаут.
+                c.setReadTimeout(30_000);
                 c.setRequestProperty("Accept", "text/event-stream");
                 int code = c.getResponseCode();
                 c.disconnect();
@@ -403,7 +415,9 @@ class SseNginxBufferingLiveIT {
                     URI.create("http://127.0.0.1:" + nginxPort + "/events/stream").toURL()
                         .openConnection();
                 c.setConnectTimeout(1_000);
-                c.setReadTimeout(8_000);
+                // Тот же 15с-хвост RED-эмуляции сквозь nginx: заголовки
+                // апстрим коммитит только на первой записи — готовность.
+                c.setReadTimeout(30_000);
                 c.setRequestProperty("Accept", "text/event-stream");
                 int code = c.getResponseCode();
                 if (code == 200) {
