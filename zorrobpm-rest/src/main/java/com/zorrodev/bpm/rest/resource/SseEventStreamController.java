@@ -12,6 +12,8 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
@@ -59,15 +61,51 @@ public class SseEventStreamController {
     @Value("${zorrobpm.sse.emitter-timeout-ms:1800000}")
     private long emitterTimeoutMs = 30 * 60 * 1000L;
 
+    /**
+     * WO-REL-70: входная точка Spring MVC (аннотации маппинга — ЗДЕСЬ, на
+     * 5-параметровой сигнатуре: её держит сигнатурный контракт
+     * {@code SseCharacterizationIT.char9_contract_eventWireFormatAndControllerPath},
+     * править чужой characterization-тест под себя (V7) нельзя).
+     * {@code HttpServletResponse} Spring резолвит как native-аргумент
+     * (не аннотируется) — та же техника, что была до WO. Второй метод ниже —
+     * лишь тестовый/legacy вызов без аннотаций (иначе ambiguous mapping).
+     */
     @GetMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter stream(
             @RequestParam(required = false) String type,
             @RequestParam(required = false) String processInstanceId,
             @RequestParam(required = false) String processDefinitionKey,
             @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId,
+            HttpServletRequest request) {
+        return streamInternal(type, processInstanceId, processDefinitionKey,
+            lastEventId, request,
+            SseResponseHolder.response());
+    }
+
+    /**
+     * WO-REL-70: вариант с явным {@code HttpServletResponse} (заголовки
+     * ставятся напрямую — прямой unit-вызов без request-scope).
+     * Без MVC-аннотаций: второй {@code @GetMapping} на то же имя дал бы
+     * ambiguous mapping — вход один (метод выше).
+     */
+    public SseEmitter stream(
+            String type,
+            String processInstanceId,
+            String processDefinitionKey,
+            String lastEventId,
             HttpServletRequest request,
             HttpServletResponse response) {
+        return streamInternal(type, processInstanceId, processDefinitionKey,
+            lastEventId, request, response);
+    }
 
+    private SseEmitter streamInternal(
+            String type,
+            String processInstanceId,
+            String processDefinitionKey,
+            String lastEventId,
+            HttpServletRequest request,
+            HttpServletResponse response) {
         Principal principal = getPrincipal(request);
         if (principal == null) {
             SseEmitter emitter = new SseEmitter(0L);
@@ -76,9 +114,12 @@ public class SseEventStreamController {
         }
 
         // WO-REL-70: только успех несёт anti-buffering заголовки — ветка
-        // выше (и фильтры 401/429 до неё) их не ставят.
-        response.setHeader(HDR_X_ACCEL_BUFFERING, "no");
-        response.setHeader(HDR_CACHE_CONTROL, CACHE_CONTROL_VALUE);
+        // выше (и фильтры 401/429 до неё) их не ставят. Перегрузка без
+        // response (тестовый/legacy вызов) — заголовки ставить некуда.
+        if (response != null) {
+            response.setHeader(HDR_X_ACCEL_BUFFERING, "no");
+            response.setHeader(HDR_CACHE_CONTROL, CACHE_CONTROL_VALUE);
+        }
 
         SseEmitter emitter = new SseEmitter(emitterTimeoutMs);
 
@@ -136,5 +177,27 @@ public class SseEventStreamController {
     private Principal getPrincipal(HttpServletRequest request) {
         Object attr = request.getAttribute("principal");
         return attr instanceof Principal p ? p : null;
+    }
+
+    /**
+     * WO-REL-70: {@code HttpServletResponse} текущего запроса (для MVC-входа
+     * без явного параметра — заголовки ставятся до первой записи).
+     * Вне request-scope (прямой вызов) — {@code null}, заголовки пропускаются.
+     */
+    static final class SseResponseHolder {
+        private SseResponseHolder() {
+        }
+
+        static HttpServletResponse response() {
+            try {
+                var attrs = RequestContextHolder.getRequestAttributes();
+                if (attrs instanceof ServletRequestAttributes sra) {
+                    return sra.getResponse();
+                }
+                return null;
+            } catch (IllegalStateException e) {
+                return null;
+            }
+        }
     }
 }
