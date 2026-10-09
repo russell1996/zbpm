@@ -1,0 +1,7 @@
+# G24 allowlist (WO-REL-70): repo-relative .vue paths (or directory prefixes
+# ending with '/') exempt from the bare-UI-tag check. One entry per line,
+# '#' starts a comment. Prefer fixing the file (shadcn-vue primitive via
+# `npx shadcn-vue add <component>`) over listing it here; every entry needs
+# a reason the primitive cannot cover it (reviewer judges).
+#
+# (empty: no exemptions granted yet)

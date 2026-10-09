@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# WO-REL-69 П.3: self-test for the G2 docs-only carve-out in ci/wo-report-gate.sh.
+# WO-REL-69 П.3 + WO-REL-70 part B: self-test for the G2 docs-only carve-out
+# and the G24 shadcn-vue check in ci/wo-report-gate.sh.
 #
 # Why a NEW script (not a section in ci/test-gate-selftest.sh): that script
 # drives ci/test-gate.sh (the src/main→test coverage gate) and asserts its exit
@@ -85,6 +86,33 @@ expect_g2() {
   fi
 }
 
+# expect_g24 <label> <base> <head> <expected: ok|fail> <grep-pattern>
+# Same driver as expect_g2, but asserts the G24 verdict line (WO-REL-70).
+expect_g24() {
+  local label="$1" base="$2" head="$3" want="$4" pattern="$5" out
+  set +e
+  out="$(WO_GATE_BASE="$base" bash "$GATE" SELFTEST /tmp/wo-report-gate-selftest.report.$$.md 2>&1)"
+  printf '%s\n' "$out" > /tmp/wo-report-gate-selftest.out.$$
+  set -e
+  if [ "$want" = "ok" ]; then
+    if printf '%s\n' "$out" | grep -q "OK.*$pattern"; then
+      echo "SELFTEST OK      $label (G24 passes as expected)"
+    else
+      echo "SELFTEST FAILURE $label - expected a G24 OK line matching '$pattern'"
+      cat /tmp/wo-report-gate-selftest.out.$$
+      FAILED=$((FAILED + 1))
+    fi
+  else
+    if printf '%s\n' "$out" | grep -q "FAIL.*$pattern"; then
+      echo "SELFTEST OK      $label (G24 fails as expected)"
+    else
+      echo "SELFTEST FAILURE $label - expected a G24 FAIL line matching '$pattern'"
+      cat /tmp/wo-report-gate-selftest.out.$$
+      FAILED=$((FAILED + 1))
+    fi
+  fi
+}
+
 write_report
 BASE_SHA="$(git rev-parse "$BASE")"
 
@@ -112,10 +140,81 @@ printf '%s\n' "# WO-REL-69 selftest fixture (must be reverted by trap)" >> docke
 git add docker-compose.yml
 head="$(commit_all "selftest: docs + compose")"
 expect_g2 "docs + compose -> G2 FAIL" "$BASE_SHA" "$head" fail "unclear what kind of build evidence"
+BASE_SHA="$head"
+
+# --- WO-REL-70 G24 fixtures (bare UI tags vs shadcn-vue) ----------------------
+# Each commit is diffed against its own parent (chained BASE_SHA), so every
+# fixture pins exactly one G24 branch.
+# F4. added bare <button> in a page .vue → G24 FAIL.
+mkdir -p zorrobpm-frontend/src/pages
+cat > zorrobpm-frontend/src/pages/SelftestG24Probe.vue <<'EOF'
+<template><button class="x" @click="ok">probe</button></template>
+EOF
+git add zorrobpm-frontend/src/pages/SelftestG24Probe.vue
+head="$(commit_all "selftest: bare button in page vue")"
+expect_g24 "bare <button> in page .vue -> G24 FAIL" "$BASE_SHA" "$head" fail "G24 added bare UI tag"
+BASE_SHA="$head"
+
+# F5. probe deleted (pure delete adds no lines) → G24 N/A.
+git rm -q zorrobpm-frontend/src/pages/SelftestG24Probe.vue
+head="$(commit_all "selftest: probe deleted")"
+expect_g24 "deleted .vue only -> G24 N/A" "$BASE_SHA" "$head" ok "G24 no .vue changes"
+BASE_SHA="$head"
+
+# F6. bare <button> but under src/components/ui/** → G24 OK (exempt).
+mkdir -p zorrobpm-frontend/src/components/ui
+cat > zorrobpm-frontend/src/components/ui/SelftestG24Widget.vue <<'EOF'
+<template><button class="x" @click="ok">primitive probe</button></template>
+EOF
+git add zorrobpm-frontend/src/components/ui/SelftestG24Widget.vue
+head="$(commit_all "selftest: bare button under components/ui")"
+expect_g24 "bare <button> under components/ui -> G24 OK" "$BASE_SHA" "$head" ok "G24 only src/components/ui"
+BASE_SHA="$head"
+
+# F7. bare <input> in pages/ but allowlisted → G24 OK.
+cat > zorrobpm-frontend/src/pages/SelftestG24Probe.vue <<'EOF'
+<template><input class="x" value="probe"></template>
+EOF
+printf '%s\n' "zorrobpm-frontend/src/pages/SelftestG24Probe.vue" >> ci/g24-allowlist.txt
+git add zorrobpm-frontend/src/pages/SelftestG24Probe.vue ci/g24-allowlist.txt
+head="$(commit_all "selftest: allowlisted bare input")"
+expect_g24 "allowlisted bare <input> -> G24 OK" "$BASE_SHA" "$head" ok "G24 only src/components/ui"
+BASE_SHA="$head"
+
+# F8. hand-made overlay (`fixed inset-0`) in a non-exempt page → G24 FAIL.
+cat > zorrobpm-frontend/src/pages/SelftestG24Overlay.vue <<'EOF'
+<template><div class="fixed inset-0 z-50">probe overlay</div></template>
+EOF
+git add zorrobpm-frontend/src/pages/SelftestG24Overlay.vue
+head="$(commit_all "selftest: hand-made overlay")"
+expect_g24 "fixed inset-0 overlay -> G24 FAIL" "$BASE_SHA" "$head" fail "G24 added bare UI tag"
+BASE_SHA="$head"
+
+# F9. overlay removed, allowlist restored, shadcn-only page left → G24 OK.
+git rm -q zorrobpm-frontend/src/pages/SelftestG24Overlay.vue \
+  zorrobpm-frontend/src/pages/SelftestG24Probe.vue \
+  zorrobpm-frontend/src/components/ui/SelftestG24Widget.vue
+git checkout "$BASE" -- ci/g24-allowlist.txt 2>/dev/null || true
+cat > zorrobpm-frontend/src/pages/SelftestG24Clean.vue <<'EOF'
+<script setup>import { Button } from '@/components/ui/button'</script>
+<template><Button @click="ok">probe</Button></template>
+EOF
+git add -A zorrobpm-frontend/src/pages ci/g24-allowlist.txt
+head="$(commit_all "selftest: probes removed, shadcn-only page")"
+expect_g24 "shadcn-only .vue -> G24 OK" "$BASE_SHA" "$head" ok "G24 no bare UI tags"
+BASE_SHA="$head"
+
+# F10. docs-only commit (no .vue at all) → G24 N/A.
+git rm -q zorrobpm-frontend/src/pages/SelftestG24Clean.vue
+printf '%s\n' "" "# WO-REL-70 selftest fixture (no vue)" >> README.md
+git add README.md
+head="$(commit_all "selftest: clean page removed, docs-only")"
+expect_g24 "no .vue in diff -> G24 N/A" "$BASE_SHA" "$head" ok "G24 no .vue changes"
+BASE_SHA="$head"
 
 if [ "$FAILED" -ne 0 ]; then
-  echo "SELFTEST: $FAILED case(s) FAILED - wo-report-gate.sh G2 regressed."
+  echo "SELFTEST: $FAILED case(s) FAILED - wo-report-gate.sh G2/G24 regressed."
   exit 1
 fi
-echo "SELFTEST: ALL PASS - wo-report-gate.sh G2 behaves as specified."
+echo "SELFTEST: ALL PASS - wo-report-gate.sh G2/G24 behave as specified."
 exit 0
