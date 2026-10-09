@@ -1,0 +1,17 @@
+{
+  "_comment": "WO-UI-25 post-merge CI fix: snapshot of DomainEventType string values (zorrobpm-contract .../dto/event/DomainEventType.java). The frontend docker build context (zorrobpm-frontend/) cannot see the backend file, so the contract test reads THIS file instead. The backend JUnit test DomainEventTypeSnapshotTest fails if the enum drifts from this snapshot — update both together.",
+  "values": [
+    "process-instance.started",
+    "process-instance.completed",
+    "process-instance.cancelled",
+    "activity.completed",
+    "user-task.created",
+    "user-task.completed",
+    "user-task.assigned",
+    "user-task.unassigned",
+    "service-task.created",
+    "incident.raised",
+    "incident.resolved",
+    "outbox.quarantined"
+  ]
+}
