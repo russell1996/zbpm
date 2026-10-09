@@ -8,6 +8,7 @@ import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.contract.model.UserTask;
 import com.zorrodev.bpm.engine.TestMain;
 import com.zorrodev.bpm.engine.entity.UserTaskEntity;
+import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
@@ -45,6 +46,8 @@ public class UserTaskAssigneeResponseIntegrationTests {
     private QueryService queryService;
     @Autowired
     private UserTaskRepository userTaskRepository;
+    @Autowired
+    private IncidentRepository incidentRepository;
 
     private static ProcessVariable var(String name, ProcessVariableType type, String value) {
         ProcessVariable v = new ProcessVariable();
@@ -55,14 +58,18 @@ public class UserTaskAssigneeResponseIntegrationTests {
     }
 
     private UUID startMi() throws Exception {
-        String bpmn = Files.readString(Paths.get("src/test/files/test-in4-mi-assignee.bpmn"));
+        return startMiWith("src/test/files/test-in4-mi-assignee.bpmn", List.of(
+            var("employees", ProcessVariableType.JSON, "[21346, 78901]"),
+            var("candidateGroup", ProcessVariableType.STRING, "sales")));
+    }
+
+    private UUID startMiWith(String bpmnFile, List<ProcessVariable> variables) throws Exception {
+        String bpmn = Files.readString(Paths.get(bpmnFile));
         ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(model.getId());
         // Числовые employeeId как у внешней команды (21346-подобные).
-        dto.setVariables(List.of(
-            var("employees", ProcessVariableType.JSON, "[21346, 78901]"),
-            var("candidateGroup", ProcessVariableType.STRING, "sales")));
+        dto.setVariables(variables);
         return runtimeService.startProcessInstance(dto).getId();
     }
 
@@ -145,9 +152,10 @@ public class UserTaskAssigneeResponseIntegrationTests {
         assertThat(detail.getCandidateUsers()).isEmpty();
     }
 
-    @Transactional
+        @Transactional
     @Test
     void criterion6_candidateUsersExposed() throws Exception {
+
         UUID pi = startMi();
         List<UserTask> tasks = queryService.findUserTasks(query(pi), null).getData();
         assertThat(tasks).hasSize(2);
@@ -158,5 +166,60 @@ public class UserTaskAssigneeResponseIntegrationTests {
         UserTaskQuery q = query(pi);
         q.setCandidateUser("reviewer");
         assertThat(queryService.findUserTasks(q, null).getData()).hasSize(2);
+    }
+
+    /**
+     * WO-IN-4 раунд 2, Б-1 (живой зонд красной команды e4, теперь постоянный):
+     * битый JSON в НЕРЕЛЕВАНТНОЙ переменной не ломает MI-спавн. Валидации
+     * {@code variables} при старте нет, значение достижимо публичным API.
+     * На ветке до фикса — инцидент и 0 задач (как на master — 2 задачи).
+     */
+    @Transactional
+    @Test
+    void criterion7_brokenUnrelatedJsonDoesNotBreakMiSpawn() throws Exception {
+        UUID pi = startMiWith("src/test/files/test-in4-mi-assignee.bpmn", List.of(
+            var("employees", ProcessVariableType.JSON, "[21346, 78901]"),
+            var("candidateGroup", ProcessVariableType.STRING, "sales"),
+            var("junk", ProcessVariableType.JSON, "not-json{{{_")));
+        List<UserTask> tasks = queryService.findUserTasks(query(pi), null).getData();
+        assertThat(tasks).hasSize(2);
+        assertThat(tasks).extracting(UserTask::getAssignee)
+            .containsExactlyInAnyOrder("21346", "78901");
+        assertThat(incidentRepository.findAll(IncidentRepository.byProcessInstanceId(pi))).isEmpty();
+    }
+
+    /**
+     * WO-IN-4 раунд 2, Б-1 (характеризационный): битый JSON в РЕЛЕВАНТНОЙ
+     * переменной ({@code candidateGroups="=brokenGroups"}) сохраняет прежнюю
+     * семантику — инцидент на MI-элементе, задач нет. Pinpoint-fetch чинит
+     * только нерелевантный случай; этот тест обязан оставаться зелёным.
+     */
+    @Transactional
+    @Test
+    void criterion8_brokenRelevantJsonKeepsIncidentSemantics() throws Exception {
+        UUID pi = startMiWith("src/test/files/test-in4-mi-broken-relevant.bpmn", List.of(
+            var("employees", ProcessVariableType.JSON, "[21346, 78901]"),
+            var("candidateGroup", ProcessVariableType.STRING, "sales"),
+            var("brokenGroups", ProcessVariableType.JSON, "not-json{{{_")));
+        assertThat(queryService.findUserTasks(query(pi), null).getData()).isEmpty();
+        assertThat(incidentRepository.findAll(IncidentRepository.byProcessInstanceId(pi))).isNotEmpty();
+    }
+
+    /**
+     * WO-IN-4 раунд 2, О-1: dueDate/followUpDate в MI резолвятся в scope
+     * инстанса, как assignee (раньше — root-контекст, в MI давали null).
+     */
+    @Transactional
+    @Test
+    void criterion9_miDueAndFollowUpDatesResolveInScope() throws Exception {
+        UUID pi = startMiWith("src/test/files/test-in4-mi-scope-dates.bpmn", List.of(
+            var("employees", ProcessVariableType.JSON, "[21346, 78901]"),
+            var("candidateGroup", ProcessVariableType.STRING, "sales")));
+        List<UserTask> tasks = queryService.findUserTasks(query(pi), null).getData();
+        assertThat(tasks).hasSize(2);
+        assertThat(tasks).extracting(UserTask::getDueDate)
+            .containsExactlyInAnyOrder("21346", "78901");
+        assertThat(tasks).extracting(UserTask::getFollowUpDate)
+            .containsExactlyInAnyOrder("sales", "sales");
     }
 }

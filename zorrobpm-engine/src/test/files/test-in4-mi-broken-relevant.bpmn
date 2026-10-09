@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_in4_mi_broken_relevant" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-in4-mi-broken-relevant" name="IN-4 MI broken relevant" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="startEvent" targetRef="workTask" />
+    <!-- WO-IN-4 раунд 2: РЕЛЕВАНТНАЯ переменная (candidateGroups ссылается на
+         brokenGroups) с битым JSON — обязана давать инцидент, как до фикса.
+         Характеризационный тест: фиксирует прежнюю семантику ошибки. -->
+    <bpmn:userTask id="workTask" name="Work Task">
+      <bpmn:extensionElements>
+        <zeebe:assignmentDefinition assignee="=assigneeEmployeeId" candidateGroups="=brokenGroups" candidateUsers="reviewer" />
+      </bpmn:extensionElements>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=employees" inputElement="assigneeEmployeeId" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="workTask" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

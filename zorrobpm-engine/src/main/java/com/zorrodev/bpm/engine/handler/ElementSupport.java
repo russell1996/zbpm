@@ -160,7 +160,9 @@ public class ElementSupport {
      * делегируют сюда же через raw-строки (P-24: один механизм, не копии).
      */
     public String resolveAssigneeInScope(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
-        return resolveExpressionInScope(extractAssignee(element), processInstanceId, scopeId);
+        String raw = extractAssignee(element);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpressionInScopeByNames(raw, processInstanceId, scopeId);
     }
 
     public String resolveCandidateGroupsInScope(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
@@ -169,7 +171,7 @@ public class ElementSupport {
             .map(UserTaskExtensionModel::getCandidateGroups)
             .orElse(null);
         if (raw == null || raw.isBlank()) return null;
-        return resolveExpressionInScope(raw, processInstanceId, scopeId);
+        return resolveExpressionInScopeByNames(raw, processInstanceId, scopeId);
     }
 
     public String resolveCandidateUsersInScope(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
@@ -178,7 +180,7 @@ public class ElementSupport {
             .map(UserTaskExtensionModel::getCandidateUsers)
             .orElse(null);
         if (raw == null || raw.isBlank()) return null;
-        return resolveExpressionInScope(raw, processInstanceId, scopeId);
+        return resolveExpressionInScopeByNames(raw, processInstanceId, scopeId);
     }
 
     /**
@@ -186,6 +188,12 @@ public class ElementSupport {
      * (root+scope merge от вызывающего). Ветки и контракт неуспеха — те же:
      * {@code ${var}} → toString значения, {@code =feel} → через feelBudget,
      * провал → warn + null, литерал → как есть.
+     *
+     * <p>WO-IN-4 раунд 2, Б-1: значения подтягивает вызывающий ТОЛЬКО по именам
+     * из выражения ({@code scopedVariablesFor}-образец WO-PERF-9) — нерелевантные
+     * переменные scope в контекст не попадают, поэтому битый JSON в чужой
+     * переменной результат не меняет (eager-парс всего scope давал инцидент
+     * на весь MI-вход вместо деградации, как на master).
      */
     public String resolveExpressionInScope(String raw, UUID processInstanceId, List<ProcessVariable> scopeVariables) {
         if (raw == null || raw.isBlank()) return null;
@@ -218,7 +226,89 @@ public class ElementSupport {
     /** WO-IN-4: тот же scope-resolve, переменные подтягивает сам (root+scope merge). */
     public String resolveExpressionInScope(String raw, UUID processInstanceId, UUID scopeId) {
         if (raw == null || raw.isBlank()) return null;
-        return resolveExpressionInScope(raw, processInstanceId, dbService.getVariables(processInstanceId, scopeId));
+        return resolveExpressionInScope(raw, processInstanceId,
+            dbService.getVariables(processInstanceId, scopeId));
+    }
+
+    /**
+     * WO-IN-4 раунд 2, Б-1: scope-resolve ТОЛЬКО по именам из выражения
+     * ({@link FeelVariableNames}, образец {@code scopedVariablesFor} WO-PERF-9).
+     * Литералы (assignee="alice", статичный dueDate) чтения БД не требуют вовсе.
+     * Нерелевантные переменные scope (в т.ч. битый JSON) не трогаются:
+     * поведение при битом нерелевантном значении = как на master
+     * (деградация в null, без инцидента на весь MI-вход).
+     * Битое НУЖНОЕ значение сохраняет прежнюю семантику: FEEL/unmarshal
+     * падает → warn + null → инцидент у вызывающего, как до фикса.
+     */
+    public String resolveExpressionInScopeByNames(String raw, UUID processInstanceId, UUID scopeId) {
+        if (raw == null || raw.isBlank()) return null;
+        if (!raw.startsWith("${") && !raw.startsWith("=")) {
+            return raw;
+        }
+        return resolveExpressionInScope(raw, processInstanceId,
+            dbService.getScopedVariablesByNames(processInstanceId, scopeId, FeelVariableNames.extract(raw)));
+    }
+
+    /**
+     * WO-IN-4 раунд 2, О-1: scope-версия {@link #resolveDueDate} для MI-инстансов
+     * (зеркало {@link #resolveAssigneeInScope}: {@code =inputElement}-даты root
+     * раньше не видел и давал null).
+     */
+    public String resolveDueDateInScope(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getDueDate)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpressionInScopeByNames(raw, processInstanceId, scopeId);
+    }
+
+    /**
+     * WO-IN-4 раунд 2, О-1: scope-версия {@link #resolveFollowUpDate} для
+     * MI-инстансов (та же асимметрия, что у dueDate).
+     */
+    public String resolveFollowUpDateInScope(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getFollowUpDate)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpressionInScopeByNames(raw, processInstanceId, scopeId);
+    }
+
+    /**
+     * WO-IN-4 раунд 2, О-1: scope-версия {@link #resolveUserTaskPriorityOrThrow}
+     * для MI-инстансов. Контракт неуспеха — тот же: битый/вне диапазона
+     * priorityDefinition бросает {@code EngineException} (инцидент у вызывающего),
+     * отсутствующий/пустой → дефолт 50. Резолв выражения — в scope, не в root.
+     */
+    public int resolveUserTaskPriorityInScopeOrThrow(UUID processInstanceId, UUID scopeId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getPriority)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) {
+            return 50;
+        }
+        String resolved = resolveExpressionInScopeByNames(raw, processInstanceId, scopeId);
+        Integer value = null;
+        if (resolved != null && !resolved.isBlank()) {
+            try {
+                // WO-QW-6 (NEW3-08): та же замена parseInt → BigDecimal.intValueExact,
+                // что в resolveUserTaskPriorityOrThrow (целая гарантия 0–100 ниже
+                // не меняется, "5.50" по-прежнему явная ошибка).
+                value = new java.math.BigDecimal(resolved.trim()).intValueExact();
+            } catch (NumberFormatException | ArithmeticException e) {
+                value = null;
+            }
+        }
+        if (value == null || value < 0 || value > 100) {
+            throw new com.zorrodev.bpm.contract.exception.EngineException(
+                "User task '" + element.getId() + "' has a broken priorityDefinition '" + raw + "'"
+                    + (resolved != null && !resolved.equals(raw) ? " (resolved to '" + resolved + "')" : "")
+                    + " — priority must be an integer between 0 and 100");
+        }
+        return value;
     }
 
     public String resolveCandidateGroups(UUID processInstanceId, BpmnElementModel element) {
