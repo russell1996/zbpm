@@ -154,11 +154,18 @@ describe('useRealtimeEvents leader-tab (WO-UI-26 Доп.5)', () => {
     })
     void follower
 
-    FakeEventSource.instances[0].emit('user-task.created', envelope('user-task.created', 77), '77')
+    vi.mocked(taskService.getUserTask).mockResolvedValue({
+      id: 'nt77', code: 'c', name: 'N', processInstanceId: 'pi-1', processDefinitionId: 'pd-1',
+      formKey: null, status: 'CREATED', createdAt: '2026-09-24T00:00:00Z', completedAt: null,
+    })
+    FakeEventSource.instances[0].emit('user-task.created',
+      { ...envelope('user-task.created', 77), data: { activityId: 'nt77' } }, '77')
     // BroadcastChannel.postMessage — макрозадача: ждём реальную доставку,
     // а не только промисы (dynamicImportSettled её не покрывает).
     await vi.waitFor(() => expect(followerGot).not.toBeNull())
-    expect(taskService.getUserTasks).toHaveBeenCalled()
+    // Доп.4: адресный патч одним GET, список — нет.
+    await vi.waitFor(() => expect(taskService.getUserTask).toHaveBeenCalledWith('nt77'))
+    expect(taskService.getUserTasks).not.toHaveBeenCalled()
     expect((followerGot as unknown as EventEnvelope).sequence).toBe(77)
     unsub()
     leader.disconnect()
@@ -175,13 +182,19 @@ describe('useRealtimeEvents leader-tab (WO-UI-26 Доп.5)', () => {
     const unsub = subscribeFanout(() => {
       calls++
     })
-    FakeEventSource.instances[0].emit('incident.raised', envelope('incident.raised', 78), '78')
+    vi.mocked(incidentService.getIncident).mockResolvedValue({
+      id: 'inc78', activityId: 'a78', message: 'm', createdAt: '2026-09-24T00:00:00Z',
+      completedAt: null, processName: null, processInstanceId: 'pi-1', bpmnElementId: 'el-78', elementName: null,
+    })
+    FakeEventSource.instances[0].emit('incident.raised',
+      { ...envelope('incident.raised', 78), data: { incidentId: 'inc78' } }, '78')
     // Локальная доставка синхронна + кросс-вкладочная через BroadcastChannel
     // (макрозадача): ждём обе, итог — 2 доставки одному подписчику
     // (идемпотентность по sequence — на сторах, Доп.4).
     await vi.waitFor(() => expect(calls).toBe(2))
-    // лидер сам применил (стор вызван), ретрансляция ушла подписчику
-    expect(incidentService.getIncidents).toHaveBeenCalled()
+    // лидер применил адресным патчем (один GET), список — нет
+    await vi.waitFor(() => expect(incidentService.getIncident).toHaveBeenCalledWith('inc78'))
+    expect(incidentService.getIncidents).not.toHaveBeenCalled()
     unsub()
     leader.disconnect()
   })
