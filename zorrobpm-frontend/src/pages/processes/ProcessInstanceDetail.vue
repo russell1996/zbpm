@@ -31,6 +31,9 @@ import { Badge } from '@/components/ui/badge'
 import { buildDiagnosticJson } from '@/shared/lib/diagnostic'
 import { useInstanceLiveUpdates } from '@/composables/useInstanceLiveUpdates'
 import { useInstanceViewState, type InstanceTabId } from '@/composables/useInstanceViewState'
+import { createPatchTracker } from '@/services/realtimePatch'
+import { scheduleListRefresh } from '@/services/realtimeScheduler'
+import type { EventEnvelope } from '@/types/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -536,24 +539,187 @@ async function reloadAll() {
   await loadBpmnXml()
 }
 
-// WO-UI-25 (критерий 3): живое обновление по realtime-событиям инстанса.
-// В отличие от reloadAll НЕ трогает bpmnXml (картинка не перерисовывается —
-// нет мерцания) и читает activities окном refreshActivities (пагинация
-// «догрузить ещё» сохраняется). Состояние UI (таб, скролл, выбор) живёт в
-// локальных ref и этим путём не сбрасывается — обновляются только данные.
-async function refreshLive() {
+// WO-UI-26 Б-1: точечное обновление страницы инстанса (главная жалоба
+// владельца). Старый refreshLive делал 7 ЯВНЫХ fetch с loading=true на КАЖДОЕ
+// событие (мерцание). Новый контракт:
+// - событие по processInstanceId → патч ТОЛЬКО затронутой сущности
+//   (activity/user-task/service-task/incident/переменные) без повторной
+//   загрузки всех семи источников и без loading=true;
+// - loading — только первичная загрузка (loadTabData/init); тихие — через
+//   отдельный флаг `refreshing` (stale-while-revalidate);
+// - полный refetch страницы — только запасной путь (разрыв sequence/
+//   реконнект/ошибка патча), склеенный (debounce+cap планировщика) и тихий.
+// Локальный патч (0 запросов): activity.completed по известному elementId
+// (статус→COMPLETED), user-task.completed по известной строке (удаление),
+// incident.resolved по известной строке (удаление), process-instance.*
+// (completedAt локально). Иначе — по-сущностный тихий refresh (1 запрос
+// только этой сущности, склеенный на всплеск).
+const refreshing = ref(false)
+let refreshingCount = 0
+function withRefreshing<T>(p: Promise<T>): Promise<T> {
+  refreshingCount++
+  refreshing.value = true
+  return p.finally(() => {
+    refreshingCount--
+    if (refreshingCount <= 0) {
+      refreshingCount = 0
+      refreshing.value = false
+    }
+  })
+}
+
+const instancePatchTracker = createPatchTracker()
+
+async function quietInstance(): Promise<void> {
   const pi = processStore.currentInstance
   if (!pi) return
-  await Promise.all([
-    processStore.fetchInstance(pi.id),
-    processStore.refreshActivities(pi.id),
-    taskStore.fetchUserTasks({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
-    taskStore.fetchServiceTasks({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
-    incidentStore.fetchIncidents({ processInstanceId: pi.id, pageIndex: 0, pageSize: 100 }),
-    processStore.fetchVariables({ processInstanceId: pi.id }),
-    processStore.fetchSubprocesses(pi.id),
-  ])
+  await withRefreshing(processStore.fetchInstanceQuiet(pi.id))
 }
+
+async function quietActivities(): Promise<void> {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  await withRefreshing(processStore.refreshActivities(pi.id))
+}
+
+async function quietUserTasks(): Promise<void> {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  await withRefreshing(taskStore.refreshUserTasksForInstanceQuiet(pi.id))
+}
+
+async function quietServiceTasks(): Promise<void> {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  await withRefreshing(taskStore.refreshServiceTasksForInstanceQuiet(pi.id))
+}
+
+async function quietIncidents(): Promise<void> {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  await withRefreshing(incidentStore.refreshIncidentsForInstanceQuiet(pi.id))
+}
+
+async function quietVariables(): Promise<void> {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  await withRefreshing(processStore.refreshVariablesQuiet({ processInstanceId: pi.id }))
+}
+
+async function quietSubprocesses(): Promise<void> {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  await withRefreshing(processStore.refreshSubprocessesQuiet(pi.id))
+}
+
+/** WO-UI-26 Б-1: полный тихий refetch страницы — ТОЛЬКО запасной путь. */
+async function refreshLiveQuiet(): Promise<void> {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  await withRefreshing((async () => {
+    await Promise.all([
+      quietInstance(),
+      quietActivities(),
+      quietUserTasks(),
+      quietServiceTasks(),
+      quietIncidents(),
+      quietVariables(),
+      quietSubprocesses(),
+    ])
+  })())
+}
+
+/**
+ * WO-UI-26 Б-1: точечный обработчик события для useInstanceLiveUpdates.
+ * True — обработано (общий refresh не нужен), false — нужен запасной полный.
+ */
+function handleLiveEvent(envelope: EventEnvelope): boolean {
+  const pi = processStore.currentInstance
+  if (!pi) return true
+  if (envelope.processInstanceId && envelope.processInstanceId !== pi.id) return true
+  if (!instancePatchTracker.shouldPatch(envelope)) {
+    const seq = typeof envelope.sequence === 'number' ? envelope.sequence : 0
+    if (seq > 0 && seq > instancePatchTracker.lastSequence() + 1 && instancePatchTracker.lastSequence() > 0) {
+      return false
+    }
+    return true
+  }
+  const key = `instance:${pi.id}`
+  switch (envelope.type) {
+    case 'activity.completed': {
+      const elId = envelope.elementId
+      if (typeof elId === 'string' && elId && processStore.patchActivityCompletedLocal(elId)) {
+        instancePatchTracker.markApplied(envelope)
+        return true
+      }
+      scheduleListRefresh(`${key}:activities`, () => void quietActivities())
+      instancePatchTracker.markApplied(envelope)
+      return true
+    }
+    case 'user-task.created':
+    case 'user-task.assigned':
+    case 'user-task.unassigned': {
+      scheduleListRefresh(`${key}:userTasks`, () => void quietUserTasks())
+      instancePatchTracker.markApplied(envelope)
+      return true
+    }
+    case 'user-task.completed': {
+      const activityId = envelope.data?.['activityId']
+      if (typeof activityId === 'string' && activityId) {
+        const known = (taskStore.userTasks?.data || []).some((t) => t.id === activityId)
+        if (known) {
+          taskStore.removeUserTaskRow(activityId)
+          instancePatchTracker.markApplied(envelope)
+          return true
+        }
+      }
+      scheduleListRefresh(`${key}:userTasks`, () => void quietUserTasks())
+      instancePatchTracker.markApplied(envelope)
+      return true
+    }
+    case 'service-task.created': {
+      scheduleListRefresh(`${key}:serviceTasks`, () => void quietServiceTasks())
+      instancePatchTracker.markApplied(envelope)
+      return true
+    }
+    case 'incident.raised': {
+      scheduleListRefresh(`${key}:incidents`, () => void quietIncidents())
+      instancePatchTracker.markApplied(envelope)
+      return true
+    }
+    case 'incident.resolved': {
+      const incidentId = envelope.data?.['incidentId']
+      if (typeof incidentId === 'string' && incidentId) {
+        const known = (incidentStore.incidents?.data || []).some((i) => i.id === incidentId)
+        if (known) {
+          incidentStore.removeIncidentRow(incidentId)
+          instancePatchTracker.markApplied(envelope)
+          return true
+        }
+      }
+      scheduleListRefresh(`${key}:incidents`, () => void quietIncidents())
+      instancePatchTracker.markApplied(envelope)
+      return true
+    }
+    case 'process-instance.completed': {
+      processStore.patchCurrentInstanceLocal({ completedAt: envelope.occurredAt ?? new Date().toISOString() })
+      instancePatchTracker.markApplied(envelope)
+      return true
+    }
+    case 'process-instance.cancelled': {
+      instancePatchTracker.markApplied(envelope)
+      return true
+    }
+    default:
+      return false
+  }
+}
+
+// WO-UI-25 (критерий 3): живое обновление по realtime-событиям инстанса.
+// WO-UI-26 Б-1: ПЕРЕВЕДЕНО на точечное — refreshLiveQuiet (тихий) +
+// handleLiveEvent (патч одной сущности). Громкий refreshLive с 7 явными
+// fetch и loading=true УДАЛЁН (мерцание владельца): loading — только
+// первичная загрузка, тихие — через `refreshing`.
 
 // WO-UI-25: подписка на общую realtime-шину с фильтром по текущему инстансу
 // (дебаунс 250 мс, фолбэк-опрос 4 с, пауза в скрытой вкладке — всё внутри
@@ -563,7 +729,8 @@ async function refreshLive() {
 // (isTerminal по completedAt), при running→completed — один finalRefresh.
 const { liveState, finalRefresh } = useInstanceLiveUpdates({
   getInstanceId: () => processStore.currentInstance?.id ?? null,
-  refresh: refreshLive,
+  refresh: refreshLiveQuiet,
+  onEvent: handleLiveEvent,
   isTerminal: () => {
     const pi = processStore.currentInstance
     return !!pi && (!!pi.completedAt || processInstanceStatus(pi) === 'CANCELLED')
