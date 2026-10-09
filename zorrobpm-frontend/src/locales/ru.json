@@ -711,12 +711,13 @@
   "presetFillAskFieldsPrefix": "Заполните обязательные поля:",
   "presetGoToField": "Перейти к полю {field}",
   "presetJsonFullscreen": "На весь экран",
+  "presetJsonExpand": "Развернуть",
+  "presetJsonCollapse": "Свернуть",
   "presetJsonLines": "строк: {n}",
   "presetNoTemplatesHint": "Шаблонов пока нет — создайте шаблон для этого элемента, чтобы переиспользовать переменные.",
   "presetSearchVariables": "Поиск переменных…",
   "presetShowMore": "Показать ещё {n}",
   "presetStartTargetRef": "Запуск процесса",
-  "presetToggleJsonLines": "Свернуть/Развернуть",
   "presetUndo": "Отменить",
   "presetVarCount": "{n} перем.",
   "presetVarCounter": "{n} переменных, {m} с ошибками",
@@ -764,6 +765,5 @@
   "channelDiag429Hint": "Слишком много открытых потоков — закройте лишние вкладки.",
   "channelDiagFinished": "Завершён",
   "uiErrorTitle": "Что-то пошло не так",
-  "uiErrorReload": "Перезагрузить",
-  "dialogClose": "Закрыть"
+  "uiErrorReload": "Перезагрузить"
 }

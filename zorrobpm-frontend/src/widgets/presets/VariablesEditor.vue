@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { X } from 'lucide-vue-next'
+import { X, ChevronDown, ChevronUp } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -187,6 +187,58 @@ const jsonFsError = ref<string | null>(null)
 const jsonFsDraftFor = ref<number | null>(null)
 
 /**
+ * WO-UI-28: компакт JSON-строки. Непустой JSON по умолчанию СВЁРНУТ
+ * (превью в 1 строку + счётчик реальных строк + «Развернуть»); пустое
+ * значение — сразу редактор; ошибка валидации раскрывает строку.
+ * Сворачивание — чисто отображение, значение (raw) не мутирует.
+ * Явный выбор пользователя — в override; сброс — при смене числа строк
+ * (индексы едут, как у кэша jsonShown ниже).
+ */
+const jsonCollapsedOverride = ref<Record<number, boolean>>({})
+
+function isJsonCollapsed(i: number): boolean {
+  // Ошибка валидации раскрывает строку (п.4 WO-UI-28).
+  if (rowError(i) !== null) return false
+  const row = props.modelValue[i]
+  if (!row || row.type !== 'JSON') return false
+  // Пустое/новое значение — сразу редактор, нечего сворачивать.
+  if (row.value === '') return false
+  const ov = jsonCollapsedOverride.value[i]
+  if (ov !== undefined) return ov
+  // Дефолт для непустого JSON — свёрнуто.
+  return true
+}
+
+function toggleJsonCollapsed(i: number) {
+  const next = !isJsonCollapsed(i)
+  jsonCollapsedOverride.value[i] = next
+  if (!next) {
+    // Разворачивание: показ уже отформатирован через shownJson (без мутации
+    // значения); высоту подгоняем под потолок 14 строк.
+    void nextTick().then(() => {
+      autoGrow(document.querySelector(`#${idp.value}-value-${i}`) as HTMLTextAreaElement | null)
+    })
+  }
+}
+
+/** Превью свёрнутой строки: весь текст в одну строку (CSS обрежет …). */
+function jsonPreviewLine(i: number): string {
+  return shownJson(i).replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * WO-UI-28 п.4: «Форматировать» — только в развёрнутом и только когда
+ * значение не отформатировано (однострочный/минифицированный ввод).
+ * Многострочное (уже красивое) форматировать нечего.
+ */
+function jsonNeedsFormat(i: number): boolean {
+  const row = props.modelValue[i]
+  if (!row || row.type !== 'JSON' || row.value === '') return false
+  if (!jsonValid(i)) return false
+  return !row.value.includes('\n')
+}
+
+/**
  * WO-UI-27 п.1: показанное в строке — автоформат валидного JSON (токенный,
  * без потерь). Кэш «сырое → показанное» на строку: набор пользователя не
  * переформатируется под руками (только при смене значения снаружи —
@@ -236,8 +288,10 @@ function syncFsGutter(e: Event) {
 function autoGrow(el: HTMLTextAreaElement | null) {
   if (!el) return
   el.style.height = 'auto'
-  // min 8 строк через CSS min-height; потолок — 40vh, дальше скролл внутри.
-  const max = Math.floor(window.innerHeight * 0.4)
+  // WO-UI-28: min 3 строки через CSS min-height; потолок — 14 строк
+  // (не 40vh), дальше внутренний скролл.
+  const lh = parseFloat(getComputedStyle(el).lineHeight || '0') || 19.6
+  const max = Math.floor(lh * 14 + 8)
   el.style.height = Math.min(el.scrollHeight, max) + 'px'
 }
 
@@ -269,14 +323,6 @@ function formatJson(i: number) {
   void nextTick().then(() => {
     autoGrow(document.querySelector(`#${idp.value}-value-${i}`) as HTMLTextAreaElement)
   })
-}
-
-function toggleJsonLines(i: number) {
-  const row = props.modelValue[i]
-  const out = row.value.includes('\n') ? minifyJsonValue(row.value) : formatJsonValue(row.value)
-  if (out.error || out.text === null) return
-  patchRow(i, { value: out.text })
-  jsonShown.value[i] = { raw: out.text, shown: out.text }
 }
 
 function openJsonFullscreen(i: number) {
@@ -401,11 +447,13 @@ function focusField(i: number) {
   el?.focus()
 }
 
-// Кэш показа чистим за удалёнными строками (индексы едут — проще сбросить).
+// Кэш показа и override сворачивания чистим за удалёнными строками
+// (индексы едут — проще сбросить).
 watch(
   () => props.modelValue.length,
   () => {
     jsonShown.value = {}
+    jsonCollapsedOverride.value = {}
   },
 )
 
@@ -557,7 +605,11 @@ defineExpose({ focusField, commitFullscreen, closeJsonFullscreen })
                 :data-valid="rowError(i) ? 'invalid' : 'valid'"
               >
                 <div class="flex items-center gap-1 px-1 py-0.5 border-b border-border flex-wrap">
+                  <!-- WO-UI-28 п.4: «Форматировать» — только в развёрнутом и
+                       только для однострочного (минифицированного) ввода;
+                       в свёрнутом скрыта. -->
                   <Button
+                    v-if="!isJsonCollapsed(i) && jsonNeedsFormat(i)"
                     type="button" variant="link" size="sm"
                     class="px-1.5 h-7 text-xs"
                     :disabled="disabled || !jsonValid(i)"
@@ -566,13 +618,21 @@ defineExpose({ focusField, commitFullscreen, closeJsonFullscreen })
                   >
                     {{ t('presetFormatJson') }}
                   </Button>
+                  <!-- WO-UI-28 п.2: одна кнопка показывает ДЕЙСТВИЕ по
+                       состоянию (не «Свернуть/Развернуть» в обоих). -->
                   <Button
                     type="button" variant="link" size="sm"
                     class="px-1.5 h-7 text-xs"
-                    :disabled="disabled || !jsonValid(i)"
-                    @click="toggleJsonLines(i)"
+                    :disabled="disabled || rowError(i) !== null"
+                    :title="rowError(i) !== null ? t('presetJsonInvalid') : ''"
+                    :aria-expanded="isJsonCollapsed(i) ? 'false' : 'true'"
+                    :aria-controls="`${idp}-jsonbody-${i}`"
+                    :data-testid="`ve-json-toggle-${i}`"
+                    @click="toggleJsonCollapsed(i)"
                   >
-                    {{ t('presetToggleJsonLines') }}
+                    <ChevronDown v-if="isJsonCollapsed(i)" class="h-3.5 w-3.5" aria-hidden="true" />
+                    <ChevronUp v-else class="h-3.5 w-3.5" aria-hidden="true" />
+                    {{ isJsonCollapsed(i) ? t('presetJsonExpand') : t('presetJsonCollapse') }}
                   </Button>
                   <span class="flex-1" />
                   <span class="text-[11px] text-muted-foreground font-mono">
@@ -587,12 +647,36 @@ defineExpose({ focusField, commitFullscreen, closeJsonFullscreen })
                     {{ t('presetJsonFullscreen') }}
                   </Button>
                 </div>
-                <div class="flex items-stretch">
+                <!-- WO-UI-28 п.1: свёрнуто — превью в 1 строку с обрезкой …,
+                     без горизонтального скролла и пустого места. -->
+                <Button
+                  v-if="isJsonCollapsed(i)"
+                  :id="`${idp}-jsonbody-${i}`"
+                  type="button"
+                  variant="ghost"
+                  :data-testid="`ve-json-preview-${i}`"
+                  :disabled="disabled"
+                  class="h-auto w-full justify-start gap-2 overflow-hidden px-2 py-1"
+                  :title="jsonPreviewLine(i).slice(0, 300)"
+                  @click="toggleJsonCollapsed(i)"
+                >
+                  <span class="min-w-0 flex-1 truncate text-left font-mono text-sm leading-[1.4]">{{ jsonPreviewLine(i) }}</span>
+                </Button>
+                <!-- WO-UI-28 п.3: развёрнуто — потолок 14 строк с внутренним
+                     скроллом, пол 3 строки; контейнер режет гаттер по высоте
+                     поля (никаких номеров за пределами текстового поля). -->
+                <div
+                  v-else
+                  :id="`${idp}-jsonbody-${i}`"
+                  class="flex items-stretch overflow-hidden"
+                  style="max-height: calc(14 * 1.4em + 8px);"
+                >
                   <div
                     :id="`${idp}-gutter-${i}`"
                     :data-testid="`ve-json-gutter-${i}`"
                     aria-hidden="true"
                     class="shrink-0 select-none overflow-hidden border-r border-border py-1 pl-1 pr-2 text-right font-mono text-sm leading-[1.4] whitespace-pre text-muted-foreground"
+                    style="max-height: calc(14 * 1.4em + 8px);"
                   >{{ gutterNumbers(jsonLineCount(i)) }}</div>
                   <Textarea
                     :id="`${idp}-value-${i}`"
@@ -603,8 +687,8 @@ defineExpose({ focusField, commitFullscreen, closeJsonFullscreen })
                     :aria-invalid="rowError(i) ? 'true' : 'false'"
                     :aria-describedby="rowError(i) ? `${idp}-err-${i}` : undefined"
                     wrap="off"
-                    class="w-full min-w-0 flex-1 px-2 py-1 font-mono leading-[1.4] bg-transparent border-0 focus-visible:ring-0 resize-y json-autogrow"
-                    style="min-height: calc(8 * 1.4em + 8px); max-height: 40vh; field-sizing: content;"
+                    class="w-full min-w-0 flex-1 overflow-auto px-2 py-1 font-mono leading-[1.4] bg-transparent border-0 focus-visible:ring-0 resize-y json-autogrow"
+                    style="min-height: calc(3 * 1.4em + 8px); max-height: calc(14 * 1.4em + 8px); field-sizing: content;"
                     @update:model-value="onJsonInput(i, String($event))"
                     @blur="onJsonBlur(i)"
                     @keydown="onJsonKeydown(i, $event)"
