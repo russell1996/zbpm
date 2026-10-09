@@ -711,12 +711,13 @@
   "presetFillAskFieldsPrefix": "Міндетті өрістерді толтырыңыз:",
   "presetGoToField": "{field} өрісіне өту",
   "presetJsonFullscreen": "Толық экран",
+  "presetJsonExpand": "Ашу",
+  "presetJsonCollapse": "Жию",
   "presetJsonLines": "жол: {n}",
   "presetNoTemplatesHint": "Үлгілер жоқ — айнымалыларды қайта пайдалану үшін осы элементке үлгі жасаңыз.",
   "presetSearchVariables": "Айнымалыларды іздеу…",
   "presetShowMore": "Тағы {n} көрсету",
   "presetStartTargetRef": "Процесті іске қосу",
-  "presetToggleJsonLines": "Жию/Ашу",
   "presetUndo": "Болдырмау",
   "presetVarCount": "{n} айн.",
   "presetVarCounter": "{n} айнымалы, {m} қатемен",
@@ -764,6 +765,5 @@
   "channelDiag429Hint": "Тым көп ағын — артық қойындыларды жабыңыз.",
   "channelDiagFinished": "Аяқталған",
   "uiErrorTitle": "Бірдеңе дұрыс болмады",
-  "uiErrorReload": "Қайта жүктеу",
-  "dialogClose": "Жабу"
+  "uiErrorReload": "Қайта жүктеу"
 }

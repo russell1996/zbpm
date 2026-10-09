@@ -24,6 +24,16 @@ const ownerJson: string = readFileSync(
   'utf-8',
 ).trim()
 
+// WO-UI-28: непустой JSON по умолчанию свёрнут — сначала «Развернуть».
+async function expandFirst(
+  w: { find: (s: string) => { exists: () => boolean; trigger: (e: string) => Promise<void> } },
+  row = 0,
+) {
+  const toggle = w.find(`[data-testid="ve-json-toggle-${row}"]`)
+  expect(toggle.exists(), 'expand toggle renders for non-empty JSON').toBe(true)
+  await toggle.trigger('click')
+}
+
 describe('WO-UI-27 delete as × (criteria 7–9)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -99,6 +109,7 @@ describe('WO-UI-27 autoformat on show (criterion 1)', () => {
     const w = mount(VariablesEditor, {
       props: { modelValue: [{ name: 'stages', type: 'JSON', value: ownerJson }] },
     })
+    await expandFirst(w as unknown as Parameters<typeof expandFirst>[0])
     await flushPromises()
     const area = w.find('textarea[id^="pv-value-"]')
     expect(area.exists()).toBe(true)
@@ -112,6 +123,7 @@ describe('WO-UI-27 autoformat on show (criterion 1)', () => {
     const w = mount(VariablesEditor, {
       props: { modelValue: [{ name: 'stages', type: 'JSON', value: ownerJson }] },
     })
+    await expandFirst(w as unknown as Parameters<typeof expandFirst>[0])
     await flushPromises()
     const area = w.find('textarea[id^="pv-value-"]')
     // Пользователь ничего не трогал — эмит только после его правки;
@@ -123,6 +135,7 @@ describe('WO-UI-27 autoformat on show (criterion 1)', () => {
     const w = mount(VariablesEditor, {
       props: { modelValue: [{ name: 'stages', type: 'JSON', value: '{"a":1}' }] },
     })
+    await expandFirst(w as unknown as Parameters<typeof expandFirst>[0])
     await flushPromises()
     const area = w.find('textarea[id^="pv-value-"]')
     await area.setValue('{"a":1,"b":2}')
@@ -140,6 +153,7 @@ describe('WO-UI-27 JSON line numbers (criterion 3b)', () => {
     const w = mount(VariablesEditor, {
       props: { modelValue: [{ name: 'stages', type: 'JSON', value: ownerJson }] },
     })
+    await expandFirst(w as unknown as Parameters<typeof expandFirst>[0])
     await flushPromises()
     const gutter = w.find('[data-testid="ve-json-gutter-0"]')
     expect(gutter.exists()).toBe(true)
@@ -167,6 +181,7 @@ describe('WO-UI-27 Tab indent in JSON row editor (criterion 4, O-3)', () => {
       props: { modelValue: [{ name: 'j', type: 'JSON', value: '{"a":1}' }] },
       attachTo: host,
     })
+    await expandFirst(w as unknown as Parameters<typeof expandFirst>[0])
     await flushPromises()
     const area = w.find('textarea[id^="pv-value-"]')
     const el = area.element as HTMLTextAreaElement
@@ -190,6 +205,7 @@ describe('WO-UI-27 Tab indent in JSON row editor (criterion 4, O-3)', () => {
     const w = mount(VariablesEditor, {
       props: { modelValue: [{ name: 'j', type: 'JSON', value: '{"a":1}' }] },
     })
+    await expandFirst(w as unknown as Parameters<typeof expandFirst>[0])
     await flushPromises()
     const area = w.find('textarea[id^="pv-value-"]')
     await area.trigger('keydown', { key: 'Tab', shiftKey: true })

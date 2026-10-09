@@ -268,23 +268,39 @@ describe('WO-VT-3 audit: VariablesEditor', () => {
     expect(JSON_60K[0].value.length).toBeGreaterThan(50 * 1024)
     mountAt(VariablesEditor, { modelValue: JSON_60K }, 960)
     await flushPromises()
+    // WO-UI-28: непустой JSON по умолчанию свёрнут — сначала «Развернуть».
+    const toggle = document.querySelector('[data-testid^="ve-json-toggle-"]') as HTMLButtonElement
+    expect(toggle, 'JSON expand toggle renders').toBeTruthy()
+    if (toggle.getAttribute('aria-expanded') === 'false') {
+      toggle.click()
+      await flushPromises()
+    }
     const area = document.querySelector('[id^="pv-value-"]') as HTMLElement
     const lineH = parseFloat(getComputedStyle(area).lineHeight || '20')
     expect(area.getBoundingClientRect().height).toBeGreaterThanOrEqual(lineH * 8)
   })
 
-  it('мелкий JSON @960: min-height держит пол 8 строк (M-b: регресс пола)', async () => {
-    // WO-VT-3 HOLD r1 (M-b): 60К-тест меряет выросшее поле (autoGrow до
-    // 40vh) и НЕ ловит снятие min-height — этот тест прибивает пол напрямую
-    // на мелком значении (высота < 40vh, autoGrow не растёт).
+  it('мелкий JSON @960: min-height держит пол 3 строки (WO-UI-28: пол 8→3)', async () => {
+    // WO-UI-28 п.3 намеренно меняет пол строчного редактора 8→3 строки
+    // (пустое место под коротким текстом — жалоба владельца); M-b прибивает
+    // новый пол напрямую на мелком значении (autoGrow не растёт).
     mountAt(VariablesEditor, { modelValue: [{ name: 'j', type: 'JSON', value: '{"a":1}' }] }, 960)
     await flushPromises()
+    // WO-UI-28: непустой JSON по умолчанию свёрнут — сначала «Развернуть».
+    const toggle = document.querySelector('[data-testid^="ve-json-toggle-"]') as HTMLButtonElement
+    expect(toggle, 'JSON expand toggle renders').toBeTruthy()
+    if (toggle.getAttribute('aria-expanded') === 'false') {
+      toggle.click()
+      await flushPromises()
+    }
     const area = document.querySelector('[id^="pv-value-"]') as HTMLElement
     const cs = getComputedStyle(area)
     const lineH = parseFloat(cs.lineHeight || '20')
-    // Пол задан CSS min-height (8 строк), а не атрибутом rows.
-    expect(parseFloat(cs.minHeight)).toBeGreaterThanOrEqual(lineH * 8 - 1)
-    expect(area.getBoundingClientRect().height).toBeGreaterThanOrEqual(lineH * 8 - 1)
+    // Пол задан CSS min-height (3 строки), а не атрибутом rows.
+    expect(parseFloat(cs.minHeight)).toBeGreaterThanOrEqual(lineH * 3 - 1)
+    expect(area.getBoundingClientRect().height).toBeGreaterThanOrEqual(lineH * 3 - 1)
+    // И не «огромный»: потолок 14 строк даже при развёрнутом виде.
+    expect(area.getBoundingClientRect().height).toBeLessThanOrEqual(lineH * 14 + 12)
   })
 
   it('имя 60 символов @360: без переполнения и обрезки смысла', async () => {

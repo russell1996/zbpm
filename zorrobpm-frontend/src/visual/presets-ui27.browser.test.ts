@@ -83,12 +83,22 @@ function mountAt(vars: PresetVariable[], width: number, opts: { dark?: boolean; 
   return wrapper
 }
 
-/** JSON-textarea строки stages. */
+/** JSON-textarea строки stages (WO-UI-28: непустой JSON свёрнут — сначала развернуть). */
 function stagesArea(): HTMLTextAreaElement {
   const areas = [...document.querySelectorAll('textarea[id^="pv-value-"]')] as HTMLTextAreaElement[]
   if (!areas.length) throw new Error('no JSON textarea rendered')
   // stages — самая длинная по значению
   return areas.sort((a, b) => b.value.length - a.value.length)[0]
+}
+
+/** Развернуть JSON-строку stages (дефолт WO-UI-28 — свёрнуто). */
+async function expandStages() {
+  const toggle = document.querySelector('[data-testid^="ve-json-toggle-"]') as HTMLButtonElement
+  if (!toggle) throw new Error('JSON expand toggle not found')
+  if (toggle.getAttribute('aria-expanded') === 'false') {
+    toggle.click()
+    await flushPromises()
+  }
 }
 
 /** Открыть фулскрин stages через его тулбар-кнопку. */
@@ -106,6 +116,7 @@ describe('WO-UI-27 browser: owner fixture formatted on show (criteria 1, 5)', ()
     await page.viewport(w, 720)
     mountAt(FIVE, w)
     await flushPromises()
+    await expandStages()
     const area = stagesArea()
     const lines = area.value.split('\n').length
     // Критерий 1: реальный JSON владельца отформатирован при показе.
@@ -131,6 +142,7 @@ describe('WO-UI-27 browser: owner fixture formatted on show (criteria 1, 5)', ()
     await page.viewport(360, 720)
     mountAt(FIVE, 360, { dark: true })
     await flushPromises()
+    await expandStages()
     const area = stagesArea()
     expect(area.value.split('\n').length).toBeGreaterThan(20)
     expect(document.documentElement.scrollWidth, 'no page h-scroll (dark)').toBeLessThanOrEqual(361)
