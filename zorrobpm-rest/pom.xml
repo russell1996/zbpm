@@ -44,8 +44,11 @@
              tests are excluded from the default H2/no-broker build. Local/CI runs select one
              group at a time via -Dgroups=pg|rabbit -Dzbpm.excludedGroups= (same mechanism as
              zorrobpm-engine/pom.xml). A literal here is NOT overridable by -D, so it must be a
-             property. -->
-        <zbpm.excludedGroups>pg | rabbit</zbpm.excludedGroups>
+             property.
+             WO-REL-70: + @Tag("nginx") (SseNginxBufferingLiveIT — живой nginx через Docker
+             Engine API; внутри docker build test-таргета нет ни сокета, ни сети для pull —
+             гоняется явно -Dgroups=nginx -Dzbpm.excludedGroups= -Dsurefire.skip=true). -->
+        <zbpm.excludedGroups>pg | rabbit | nginx</zbpm.excludedGroups>
     </properties>
 
     <dependencies>
