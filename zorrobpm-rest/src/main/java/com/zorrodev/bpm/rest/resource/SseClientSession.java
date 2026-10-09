@@ -116,9 +116,16 @@ public final class SseClientSession {
      * drain drops it unconditionally (a pre-LIVE tick carries nothing
      * worth delivering) and the post-send hook skips it (delivery
      * observability is for domain events, not keep-alives).
+     *
+     * <p>WO-REL-70: {@code hello} marks the immediate post-registration
+     * greeting (no cursor, no envelope — same {@code Long.MIN_VALUE}/
+     * {@code null} shape). Unlike a heartbeat it is KEPT by the drain
+     * (head-first, before any staged live events): its whole purpose is
+     * to be the first flushed bytes. The post-send hook skips it for the
+     * same reason as a heartbeat (no domain delivery to observe).
      */
     private record QueuedSend(SseEmitter.SseEventBuilder event, long cursor,
-            Map<String, Object> envelope, boolean heartbeat) {}
+            Map<String, Object> envelope, boolean heartbeat, boolean hello) {}
     private final java.util.ArrayDeque<QueuedSend> queue = new java.util.ArrayDeque<>();
     /**
      * True while a send is in flight OR a pump run is scheduled: exactly
@@ -173,7 +180,7 @@ public final class SseClientSession {
                 queue.clear();
                 overflowed = true;
             } else {
-                queue.addLast(new QueuedSend(event, cursor, envelope, false));
+                queue.addLast(new QueuedSend(event, cursor, envelope, false, false));
                 if (mode == Mode.LIVE && !pumpActive) {
                     pumpActive = true;
                     kick = true;
@@ -210,6 +217,13 @@ public final class SseClientSession {
             if (!queue.isEmpty()) {
                 java.util.ArrayDeque<QueuedSend> survivors = new java.util.ArrayDeque<>();
                 for (QueuedSend queued : queue) {
+                    // WO-REL-70: hello переживает drain (это его смысл —
+                    // быть первыми сброшенными байтами); head-first порядок
+                    // survivors его сохраняет впереди staged live-событий.
+                    if (queued.hello) {
+                        survivors.addLast(queued);
+                        continue;
+                    }
                     // WO-REL-57: heartbeat ticks queued pre-LIVE carry no
                     // cursor and nothing worth delivering — drop, the next
                     // tick re-arms on the live writer.
@@ -269,8 +283,41 @@ public final class SseClientSession {
                 return;
             }
             queue.addLast(new QueuedSend(SseWireProtocol.heartbeatEvent(),
-                Long.MIN_VALUE, null, true));
+                Long.MIN_VALUE, null, true, false));
             if (!pumpActive) {
+                pumpActive = true;
+                kick = true;
+            }
+        }
+        if (kick) {
+            kickPump();
+        }
+    }
+
+    /**
+     * WO-REL-70: queue the immediate post-registration greeting through
+     * the client's own writer (never a parallel direct
+     * {@code emitter.send} — the REL-47 single-writer protocol stays the
+     * only sender). BUFFERING: stage it (the drain keeps it head-first,
+     * kicks the pump — first flushed bytes within milliseconds of the
+     * controller returning). LIVE: queue + kick (defensive — the
+     * controller calls this pre-drain, so this branch is not the live
+     * path). CLOSED: drop. A FULL queue drops the hello WITHOUT closing:
+     * the greeting carries no data worth losing the stream over (same
+     * rationale as {@link #enqueueHeartbeat}).
+     */
+    void enqueueHello() {
+        boolean kick = false;
+        synchronized (this) {
+            if (mode == Mode.CLOSED) {
+                return;
+            }
+            if (queue.size() >= host.perClientQueueEvents()) {
+                return;
+            }
+            queue.addLast(new QueuedSend(SseWireProtocol.helloEvent(),
+                Long.MIN_VALUE, null, false, true));
+            if (mode == Mode.LIVE && !pumpActive) {
                 pumpActive = true;
                 kick = true;
             }
@@ -365,7 +412,9 @@ public final class SseClientSession {
                 // but never notifies.
                 // WO-REL-57: heartbeats never notify either (keep-alive,
                 // not delivery — the listener hook is for domain events).
-                if (actuallySent.get() && !queued.heartbeat) {
+                // WO-REL-70: hello never notifies either (greeting, not
+                // delivery — same reason).
+                if (actuallySent.get() && !queued.heartbeat && !queued.hello) {
                     host.notifySent(SseClientSession.this, queued.envelope);
                 }
                 pump();

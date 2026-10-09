@@ -605,6 +605,26 @@ public class SseEventStreamService implements SmartLifecycle, SseClientSession.H
     }
 
     /**
+     * WO-REL-70: немедленное приветствие после регистрации (зовёт
+     * контроллер ДО чтения catchup — первый flush несёт
+     * {@code :connected} за миллисекунды, а не за 15с heartbeat-тика:
+     * буферизующий reverse proxy видит начало ответа сразу).
+     * Best-effort: отсутствие клиента или переполнение — тихий no-op,
+     * поток не ломается (greeting не несёт данных).
+     */
+    public void sendImmediateHello(String clientId) {
+        try {
+            SseClientSession client = sessionRegistry.get(clientId);
+            if (client == null) {
+                return;
+            }
+            client.enqueueHello();
+        } catch (RuntimeException e) {
+            log.warn("SSE immediate hello skipped for client {}: {}", clientId, e.toString());
+        }
+    }
+
+    /**
      * WO-REL-57: arm the periodic heartbeat (idempotent, lazy) — delegate to
      * the session registry (шаг 3). Package-visible: heartbeat tests tick it directly.
      */
