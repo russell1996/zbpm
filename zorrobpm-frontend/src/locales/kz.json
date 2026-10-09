@@ -615,6 +615,7 @@
   "presetCorrelationKey": "Корреляция кілті",
   "presetCreateNew": "Жаңа жасау",
   "presetDelete": "Жою",
+  "presetTemplateMenu": "Үлгі әрекеттері",
   "presetConfirmDelete": "Жоюды растау үшін қайта басыңыз",
   "presetDeleteRowAria": "{name} айнымалысын жою",
   "presetRowDeleted": "Жойылды: {name}",

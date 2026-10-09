@@ -260,7 +260,7 @@ defineExpose({ reload: load, available })
             </span>
           </Button>
           <VariableRowMenu
-            :label="t('presetRowMenu')"
+            :label="t('presetTemplateMenu')"
             :items="[
               { id: 'edit', label: t('presetEdit') },
               { id: 'export', label: t('presetExport') },
