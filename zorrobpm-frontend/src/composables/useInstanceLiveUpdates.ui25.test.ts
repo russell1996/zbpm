@@ -107,6 +107,23 @@ describe('useInstanceLiveUpdates (WO-UI-25)', () => {
     wrapper.unmount()
   })
 
+  it('B-2: cold start shows reconnecting, not live, until the channel opens', async () => {
+    const h = health(false)
+    h.wasConnected.value = false
+    const { wrapper, refresh } = mountHook({ instanceId: 'pi-1', h })
+    await flushPromises()
+    expect(wrapper.text()).toBe('reconnecting')
+    // Опрос-страж идёт, пока канал не поднялся.
+    await vi.advanceTimersByTimeAsync(4000)
+    expect((refresh as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(1)
+    // Канал поднялся → live, опрос стоп.
+    h.isConnected.value = true
+    h.wasConnected.value = true
+    await flushPromises()
+    expect(wrapper.text()).toBe('live')
+    wrapper.unmount()
+  })
+
   it('criterion 5: channel loss polls while down, recovery stops it', async () => {
     const h = health(true)
     const { wrapper, refresh } = mountHook({ instanceId: 'pi-1', h })
@@ -133,12 +150,24 @@ describe('useInstanceLiveUpdates (WO-UI-25)', () => {
     wrapper.unmount()
   })
 
-  it('criterion 5: unmount unsubscribes (no refresh after leave, no leak)', async () => {
+  it('criterion 5: unmount unsubscribes AND removes the listener from the bus', async () => {
     const { wrapper, refresh } = mountHook({ instanceId: 'pi-1' })
+    // O-1: утечка в Set маскировалась disposed-guard — считаем слушателей.
+    const second = mountHook({ instanceId: 'pi-1' })
+    publishRealtimeEvent(envelope('activity.completed', 'pi-1'))
+    await vi.advanceTimersByTimeAsync(300)
+    const both = (refresh as ReturnType<typeof vi.fn>).mock.calls.length
+      + (second.refresh as ReturnType<typeof vi.fn>).mock.calls.length
+    expect(both).toBe(2)
+    // Сбрасываем счётчики: дальше доказываем, что ПОСЛЕ unmount вызовов нет.
+    ;(refresh as ReturnType<typeof vi.fn>).mockClear()
+    ;(second.refresh as ReturnType<typeof vi.fn>).mockClear()
     wrapper.unmount()
+    second.wrapper.unmount()
     publishRealtimeEvent(envelope('activity.completed', 'pi-1'))
     await vi.advanceTimersByTimeAsync(1000)
     expect(refresh).not.toHaveBeenCalled()
+    expect(second.refresh).not.toHaveBeenCalled()
   })
 
   it('criterion 3: hidden tab pauses live refresh, visible flushes pending', async () => {

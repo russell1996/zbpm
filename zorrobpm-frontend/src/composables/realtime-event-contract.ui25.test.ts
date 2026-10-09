@@ -27,7 +27,7 @@ function backendEventTypes(): string[] {
     ),
     'utf-8',
   )
-  const values = [...source.matchAll(/\(\s*"([^"]+)"\s*\)/g)].map((m) => m[1])
+  const values = [...source.matchAll(/^\s*[A-Z][A-Z0-9_]*\(\s*"([^"]+)"\s*\)/gm)].map((m) => m[1])
   expect(values.length).toBeGreaterThan(0)
   return values
 }
