@@ -133,9 +133,10 @@ describe('ProcessInstanceDetail — WO-VT-3 round 2 IA (E-VT3-1)', () => {
   })
 
   it('variables tab hosts the snapshot panel bound to this instance', async () => {
+    // WO-UI-25: таб живёт в адресе (композабл) — переключаем через query,
+    // а не прямым присвоением activeTab (его больше нет как локального ref).
+    routeHolder.query = { tab: 'variables' }
     const w = render()
-    await flushPromises()
-    ;(w.vm as unknown as { activeTab: string }).activeTab = 'variables'
     await flushPromises()
     const panel = w.findComponent(InstanceSnapshotPanel)
     expect(panel.exists()).toBe(true)

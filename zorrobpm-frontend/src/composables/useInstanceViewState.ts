@@ -69,8 +69,10 @@ export function useInstanceViewState() {
         const replace = (router as Partial<typeof router>).replace
         if (typeof replace === 'function') {
           writing = true
-          void replace
-            .call(router, { query: { ...q, tab: target } })
+          // WO-VT-3 (пересадка на UI-25): мок replace в тестах может вернуть
+          // не-Promise — оборачиваем, иначе .finally падает TypeError.
+          void Promise.resolve()
+            .then(() => replace.call(router, { query: { ...q, tab: target } }))
             .finally(() => {
               writing = false
             })
