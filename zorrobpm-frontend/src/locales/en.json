@@ -711,12 +711,13 @@
   "presetFillAskFieldsPrefix": "Fill in required fields:",
   "presetGoToField": "Go to field {field}",
   "presetJsonFullscreen": "Fullscreen",
+  "presetJsonExpand": "Expand",
+  "presetJsonCollapse": "Collapse",
   "presetJsonLines": "{n} lines",
   "presetNoTemplatesHint": "No templates here yet — create one for this element to reuse variables.",
   "presetSearchVariables": "Search variables…",
   "presetShowMore": "Show {n} more",
   "presetStartTargetRef": "Process start",
-  "presetToggleJsonLines": "Fold/Unfold",
   "presetUndo": "Undo",
   "presetVarCount": "{n} vars",
   "presetVarCounter": "{n} variables, {m} with errors",
@@ -764,6 +765,5 @@
   "channelDiag429Hint": "Too many open streams — close extra tabs.",
   "channelDiagFinished": "Finished",
   "uiErrorTitle": "Something went wrong",
-  "uiErrorReload": "Reload",
-  "dialogClose": "Close"
+  "uiErrorReload": "Reload"
 }
