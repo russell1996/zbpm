@@ -223,8 +223,10 @@ export function useRealtimeEvents() {
     firstByteSeen = false
     firstByteTimer = setTimeout(() => {
       firstByteTimer = null
-      // onopen уже был (сервер ответил) — но ни одного события/heartbeat:
-      // поток висит без байтов = признак буферизации прокси (REL-70).
+      // Ни одного БАЙТА (события/heartbeat) за N секунд — поток висит без
+      // данных = признак буферизации прокси (REL-70). onopen — это заголовки
+      // ответа, а не байты потока: его наличие таймер НЕ гасит (иначе
+      // pending-случай Доп.8 — onopen есть, байтов нет — не диагностировался).
       // CLOSED-источник уже ушёл в scheduleReconnect — не дублируем.
       if (!firstByteSeen && eventSource && !isClosed(eventSource)) {
         noteError('no-first-byte')
@@ -330,7 +332,9 @@ export function useRealtimeEvents() {
     }
     armFirstByteTimer()
     source.onopen = () => {
-      markFirstByte()
+      // onopen = заголовки ответа, НЕ байты потока: first-byte таймер НЕ
+      // гасим (Доп.8 — pending за буферизующим прокси: onopen есть, байтов
+      // нет). Гасят его только события/heartbeat (markFirstByte выше).
       noteHealthy()
       isConnected.value = true
       error.value = null
