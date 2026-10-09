@@ -734,5 +734,8 @@
   "presetOpenManager": "Шаблоны процесса →",
   "presetInstanceActions": "Действия с инстансом",
   "presetSnapshotDialogTitle": "Сохранить переменные как шаблон",
-  "presetOpenTemplate": "Открыть шаблон"
+  "presetOpenTemplate": "Открыть шаблон",
+  "presetDialogWider": "Шире",
+  "presetDialogNarrower": "Уже",
+  "presetDialogWiderHint": "Переключить ширину диалога"
 }

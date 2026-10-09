@@ -82,11 +82,18 @@ vi.mock('@/services/messagePublishService', () => ({
 const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => mockToast }))
 
-const stubs = { teleport: true, BpmnViewer: { template: '<div class="bpmn-stub" />' } }
+const stubs = { BpmnViewer: { template: '<div class="bpmn-stub" />' } }
 
 function render() {
+  // WO-UI-27: mount БЕЗ своего createPinia — иначе компонент видит ДРУГОЙ
+  // стор (PINIA_SAME=false) и вечно показывает loading: init пишет в чужой
+  // стор, шаблон читает пустой. Активная pinia — из beforeEach выше.
+  // attachTo — чтобы порталы DropdownMenu/Dialog жили в document.
+  const host = document.createElement('div')
+  document.body.appendChild(host)
   return mount(ProcessInstanceDetail, {
-    global: { stubs, plugins: [createPinia()] },
+    attachTo: host,
+    global: { stubs },
   })
 }
 
@@ -111,10 +118,12 @@ describe('ProcessInstanceDetail — WO-VT-3 round 2 IA (E-VT3-1)', () => {
     const w = render()
     await flushPromises()
     const menu = w.find('[data-testid="instance-actions-menu"] [data-testid="row-menu-button"]')
-    await menu.trigger('click')
+    ;(menu.element as HTMLElement).click()
     await flushPromises()
-    await w.find('[data-testid="row-menu-item-send"]').trigger('click')
+    await new Promise((r) => setTimeout(r, 50))
+    ;(document.querySelector('[data-testid="row-menu-item-send"]') as HTMLElement).click()
     await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
     expect(w.find('[data-testid="send-message-modal"]').exists()).toBe(true)
     expect(w.findComponent(InstanceMessagePanel).exists()).toBe(true)
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
@@ -150,11 +159,13 @@ describe('ProcessInstanceDetail — WO-VT-3 round 2 IA (E-VT3-1)', () => {
   it('menu item "process templates" navigates to the definition page', async () => {
     const w = render()
     await flushPromises()
-    const menu = w.find('[data-testid="instance-actions-menu"] [data-testid="row-menu-button"]')
-    await menu.trigger('click')
+    const menu2 = w.find('[data-testid="instance-actions-menu"] [data-testid="row-menu-button"]')
+    ;(menu2.element as HTMLElement).click()
     await flushPromises()
-    await w.find('[data-testid="row-menu-item-templates"]').trigger('click')
+    await new Promise((r) => setTimeout(r, 50))
+    ;(document.querySelector('[data-testid="row-menu-item-templates"]') as HTMLElement).click()
     await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
     expect(mockPush).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'process-definition-detail', params: { id: 'pd-1' } }),
     )

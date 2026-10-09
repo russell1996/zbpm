@@ -17,10 +17,17 @@ import CopyableId from '@/widgets/shared/CopyableId.vue'
 import IoMappingTable from '@/widgets/shared/IoMappingTable.vue'
 import TabsBar from '@/widgets/shared/TabsBar.vue'
 import MemberAddDialog from '@/widgets/processes/MemberAddDialog.vue'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
 import ElementPresetsPanel from '@/widgets/presets/ElementPresetsPanel.vue'
 import { elementToPresetTarget } from '@/shared/lib/presetVariables'
 import { ArrowLeft, Download, Calendar } from 'lucide-vue-next'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
@@ -141,6 +148,14 @@ const activeTab = ref('model')
 const showStartModal = ref(false)
 // WO-UI-25 (критерий 1): двойной клик по «Start» не создаёт два инстанса.
 const startInFlight = ref(false)
+// WO-UI-27 п.3: ширина стартового диалога (стандарт/широко), память в localStorage.
+const startWide = ref(localStorage.getItem('zbpm-start-dialog-wide') === '1')
+function toggleStartWide() {
+  startWide.value = !startWide.value
+  try {
+    localStorage.setItem('zbpm-start-dialog-wide', startWide.value ? '1' : '0')
+  } catch { /* приватный режим — просто не запоминаем */ }
+}
 // WO-VT-1: старт из шаблона — переменные отдаёт PresetPicker в модалке.
 const startPickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
 const askMissing = ref<string[]>([])
@@ -745,13 +760,23 @@ async function downloadBpmn() {
 
     </template>
 
-      <div
-        v-if="showStartModal"
-        class="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-        @click.self="showStartModal = false"
-      >
-        <div class="bg-card rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
-          <h2 class="text-lg font-bold">{{ t('startProcessInstance') }}</h2>
+      <!-- WO-UI-27 п.3 + доп.3: shadcn-Dialog, min(94vw,1280px), кнопка Шире/Уже. -->
+      <Dialog :open="showStartModal" @update:open="(v) => { if (!v) showStartModal = false }">
+        <DialogContent
+          class="flex flex-col gap-4 p-6"
+          :style="startWide ? 'width: min(94vw, 1280px); max-width: min(94vw, 1280px);' : 'width: min(94vw, 640px); max-width: min(94vw, 640px);'"
+          :aria-label="t('startProcessInstance')"
+        >
+          <DialogHeader class="flex-row items-center justify-between gap-2 space-y-0">
+            <DialogTitle class="text-lg font-bold">{{ t('startProcessInstance') }}</DialogTitle>
+            <Button
+              type="button" variant="outline" size="sm" class="text-xs"
+              :title="t('presetDialogWiderHint')"
+              @click="toggleStartWide"
+            >
+              {{ startWide ? t('presetDialogNarrower') : t('presetDialogWider') }}
+            </Button>
+          </DialogHeader>
           <!-- WO-VT-1: запуск из шаблона — тот же PresetPicker, что в StartForm -->
           <PresetPicker
             v-if="store.currentDefinition"
@@ -760,19 +785,18 @@ async function downloadBpmn() {
             target-kind="START"
             @change="askMissing = startPickerRef?.missingAsk ?? []; pickerInvalid = startPickerRef?.hasErrors ?? false"
           />
-          <div class="flex justify-end gap-2 pt-2">
-            <button class="px-4 py-2 text-sm border border-border rounded-md hover:bg-muted" @click="showStartModal = false">{{ t('cancel') }}</button>
-            <button
-              class="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
+          <DialogFooter class="gap-2 pt-2">
+            <Button variant="outline" @click="showStartModal = false">{{ t('cancel') }}</Button>
+            <Button
               :disabled="askMissing.length > 0 || pickerInvalid || startInFlight"
               :title="askMissing.length ? t('presetFillAskFields', { fields: askMissing.join(', ') }) : ''"
               @click="startProcess"
             >
               {{ t('startProcess') }}
-            </button>
-          </div>
-        </div>
-      </div>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     <!-- WO-ACL-11 criteria 20-22: ONE upload component — the card opens the shared
       ProcessDeploySection BOUND to this process. All ACL-10 behavior (parse key
