@@ -2,6 +2,7 @@ package com.zorrodev.bpm.rest.resource;
 
 import com.zorrodev.bpm.engine.security.Principal;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,12 +17,33 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 /**
  * GET /events/stream — Server-Sent Events for domain events (ADR-7, WO-EVT-4).
  * JWT-auth (cookie/Bearer), Last-Event-ID for reconnect catchup.
+ *
+ * <p>WO-REL-70: успех (200 стрим) выставляет {@code X-Accel-Buffering: no} +
+ * {@code Cache-Control: no-cache, no-transform} и шлёт немедленный
+ * {@code :connected} (см. {@link SseEventStreamService#sendImmediateHello}):
+ * внешний edge-nginx с дефолтным {@code proxy_buffering on} иначе держит
+ * handshake в буфере, и EventSource висит в «pending». Ошибочные ответы
+ * (401 от JwtAuthFilter, 429 от RateLimitFilter) идут МИМО этого метода —
+ * заголовки на них не ставятся и их форма не меняется.
+ * {@code Connection: keep-alive} намеренно не трогается (hop-by-hop).
  */
 @Slf4j
 @RestController
 @RequestMapping("/events/stream")
 @RequiredArgsConstructor
 public class SseEventStreamController {
+
+    /**
+     * WO-REL-70: заставляет nginx (и любой RFC-совместимый reverse proxy)
+     * выключить буферизацию ЭТОГО ответа: nginx по умолчанию не буферизует
+     * ответ с {@code X-Accel-Buffering: no} от апстрима (если edge не задан
+     * {@code proxy_ignore_headers X-Accel-Buffering} — тогда нужны прямые
+     * директивы на edge, см. отчёт WO-REL-70 §edge).
+     */
+    static final String HDR_X_ACCEL_BUFFERING = "X-Accel-Buffering";
+    /** WO-REL-70: SSE-поток некэшируем и не подлежит transform-сжатию прокси. */
+    static final String HDR_CACHE_CONTROL = "Cache-Control";
+    static final String CACHE_CONTROL_VALUE = "no-cache, no-transform";
 
     private final SseEventStreamService sseEventStreamService;
 
@@ -43,7 +65,8 @@ public class SseEventStreamController {
             @RequestParam(required = false) String processInstanceId,
             @RequestParam(required = false) String processDefinitionKey,
             @RequestHeader(value = "Last-Event-ID", required = false) String lastEventId,
-            HttpServletRequest request) {
+            HttpServletRequest request,
+            HttpServletResponse response) {
 
         Principal principal = getPrincipal(request);
         if (principal == null) {
@@ -51,6 +74,11 @@ public class SseEventStreamController {
             emitter.completeWithError(new SecurityException("Unauthorized"));
             return emitter;
         }
+
+        // WO-REL-70: только успех несёт anti-buffering заголовки — ветка
+        // выше (и фильтры 401/429 до неё) их не ставят.
+        response.setHeader(HDR_X_ACCEL_BUFFERING, "no");
+        response.setHeader(HDR_CACHE_CONTROL, CACHE_CONTROL_VALUE);
 
         SseEmitter emitter = new SseEmitter(emitterTimeoutMs);
 
@@ -61,6 +89,11 @@ public class SseEventStreamController {
             // новее — доставляются (не потеряны).
             String clientId = sseEventStreamService.registerBufferedClient(
                 emitter, principal, type, processInstanceId, processDefinitionKey);
+
+            // WO-REL-70: немедленный :connected — через очередь writer'а
+            // (single-writer протокол REL-47 не нарушается), ДО чтения
+            // catchup: первый flush уходит сразу после return.
+            sseEventStreamService.sendImmediateHello(clientId);
 
             // WO-AUDIT-7: пин catchup-курсора ДО чтения catchup — окно
             // register→read закрыто: проход retention, стартовавший между
