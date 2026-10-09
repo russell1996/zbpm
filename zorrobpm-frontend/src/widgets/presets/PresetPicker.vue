@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import TabsBar from '@/widgets/shared/TabsBar.vue'
 import VariablesEditor from './VariablesEditor.vue'
 import PresetEditorDialog from './PresetEditorDialog.vue'
@@ -206,24 +215,28 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
     <div v-if="mode === 'manual'" class="pt-3">
       <VariablesEditor ref="manualEditor" :model-value="manualVars" @update:model-value="onManualVarsChange" />
       <div class="mt-2 flex flex-wrap items-center gap-2">
-        <button
+        <Button
           type="button"
-          class="px-3 py-1.5 text-xs border border-border rounded-md hover:bg-muted disabled:opacity-50 h-8"
+          variant="outline"
+          size="sm"
+          class="text-xs"
           :disabled="!manualVars.length"
           @click="showSaveDialog = true"
         >
           {{ t('presetSaveAsTemplate') }}
-        </button>
+        </Button>
         <p v-if="missingAsk.length" class="text-xs text-amber-600 dark:text-amber-400">
           {{ t('presetFillAskFieldsPrefix') }}
-          <template v-for="(f, fi) in missingAsk" :key="f">
-            <button
+          <template v-for="(f, fi) in missingAsk" :key="`m-${f}`">
+            <Button
               type="button"
-              class="underline hover:no-underline font-mono"
+              variant="link"
+              size="sm"
+              class="h-auto p-0 font-mono text-xs"
               :title="t('presetGoToField', { field: f })"
               @click="focusAskField(f)"
             >
-              {{ f }}</button><span v-if="fi < missingAsk.length - 1">, </span>
+              {{ f }}</Button><span v-if="fi < missingAsk.length - 1">, </span>
           </template>
         </p>
       </div>
@@ -232,18 +245,20 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
       <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
       <p v-else-if="loadError" class="text-sm text-red-500">{{ loadError }}</p>
       <template v-else>
-        <label for="preset-select" class="sr-only">{{ t('presetTemplateMode') }}</label>
-        <select
-          id="preset-select"
-          v-model="selectedId"
-          class="w-full px-2 py-1.5 border border-input rounded text-sm h-9"
-          @change="onSelectPreset"
+        <Label for="preset-select" class="sr-only">{{ t('presetTemplateMode') }}</Label>
+        <Select
+          :model-value="selectedId"
+          @update:model-value="selectedId = String($event); onSelectPreset()"
         >
-          <option value="">{{ t('presetChooseTemplate') }}</option>
-          <option v-for="p in presets" :key="p.id" :value="p.id">
-            {{ p.name }}{{ p.favorite ? t('presetFavoriteStar') : '' }} ({{ visibilityLabel(p.visibility) }})
-          </option>
-        </select>
+          <SelectTrigger id="preset-select" data-testid="preset-select" class="w-full h-9 text-sm">
+            <SelectValue :placeholder="t('presetChooseTemplate')" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem v-for="p in presets" :key="p.id" :value="p.id" :data-testid="`preset-opt-${p.id}`">
+              {{ p.name }}{{ p.favorite ? t('presetFavoriteStar') : '' }} ({{ visibilityLabel(p.visibility) }})
+            </SelectItem>
+          </SelectContent>
+        </Select>
         <p v-if="!presets.length" class="text-sm text-muted-foreground">{{ t('presetNoTemplates') }}</p>
         <VariablesEditor
           v-if="selectedId"
@@ -252,24 +267,28 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
           @update:model-value="onTemplateVarsChange"
         />
         <div v-if="selectedId" class="flex flex-wrap items-center gap-2">
-          <button
+          <Button
             type="button"
-            class="px-3 py-1.5 text-xs border border-border rounded-md hover:bg-muted disabled:opacity-50 h-8"
+            variant="outline"
+            size="sm"
+            class="text-xs"
             :disabled="!templateVars.length"
             @click="showSaveDialog = true"
           >
             {{ t('presetSaveAsTemplate') }}
-          </button>
+          </Button>
           <p v-if="missingAsk.length" class="text-xs text-amber-600 dark:text-amber-400">
             {{ t('presetFillAskFieldsPrefix') }}
-            <template v-for="(f, fi) in missingAsk" :key="f">
-              <button
+            <template v-for="(f, fi) in missingAsk" :key="`t-${f}`">
+              <Button
                 type="button"
-                class="underline hover:no-underline font-mono"
+                variant="link"
+                size="sm"
+                class="h-auto p-0 font-mono text-xs"
                 :title="t('presetGoToField', { field: f })"
                 @click="focusAskField(f)"
               >
-                {{ f }}</button><span v-if="fi < missingAsk.length - 1">, </span>
+                {{ f }}</Button><span v-if="fi < missingAsk.length - 1">, </span>
             </template>
           </p>
         </div>

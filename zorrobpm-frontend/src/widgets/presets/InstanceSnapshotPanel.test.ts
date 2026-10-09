@@ -54,8 +54,15 @@ describe('InstanceSnapshotPanel — WO-VT-3 round 2 (E-VT3-1 Б)', () => {
     })
     await w.findAll('button')[0].trigger('click')
     await flushPromises()
-    await w.find('#snap-name').setValue('snap-1')
-    await w.findAll('button').find((b) => b.text() === 'save')!.trigger('click')
+    const snapName = document.querySelector('#snap-name') as HTMLInputElement
+    expect(snapName, 'snapshot name renders in portal').not.toBeNull()
+    snapName.value = 'snap-1'
+    snapName.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    const saveBtn = [...document.querySelectorAll('button')].find((b) => (b.textContent ?? '').trim() === 'save') as HTMLElement
+    expect(saveBtn, 'save renders in portal').not.toBeNull()
+    saveBtn.click()
+    await flushPromises()
     await flushPromises()
     expect(mockCreate).toHaveBeenCalled()
     expect(mockToast.success).toHaveBeenCalledWith(

@@ -20,10 +20,27 @@ import {
   isPresetConflict,
   presetErrorCode,
 } from '@/services/presetService'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { validatePresetRow, duplicateVariableNames } from '@/shared/lib/presetVariables'
 import { errorMessage } from '@/shared/lib/utils'
 import { useToast } from '@/composables/useToast'
-import { onCtrlEnter, usePresetModal } from '@/composables/usePresetModal'
+import { onCtrlEnter } from '@/composables/usePresetModal'
 
 /**
  * WO-VT-1 (фронт, §1-бис п.2-бис): создание/правка шаблона. Правка — через PUT
@@ -65,14 +82,27 @@ const view = ref<'edit' | 'history'>('edit')
 const history = ref<PresetHistoryEntry[]>([])
 const historyLoading = ref(false)
 
-// WO-VT-3 (критерии 4, 5, 8): липкие шапка/подвал, focus-trap + Esc,
-// Ctrl+Enter = сохранить, скролл фона заблокирован, фокус возвращается.
-const dialogRef = ref<HTMLElement | null>(null)
-const openRef = computed(() => props.open)
+// WO-UI-27 доп.3: shadcn-Dialog даёт focus-trap + Esc + scroll-lock + aria
+// из коробки (вместо usePresetModal). Ctrl+Enter = сохранить (RT-2) —
+// onDialogKeydown ниже. Esc внутри JSON-фулскрина перехватывает сам
+// фулскрин (RT-1): DialogContent слушает escape только вне [data-preset-fs].
 function requestClose() {
   emit('close')
 }
-usePresetModal(openRef, dialogRef, requestClose)
+
+/**
+ * WO-UI-27 + сохранение RT-1: Esc в shadcn-Dialog. DialogContent эмитит
+ * escape-key-down; если фокус внутри JSON-фулскрина ([data-preset-fs]) —
+ * это Esc-возврат черновика (глушим, диалог не закрываем), иначе — закрыть.
+ */
+function onDialogEscape(e: Event) {
+  const ae = document.activeElement as HTMLElement | null
+  if (ae?.closest?.('[data-preset-fs]')) {
+    e.preventDefault()
+  } else {
+    requestClose()
+  }
+}
 
 // WO-VT-3 HOLD r1 (RT-2): доступ к commitFullscreen() редактора.
 const variablesEditor = ref<InstanceType<typeof VariablesEditor> | null>(null)
@@ -323,45 +353,45 @@ function historyJson(vars: PresetVariable[] | null): string {
 </script>
 
 <template>
-  <div
-    v-if="open"
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-    @click.self="requestClose"
-  >
-    <!-- WO-VT-3 (критерий 4): min(960px, 94vw), шапка/подвал липкие,
-         тело скроллится; Esc/trap/Ctrl+Enter — usePresetModal. -->
-    <div
-      ref="dialogRef"
-      class="flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-lg bg-card shadow-lg"
-      style="width: min(960px, 94vw);"
-      role="dialog"
-      aria-modal="true"
+  <!-- WO-UI-27 доп.3: shadcn-Dialog (trap/Esc/scroll-lock/aria из коробки).
+       WO-UI-27 п.3: ширина min(94vw,1280px) вместо 960px. Esc внутри
+       JSON-фулскрина — Esc-возврат (RT-1): DialogContent ниже глушит
+       escape-key-down, когда фокус в [data-preset-fs]. -->
+  <Dialog :open="open" @update:open="(v) => { if (!v) requestClose() }">
+    <DialogContent
+      class="flex max-h-[90dvh] flex-col gap-0 overflow-hidden p-0"
+      style="width: min(94vw, 1280px); max-width: min(94vw, 1280px);"
       :aria-label="t(titleKey)"
       @keydown="onDialogKeydown"
+      @escape-key-down="onDialogEscape"
+      @pointer-down-outside="(e) => e.preventDefault()"
+      @interact-outside="(e) => e.preventDefault()"
     >
-      <div class="sticky top-0 flex items-center justify-between gap-2 border-b border-border bg-card px-4 py-3">
-        <h2 class="truncate text-lg font-bold">{{ t(titleKey) }}</h2>
+      <DialogHeader class="flex-row items-center justify-between gap-2 space-y-0 border-b border-border px-4 py-3">
+        <DialogTitle class="truncate text-lg font-bold">{{ t(titleKey) }}</DialogTitle>
         <div class="flex shrink-0 items-center gap-2">
-          <button
+          <Button
             v-if="isEdit && !duplicateName"
-            type="button"
-            class="h-8 w-8 px-1 text-xl leading-none"
+            variant="ghost"
+            size="icon"
+            class="text-xl leading-none"
             :aria-label="t('presetFavorite')"
             :aria-pressed="favorite ? 'true' : 'false'"
             :title="t('presetFavorite')"
             @click="toggleFavorite"
           >
             {{ favorite ? '★' : '☆' }}
-          </button>
-          <button
-            type="button"
-            class="h-8 px-2 text-sm text-muted-foreground hover:text-foreground"
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            class="text-sm text-muted-foreground"
             @click="requestClose"
           >
             {{ t('close') }}
-          </button>
+          </Button>
         </div>
-      </div>
+      </DialogHeader>
 
       <div class="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
       <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
@@ -388,41 +418,47 @@ function historyJson(vars: PresetVariable[] | null): string {
           </li>
         </ol>
         <div class="flex justify-start">
-          <button
+          <Button
             type="button"
-            class="px-3 py-1.5 text-sm border border-border rounded-md hover:bg-muted"
+            variant="outline"
+            size="sm"
             @click="view = 'edit'"
           >
             {{ t('presetBackToEdit') }}
-          </button>
+          </Button>
         </div>
       </template>
 
       <template v-else>
         <div class="grid grid-cols-1 gap-3 min-[560px]:grid-cols-2">
           <div class="min-w-0">
-            <label for="preset-name" class="mb-1 block text-xs font-medium">{{ t('presetName') }}</label>
-            <input
+            <Label for="preset-name" class="mb-1 block">{{ t('presetName') }}</Label>
+            <Input
               id="preset-name"
               v-model="name"
-              class="h-9 w-full rounded border border-input px-2 py-1.5 text-sm"
-              maxlength="255"
+              class="h-9 w-full text-sm"
+              :maxlength="255"
             />
           </div>
           <div class="min-w-0">
-            <label for="preset-visibility" class="mb-1 block text-xs font-medium">{{ t('presetVisibility') }}</label>
-            <select id="preset-visibility" v-model="visibility" class="h-9 w-full rounded border border-input px-2 py-1.5 text-sm">
-              <option value="PRIVATE">{{ t('presetVisibilityPrivate') }}</option>
-              <option value="PROCESS">{{ t('presetVisibilityProcess') }}</option>
-            </select>
+            <Label for="preset-visibility" class="mb-1 block">{{ t('presetVisibility') }}</Label>
+            <Select v-model="visibility">
+              <SelectTrigger id="preset-visibility" class="h-9 w-full text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="PRIVATE">{{ t('presetVisibilityPrivate') }}</SelectItem>
+                <SelectItem value="PROCESS">{{ t('presetVisibilityProcess') }}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
         <div>
-          <label for="preset-desc" class="mb-1 block text-xs font-medium">{{ t('presetDescription') }}</label>
-          <input
+          <Label for="preset-desc" class="mb-1 block">{{ t('presetDescription') }}</Label>
+          <Input
             id="preset-desc"
             v-model="description"
-            class="h-9 w-full rounded border border-input px-2 py-1.5 text-sm"
+            class="h-9 w-full text-sm"
           />
         </div>
         <div class="font-mono text-xs text-muted-foreground">
@@ -433,64 +469,71 @@ function historyJson(vars: PresetVariable[] | null): string {
 
         <div v-if="conflict" class="space-y-2 rounded-md border border-amber-400 bg-amber-50/50 p-3 dark:bg-amber-950/20">
           <p role="alert" class="text-sm text-amber-700 dark:text-amber-300">{{ t('presetVersionConflict') }}</p>
-          <button
+          <Button
             type="button"
-            class="h-8 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
+            variant="outline"
+            size="sm"
+            class="text-xs"
             @click="reloadLatest"
           >
             {{ t('presetReloadLatest') }}
-          </button>
+          </Button>
         </div>
         <p v-if="saveError && !conflict" role="alert" class="text-sm text-red-500">{{ saveError }}</p>
         <p v-else-if="formError" class="text-xs text-muted-foreground">{{ formError }}</p>
       </template>
       </div>
 
-      <div class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border bg-card px-4 py-3">
-          <div>
-            <button
+      <DialogFooter class="flex-row flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3">
+          <div class="flex flex-wrap gap-2">
+            <Button
               v-if="isEdit && !duplicateName"
               type="button"
-              class="h-8 px-3 py-1.5 text-xs text-red-500 hover:underline"
+              variant="link"
+              size="sm"
+              class="px-0 text-xs text-red-500"
               @click="remove"
             >
               {{ confirmDelete ? t('presetConfirmDelete') : t('presetDelete') }}
-            </button>
-            <button
+            </Button>
+            <Button
               v-if="isEdit && !duplicateName && view !== 'history'"
               type="button"
-              class="h-8 px-3 py-1.5 text-xs text-primary hover:underline"
+              variant="link"
+              size="sm"
+              class="px-0 text-xs"
               @click="openHistory"
             >
               {{ t('presetHistory') }}
-            </button>
+            </Button>
           </div>
           <div class="flex flex-wrap justify-end gap-2">
-            <button
+            <Button
               v-if="isEdit && !duplicateName"
               type="button"
-              class="h-8 rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted"
+              variant="outline"
+              size="sm"
+              class="text-xs"
               @click="toggleVisibility"
             >
               {{ shareLabel }}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              class="h-9 rounded-md border border-border px-4 py-1.5 text-sm hover:bg-muted"
+              variant="outline"
               @click="requestClose"
             >
               {{ t('cancel') }}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              class="h-9 rounded-md bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
               :disabled="!!formError || saving"
               @click="save"
             >
               {{ saving ? t('loading') : t('save') }}
-            </button>
+            </Button>
           </div>
-        </div>
-    </div>
-  </div>
+        </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>

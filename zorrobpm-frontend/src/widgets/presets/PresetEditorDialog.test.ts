@@ -4,7 +4,8 @@
  * version, конфликт 409 с перезагрузкой, дублирование, удаление с
  * подтверждением, избранное.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { VueWrapper } from '@vue/test-utils'
 import { mount, flushPromises } from '@vue/test-utils'
 import PresetEditorDialog from './PresetEditorDialog.vue'
 
@@ -32,6 +33,18 @@ vi.mock('vue-i18n', () => ({
 const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 vi.mock('@/composables/useToast', () => ({ useToast: () => mockToast }))
 
+/** Кнопки диалога живут в портале (document.body), не внутри wrapper. */
+function docBtns() {
+  return [...document.querySelectorAll('button')].map((el) => ({
+    text: () => el.textContent ?? '',
+    trigger: async (ev: string) => {
+      el.dispatchEvent(new MouseEvent(ev === 'click' ? 'click' : ev, { bubbles: true }))
+      await flushPromises()
+    },
+    element: el,
+  }))
+}
+
 const PRESET = {
   id: 'p1',
   processDefinitionKey: 'k',
@@ -48,7 +61,13 @@ const PRESET = {
   version: 3,
 }
 
+const mounted: VueWrapper[] = []
+
 describe('PresetEditorDialog', () => {
+  afterEach(() => {
+    for (const w of mounted.splice(0)) w.unmount()
+    document.body.innerHTML = ''
+  })
   beforeEach(() => {
     vi.clearAllMocks()
     mockGet.mockResolvedValue({ ...PRESET })
@@ -59,17 +78,34 @@ describe('PresetEditorDialog', () => {
   })
 
   it('create: name + variables flow into createPreset, saved emitted', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
     const w = mount(PresetEditorDialog, {
+      attachTo: host,
+    global: { stubs: {} },
       props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null },
     })
-    await w.find('#preset-name').setValue('case-a')
-    const addBtn = w.findAll('button').find((b) => b.text().includes('presetAddVariable'))!
+    mounted.push(w)
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
+    const nameInput = document.querySelector('#preset-name') as HTMLInputElement
+    expect(nameInput, 'preset name field renders in portal').not.toBeNull()
+    nameInput.value = 'case-a'
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }))
+    await flushPromises()
+    const addBtn = docBtns().find((b) => b.text().includes('presetAddVariable'))!
     await addBtn.trigger('click')
     // WO-VT-3: редактор в диалоге с id-префиксом pe- (без коллизий id).
-    await w.find('input[id^="pe-name-"]').setValue('n')
-    await w.find('select[id^="pe-type-"]').setValue('LONG')
-    await w.find('input[id^="pe-value-"]').setValue('7')
-    const saveBtn = w.findAll('button').find((b) => b.text().trim() === 'save')!
+    w.findComponent({ name: 'VariablesEditor' }).vm.$emit('update:modelValue', [
+      { name: 'n', type: 'LONG', value: '7', allowEmptyString: null },
+    ])
+    await flushPromises()
+    // WO-UI-27: тип — shadcn-Select; значение правим через emit редактора.
+    w.findComponent({ name: 'VariablesEditor' }).vm.$emit('update:modelValue', [
+      { name: 'n', type: 'LONG', value: '7', allowEmptyString: null },
+    ])
+    await flushPromises()
+    const saveBtn = docBtns().find((b) => b.text().trim() === 'save')!
     await saveBtn.trigger('click')
     await flushPromises()
     expect(mockCreate).toHaveBeenCalledWith(
@@ -84,13 +120,18 @@ describe('PresetEditorDialog', () => {
   })
 
   it('edit: loads the preset and PUTs with version', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
     const w = mount(PresetEditorDialog, {
+      attachTo: host,
+    global: { stubs: {} },
       props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
     })
+    mounted.push(w)
     await flushPromises()
     expect(mockGet).toHaveBeenCalledWith('p1')
-    expect((w.find('#preset-name').element as HTMLInputElement).value).toBe('base')
-    const saveBtn = w.findAll('button').find((b) => b.text().trim() === 'save')!
+    expect((document.querySelector('#preset-name') as HTMLInputElement).value).toBe('base')
+    const saveBtn = docBtns().find((b) => b.text().trim() === 'save')!
     await saveBtn.trigger('click')
     await flushPromises()
     expect(mockUpdate).toHaveBeenCalledWith('p1', expect.objectContaining({ version: 3 }))
@@ -98,44 +139,59 @@ describe('PresetEditorDialog', () => {
 
   it('409 with PRESET_CONFLICT shows the conflict banner and reload recovers', async () => {
     mockUpdate.mockRejectedValueOnce({ conflict: true, code: 'PRESET_CONFLICT' })
+    const host = document.createElement('div')
+    document.body.appendChild(host)
     const w = mount(PresetEditorDialog, {
+      attachTo: host,
+    global: { stubs: {} },
       props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
     })
+    mounted.push(w)
     await flushPromises()
-    await w.findAll('button').find((b) => b.text().trim() === 'save')!.trigger('click')
+    await docBtns().find((b) => b.text().trim() === 'save')!.trigger('click')
     await flushPromises()
-    expect(w.text()).toContain('presetVersionConflict')
+    expect(document.body.textContent).toContain('presetVersionConflict')
     // перезагрузка актуальной версии скрывает баннер
-    await w.findAll('button').find((b) => b.text().includes('presetReloadLatest'))!.trigger('click')
+    await docBtns().find((b) => b.text().includes('presetReloadLatest'))!.trigger('click')
     await flushPromises()
     expect(mockGet).toHaveBeenCalledTimes(2)
-    expect(w.text()).not.toContain('presetVersionConflict')
+    expect(document.body.textContent).not.toContain('presetVersionConflict')
   })
 
   it('duplicate: prefilled copy name, saved via create (POST)', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
     const w = mount(PresetEditorDialog, {
+      attachTo: host,
+    global: { stubs: {} },
       props: {
         open: true, processKey: 'k', targetKind: 'USER_TASK', targetRef: 't1',
         presetId: 'p1', duplicateName: 'Copy of base',
       },
     })
+    mounted.push(w)
     await flushPromises()
-    expect((w.find('#preset-name').element as HTMLInputElement).value).toBe('Copy of base')
-    await w.findAll('button').find((b) => b.text().trim() === 'save')!.trigger('click')
+    expect((document.querySelector('#preset-name') as HTMLInputElement).value).toBe('Copy of base')
+    await docBtns().find((b) => b.text().trim() === 'save')!.trigger('click')
     await flushPromises()
     expect(mockCreate).toHaveBeenCalled()
     expect(mockUpdate).not.toHaveBeenCalled()
   })
 
   it('delete needs two clicks, then emits deleted', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
     const w = mount(PresetEditorDialog, {
+      attachTo: host,
+    global: { stubs: {} },
       props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
     })
+    mounted.push(w)
     await flushPromises()
-    const delBtn = w.findAll('button').find((b) => b.text().includes('presetDelete'))!
+    const delBtn = docBtns().find((b) => b.text().includes('presetDelete'))!
     await delBtn.trigger('click')
     expect(mockDelete).not.toHaveBeenCalled()
-    await w.findAll('button').find((b) => b.text().includes('presetConfirmDelete'))!.trigger('click')
+    await docBtns().find((b) => b.text().includes('presetConfirmDelete'))!.trigger('click')
     await flushPromises()
     expect(mockDelete).toHaveBeenCalledWith('p1')
     expect(w.emitted('deleted')).toBeTruthy()
@@ -147,13 +203,18 @@ describe('PresetEditorDialog', () => {
         variablesBefore: [{ name: 'n', type: 'LONG', value: '1' }],
         variablesAfter: [{ name: 'n', type: 'LONG', value: '2' }] },
     ])
+    const host = document.createElement('div')
+    document.body.appendChild(host)
     const w = mount(PresetEditorDialog, {
+      attachTo: host,
+    global: { stubs: {} },
       props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
     })
+    mounted.push(w)
     await flushPromises()
-    await w.findAll('button').find((b) => b.text().includes('presetHistory'))!.trigger('click')
+    await docBtns().find((b) => b.text().includes('presetHistory'))!.trigger('click')
     await flushPromises()
     expect(mockHistory).toHaveBeenCalledWith('p1')
-    expect(w.text()).toContain('UPDATE')
+    expect(document.body.textContent).toContain('UPDATE')
   })
 })

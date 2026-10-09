@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import PresetEditorDialog from './PresetEditorDialog.vue'
 import type { VariablePreset } from '@/types/presets'
 import { listPresets, createPreset, deletePreset, isPresetsDisabled } from '@/services/presetService'
@@ -31,7 +40,6 @@ const available = ref(true)
 const kindFilter = ref('')
 const editingId = ref<string | null>(null)
 const dialogOpen = ref(false)
-const confirmDeleteId = ref<string | null>(null)
 
 // WO-ACL-11 criterion 11: виды — техническими токенами в value, подписью
 // через t() (текстовые <option>START</option> флагит сканер непереведённых).
@@ -81,14 +89,9 @@ function openEdit(p: VariablePreset) {
   dialogOpen.value = true
 }
 
+// WO-UI-27 доп.1–2: удаление шаблона — в один клик, без confirm;
+// защита — тихий undo-тост (пересоздание теми же данными, имя свободно).
 async function remove(p: VariablePreset) {
-  if (confirmDeleteId.value !== p.id) {
-    confirmDeleteId.value = p.id
-    return
-  }
-  confirmDeleteId.value = null
-  // WO-VT-3 Дополнение №2 п.4: «Отменить» в тосте — пересоздаём удалённый
-  // шаблон теми же данными (имя свободно — старый удалён).
   const backup = {
     processDefinitionKey: p.processDefinitionKey,
     targetKind: p.targetKind,
@@ -123,11 +126,16 @@ defineExpose({ reload: load, available })
     <div class="px-4 py-3 border-b border-border flex items-center gap-3 flex-wrap">
       <h3 class="text-sm font-bold">{{ t('presetManagerTitle') }}</h3>
       <span class="flex-1" />
-      <label for="preset-kind-filter" class="sr-only">{{ t('presetWhereUsed') }}</label>
-      <select id="preset-kind-filter" v-model="kindFilter" class="px-2 py-1 border border-input rounded text-xs font-mono h-8">
-        <option value="">{{ t('presetAllKinds') }}</option>
-        <option v-for="k in KINDS" :key="k" :value="k">{{ kindLabel(k) }}</option>
-      </select>
+      <Label for="preset-kind-filter" class="sr-only">{{ t('presetWhereUsed') }}</Label>
+      <Select v-model="kindFilter">
+        <SelectTrigger id="preset-kind-filter" class="px-2 py-1 text-xs font-mono h-8 w-40">
+          <SelectValue :placeholder="t('presetAllKinds')" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="">{{ t('presetAllKinds') }}</SelectItem>
+          <SelectItem v-for="k in KINDS" :key="k" :value="k">{{ kindLabel(k) }}</SelectItem>
+        </SelectContent>
+      </Select>
     </div>
     <!-- WO-VT-3 Дополнение №2 п.2: строка «зачем это». -->
     <p class="px-4 pt-2 text-xs text-muted-foreground">{{ t('presetWhyManager') }}</p>
@@ -154,12 +162,12 @@ defineExpose({ reload: load, available })
           <td class="px-4 py-2 font-mono text-xs max-w-40 truncate" :title="refLabel(p)">{{ refLabel(p) }}</td>
           <td class="px-4 py-2 text-xs">{{ visibilityLabel(p.visibility) }}</td>
           <td class="px-4 py-2 text-right text-xs whitespace-nowrap">
-            <button type="button" class="text-primary hover:underline mr-2 h-8 px-1" @click="openEdit(p)">
+            <Button type="button" variant="link" size="sm" class="mr-2 h-8 px-1" @click="openEdit(p)">
               {{ t('presetEdit') }}
-            </button>
-            <button type="button" class="text-red-500 hover:underline h-8 px-1" @click="remove(p)">
-              {{ confirmDeleteId === p.id ? t('presetConfirmDelete') : t('presetDelete') }}
-            </button>
+            </Button>
+            <Button type="button" variant="link" size="sm" class="h-8 px-1 text-red-500" @click="remove(p)">
+              {{ t('presetDelete') }}
+            </Button>
           </td>
         </tr>
       </tbody>

@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref } from 'vue'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 /**
  * WO-VT-3: общее меню действий «⋯» (карточка переменной, элемент панели
- * шаблонов). Кнопка ≥32px, меню — role=menu, Esc закрывает, клик мимо
- * закрывает, фокус возвращается на кнопку. Без новых зависимостей.
+ * шаблонов). WO-UI-27 доп.3: shadcn-DropdownMenu (позиционирование,
+ * клавиатура, aria из коробки) вместо самодельного absolute-меню.
  */
 export interface RowMenuItem {
   id: string
@@ -20,112 +26,32 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'select', id: string): void
 }>()
-
-const open = ref(false)
-const btnRef = ref<HTMLButtonElement | null>(null)
-const menuRef = ref<HTMLDivElement | null>(null)
-
-function onDocumentClick(e: MouseEvent) {
-  if (!open.value) return
-  const target = e.target as Node | null
-  if (menuRef.value?.contains(target)) return
-  if (btnRef.value?.contains(target)) return
-  close()
-}
-
-function toggle() {
-  open.value ? close() : openMenu()
-}
-
-async function openMenu() {
-  open.value = true
-  document.addEventListener('click', onDocumentClick)
-  await nextTick()
-  menuRef.value?.querySelector<HTMLButtonElement>('button')?.focus()
-}
-
-function close() {
-  open.value = false
-  document.removeEventListener('click', onDocumentClick)
-  btnRef.value?.focus()
-}
-
-function choose(id: string) {
-  // WO-VT-3 HOLD r1 (RT-3): фокус возвращается на кнопку ⋯ — клавиатурный
-  // пользователь не теряет место после выбора пункта.
-  open.value = false
-  document.removeEventListener('click', onDocumentClick)
-  emit('select', id)
-  btnRef.value?.focus()
-}
-
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    e.stopPropagation()
-    close()
-    return
-  }
-  // WO-VT-3 HOLD r1 (RT-4): стрелочная навигация в role=menu (ArrowUp/Down —
-  // по пунктам с зацикливанием, Home/End — к краям), как обещают
-  // role=menu/menuitem скринридеру.
-  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return
-  const items = [...(menuRef.value?.querySelectorAll<HTMLButtonElement>('button') ?? [])]
-  if (!items.length) return
-  e.preventDefault()
-  const idx = items.indexOf(document.activeElement as HTMLButtonElement)
-  if (e.key === 'Home' || (e.key === 'ArrowUp' && (idx < 0 || idx === 0))) {
-    ;(e.key === 'Home' ? items[0] : items[items.length - 1]).focus()
-  } else if (e.key === 'End' || (e.key === 'ArrowDown' && idx === items.length - 1)) {
-    ;(e.key === 'End' ? items[items.length - 1] : items[0]).focus()
-  } else if (e.key === 'ArrowDown') {
-    items[idx + 1].focus()
-  } else if (e.key === 'ArrowUp') {
-    items[idx - 1].focus()
-  }
-}
-
-onBeforeUnmount(() => {
-  document.removeEventListener('click', onDocumentClick)
-})
-
-defineExpose({ close })
 </script>
 
 <template>
-  <div class="relative shrink-0">
-    <button
-      ref="btnRef"
-      type="button"
-      data-testid="row-menu-button"
-      class="inline-flex h-8 w-8 items-center justify-center rounded-md text-lg leading-none text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"
-      aria-haspopup="menu"
-      :aria-expanded="open ? 'true' : 'false'"
-      :aria-label="label"
-      :title="label"
-      @click="toggle"
-      @keydown="onKeydown"
-    >
-      <span aria-hidden="true">⋯</span>
-    </button>
-    <div
-      v-if="open"
-      ref="menuRef"
-      role="menu"
-      class="absolute right-0 top-full z-30 mt-1 min-w-40 overflow-hidden rounded-md border border-border bg-popover py-1 shadow-lg"
-      @keydown="onKeydown"
-    >
-      <button
+  <DropdownMenu>
+    <DropdownMenuTrigger as-child>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        data-testid="row-menu-button"
+        :aria-label="label"
+        :title="label"
+      >
+        <span aria-hidden="true">⋯</span>
+      </Button>
+    </DropdownMenuTrigger>
+    <DropdownMenuContent align="end" class="min-w-40">
+      <DropdownMenuItem
         v-for="item in items"
         :key="item.id"
-        type="button"
-        role="menuitem"
         :data-testid="`row-menu-item-${item.id}`"
-        class="flex w-full items-center px-3 py-2 text-left text-sm hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
-        :class="item.danger ? 'text-red-500' : 'text-foreground'"
-        @click="choose(item.id)"
+        :class="item.danger ? 'text-red-500' : ''"
+        @select="emit('select', item.id)"
       >
         {{ item.label }}
-      </button>
-    </div>
-  </div>
+      </DropdownMenuItem>
+    </DropdownMenuContent>
+  </DropdownMenu>
 </template>

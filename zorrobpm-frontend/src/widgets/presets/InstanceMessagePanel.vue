@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import PresetPicker from './PresetPicker.vue'
 import { publishMessage } from '@/services/messagePublishService'
 import { errorMessage } from '@/shared/lib/utils'
@@ -76,19 +79,19 @@ async function publish() {
     <p class="text-xs text-muted-foreground">{{ t('presetWhyMessage') }}</p>
     <div class="grid grid-cols-1 min-[560px]:grid-cols-2 gap-3">
       <div>
-        <label for="msg-name" class="block text-xs font-medium mb-1">{{ t('presetMessageName') }}</label>
-        <input
+        <Label for="msg-name" class="block text-xs font-medium mb-1">{{ t('presetMessageName') }}</Label>
+        <Input
           id="msg-name"
           v-model="messageName"
-          class="w-full px-2 py-1.5 border border-input rounded text-sm font-mono"
+          class="w-full text-sm font-mono"
         />
       </div>
       <div>
-        <label for="msg-correlation" class="block text-xs font-medium mb-1">{{ t('presetCorrelationKey') }}</label>
-        <input
+        <Label for="msg-correlation" class="block text-xs font-medium mb-1">{{ t('presetCorrelationKey') }}</Label>
+        <Input
           id="msg-correlation"
           v-model="correlationKey"
-          class="w-full px-2 py-1.5 border border-input rounded text-sm font-mono"
+          class="w-full text-sm font-mono"
         />
       </div>
     </div>
@@ -107,15 +110,15 @@ async function publish() {
     <p v-else class="text-xs text-muted-foreground">{{ t('presetEnterMessageNameFirst') }}</p>
     <div class="flex items-center justify-end gap-2">
       <span v-if="result" class="text-xs font-mono text-muted-foreground truncate max-w-md">{{ result }}</span>
-      <button
+      <Button
         type="button"
-        class="px-4 py-1.5 text-sm bg-primary text-primary-foreground rounded-md hover:opacity-90 disabled:opacity-50"
+        class="px-4 py-1.5 text-sm"
         :disabled="!messageName.trim() || !pickerRef || askMissing.length > 0 || pickerInvalid || publishing"
         :title="askMissing.length ? t('presetFillAskFields', { fields: askMissing.join(', ') }) : ''"
         @click="publish"
       >
         {{ publishing ? t('loading') : t('presetPublish') }}
-      </button>
+      </Button>
     </div>
   </div>
 </template>

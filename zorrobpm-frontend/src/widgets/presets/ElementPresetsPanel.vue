@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { Button } from '@/components/ui/button'
 import PresetEditorDialog from './PresetEditorDialog.vue'
 import VariableRowMenu from './VariableRowMenu.vue'
 import type {
@@ -42,8 +43,6 @@ const loadError = ref<string | null>(null)
 const available = ref(true)
 const dialogOpen = ref(false)
 const editingId = ref<string | null>(null)
-const duplicateOf = ref<VariablePreset | null>(null)
-const confirmDeleteId = ref<string | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
 
 const title = computed(() => {
@@ -73,29 +72,17 @@ async function load() {
 
 function openCreate() {
   editingId.value = null
-  duplicateOf.value = null
   dialogOpen.value = true
 }
 
 function openEdit(p: VariablePreset) {
   editingId.value = p.id
-  duplicateOf.value = null
   dialogOpen.value = true
 }
 
-function openDuplicate(p: VariablePreset) {
-  editingId.value = p.id
-  duplicateOf.value = p
-  dialogOpen.value = true
-}
-
+// WO-UI-27 доп.1–2: удаление шаблона места — в один клик, без confirm;
+// защита — тихий undo-тост (пересоздание теми же данными).
 async function remove(p: VariablePreset) {
-  if (confirmDeleteId.value !== p.id) {
-    confirmDeleteId.value = p.id
-    return
-  }
-  confirmDeleteId.value = null
-  // WO-VT-3 Дополнение №2 п.4: «Отменить» в тосте — пересоздаём удалённое.
   const backup = {
     processDefinitionKey: p.processDefinitionKey,
     targetKind: p.targetKind,
@@ -127,7 +114,6 @@ function visibilityLabel(visibility: string): string {
 
 function onRowMenu(p: VariablePreset, id: string) {
   if (id === 'edit') openEdit(p)
-  else if (id === 'duplicate') openDuplicate(p)
   else if (id === 'export') void exportOne(p)
   else if (id === 'delete') void remove(p)
 }
@@ -144,13 +130,11 @@ async function toggleFavorite(p: VariablePreset) {
 function onSaved() {
   dialogOpen.value = false
   editingId.value = null
-  duplicateOf.value = null
   void load()
 }
 
 function onDeleted() {
   editingId.value = null
-  duplicateOf.value = null
   void load()
 }
 
@@ -245,19 +229,22 @@ defineExpose({ reload: load, available })
         data-testid="preset-card"
       >
         <div class="flex items-center gap-1.5 min-w-0">
-          <button
+          <Button
             type="button"
-            class="text-sm leading-none h-8 w-8 shrink-0 rounded hover:bg-muted"
+            variant="ghost"
+            size="icon"
+            class="text-sm leading-none shrink-0"
             :aria-label="t('presetFavorite')"
             :aria-pressed="p.favorite ? 'true' : 'false'"
             :title="t('presetFavorite')"
             @click="toggleFavorite(p)"
           >
             {{ p.favorite ? '★' : '☆' }}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            class="flex-1 min-w-0 text-left rounded px-1 py-1 hover:bg-muted"
+            variant="ghost"
+            class="flex-1 min-w-0 justify-start rounded px-1 py-1 h-auto"
             :title="p.name"
             @click="openEdit(p)"
           >
@@ -271,54 +258,48 @@ defineExpose({ reload: load, available })
               </span>
               <span>{{ t('presetVarCount', { n: p.variables?.length ?? 0 }) }}</span>
             </span>
-          </button>
+          </Button>
           <VariableRowMenu
             :label="t('presetRowMenu')"
             :items="[
               { id: 'edit', label: t('presetEdit') },
-              { id: 'duplicate', label: t('presetDuplicate') },
               { id: 'export', label: t('presetExport') },
-              { id: 'delete', label: confirmDeleteId === p.id ? t('presetConfirmDelete') : t('presetDelete'), danger: true },
+              { id: 'delete', label: t('presetDelete'), danger: true },
             ]"
             @select="onRowMenu(p, $event)"
           />
-        </div>
-        <div v-if="confirmDeleteId === p.id" class="mt-1 flex items-center gap-2 rounded border border-red-300 bg-red-50 dark:bg-red-950/30 px-2 py-1">
-          <span class="flex-1 text-[11px] text-red-600 dark:text-red-300">{{ t('presetDeleteRowConfirm') }}</span>
-          <button type="button" class="h-7 rounded bg-red-500 px-2 py-0.5 text-[11px] text-white hover:opacity-90" @click="remove(p)">
-            {{ t('presetDeleteRowYes') }}
-          </button>
-          <button type="button" class="h-7 rounded border border-border px-2 py-0.5 text-[11px] hover:bg-muted" @click="confirmDeleteId = null">
-            {{ t('cancel') }}
-          </button>
         </div>
       </li>
     </ul>
     <div v-else class="rounded-md border border-dashed border-border px-2 py-3 text-center">
       <p class="text-xs text-muted-foreground">{{ t('presetNoTemplatesHint') }}</p>
-      <button
+      <Button
         type="button"
-        class="mt-1.5 h-8 w-full rounded-md bg-primary px-2.5 py-1 text-xs text-primary-foreground hover:opacity-90"
+        size="sm"
+        class="mt-1.5 w-full text-xs"
         @click="openCreate"
       >
         {{ t('presetAddTemplate') }}
-      </button>
+      </Button>
     </div>
     <div v-if="presets.length" class="flex flex-wrap gap-1.5">
-      <button
+      <Button
         type="button"
-        class="h-8 flex-1 whitespace-nowrap rounded-md bg-primary px-2.5 py-1 text-xs text-primary-foreground hover:opacity-90"
+        size="sm"
+        class="flex-1 whitespace-nowrap text-xs"
         @click="openCreate"
       >
         {{ t('presetCreateNew') }}
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
-        class="h-8 whitespace-nowrap rounded-md border border-border px-2.5 py-1 text-xs hover:bg-muted"
+        variant="outline"
+        size="sm"
+        class="whitespace-nowrap text-xs"
         @click="triggerImport"
       >
         {{ t('presetImportFile') }}
-      </button>
+      </Button>
     </div>
     <input ref="fileInput" type="file" accept="application/json,.json" class="hidden" @change="onFileChosen" />
     <PresetEditorDialog
@@ -326,9 +307,7 @@ defineExpose({ reload: load, available })
       :process-key="processKey"
       :target-kind="targetKind"
       :target-ref="targetRef"
-      :initial-variables="duplicateOf?.variables ? duplicateOf.variables.map((x) => ({ ...x })) : []"
-      :preset-id="duplicateOf ? null : editingId"
-      :duplicate-name="duplicateOf ? t('presetCopySuffix', { name: duplicateOf.name }) : null"
+      :preset-id="editingId"
       @close="dialogOpen = false"
       @saved="onSaved"
       @deleted="onDeleted"
