@@ -48,8 +48,8 @@ import { useToast } from '@/composables/useToast'
  * интерполяция, без v-html).
  *
  * WO-UI-27 доп.3: все контролы — shadcn-vue примитивы (Button/Input/Label/
- * Textarea/Switch/Select/Dialog), голых <button>/<input>/<select>/<textarea>
- * и самодельных fixed-оверлеев нет (тест-страж shadcn-guard.ui27.test.ts).
+ * Textarea/Switch/Select/Dialog), голых кнопок/полей и самодельных
+ * fixed-оверлеев нет (тест-страж shadcn-guard.ui27.test.ts).
  */
 const props = defineProps<{
   modelValue: PresetVariable[]
