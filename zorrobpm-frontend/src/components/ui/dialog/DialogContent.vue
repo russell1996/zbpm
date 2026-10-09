@@ -12,9 +12,6 @@ import {
 } from "reka-ui"
 import { useI18n } from 'vue-i18n'
 import { cn } from '@/shared/lib/utils'
-import { useI18n } from 'vue-i18n'
-
-const { t } = useI18n()
 
 const { t } = useI18n()
 
