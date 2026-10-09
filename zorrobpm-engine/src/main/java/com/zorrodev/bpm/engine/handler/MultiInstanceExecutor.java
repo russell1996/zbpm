@@ -53,62 +53,13 @@ public class MultiInstanceExecutor {
     static final int MAX_MI_CARDINALITY = 1_000;
 
     /**
-     * WO-PERF-9 (B-8, full-scan): identifiers potentially referenced by a
-     * FEEL expression — a conservative SUPERSET of every name the Camunda
-     * FEEL engine could resolve from the variable bindings. Fetching exactly
-     * these rows evaluates byte-identically to the full-scope read: bindings
-     * are a map keyed by exact name and FEEL names are case-sensitive, so any
-     * name the engine can look up appears verbatim as an identifier token in
-     * the source. Unreferenceable spellings (string literals are stripped;
-     * comment/keyword tokens that remain) only add harmless extra fetches —
-     * they never remove a needed row. Dotted paths ({@code a.b}) contribute
-     * both parts (the root {@code a} is what the engine resolves). Unicode
-     * letters are included — FEEL identifiers are not ASCII-only.
+     * WO-PERF-9 (B-8, full-scan): идентификаторы, на которые может ссылаться
+     * FEEL-выражение — консервативный SUPERSET (см. {@link FeelVariableNames}).
+     * Оставлен как делегирующий алиас: на него ссылаются тесты WO-PERF-9
+     * ({@code MultiInstanceExecutorPinpointTest}); новая логика — в общем классе.
      */
     static Set<String> extractFeelVariableNames(String expression) {
-        Set<String> names = new LinkedHashSet<>();
-        if (expression == null || expression.isBlank()) {
-            return names;
-        }
-        StringBuilder cur = new StringBuilder();
-        boolean inString = false;
-        boolean escaped = false;
-        for (int i = 0; i < expression.length(); i++) {
-            char c = expression.charAt(i);
-            if (inString) {
-                if (escaped) {
-                    escaped = false;
-                } else if (c == '\\') {
-                    escaped = true;
-                } else if (c == '"') {
-                    inString = false;
-                }
-                continue;
-            }
-            if (c == '"') {
-                flushFeelToken(cur, names);
-                inString = true;
-                continue;
-            }
-            if (c == '_' || Character.isLetter(c)) {
-                cur.append(c);
-                continue;
-            }
-            if (cur.length() > 0 && Character.isDigit(c)) {
-                cur.append(c);
-                continue;
-            }
-            flushFeelToken(cur, names);
-        }
-        flushFeelToken(cur, names);
-        return names;
-    }
-
-    private static void flushFeelToken(StringBuilder cur, Set<String> names) {
-        if (cur.length() > 0) {
-            names.add(cur.toString());
-            cur.setLength(0);
-        }
+        return FeelVariableNames.extract(expression);
     }
 
     /**
@@ -299,14 +250,16 @@ public class MultiInstanceExecutor {
             // WO-C8-23: binding rides alongside (mirror of the UserTaskHandler path).
             String bindingType = element.getExtensions() != null && element.getExtensions().getUserTaskExtension() != null
                 ? element.getExtensions().getUserTaskExtension().getBindingType() : null;
-            String resolvedDueDate = elementSupport.resolveDueDate(processInstanceId, element);
-            String resolvedFollowUpDate = elementSupport.resolveFollowUpDate(processInstanceId, element);
+            String resolvedDueDate = elementSupport.resolveDueDateInScope(processInstanceId, activityId, element);
+            String resolvedFollowUpDate = elementSupport.resolveFollowUpDateInScope(processInstanceId, activityId, element);
             // WO-C8-30: same resolve-or-incident as the UserTaskHandler path (mirror it —
             // MI instances resolve independently; a broken expression halts this
             // instance with an incident instead of a silent default).
+            // WO-IN-4 раунд 2, О-1: priority — в scope инстанса, как assignee
+            // (root не видел =inputElement).
             final int resolvedPriority;
             try {
-                resolvedPriority = elementSupport.resolveUserTaskPriorityOrThrow(processInstanceId, element);
+                resolvedPriority = elementSupport.resolveUserTaskPriorityInScopeOrThrow(processInstanceId, activityId, element);
             } catch (com.zorrodev.bpm.engine.service.ScriptOverloadException e) {
                 // WO-ENG-24: см. cardinality-catch выше — перегрузка идёт до
                 // 503-хендлера, битый priorityDefinition — в инцидент ниже.
