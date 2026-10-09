@@ -1,8 +1,15 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
 import App from './App.vue'
 import { Toaster as ShadcnSonner } from '@/components/ui/sonner'
+import en from './locales/en.json'
+import ru from './locales/ru.json'
+import kz from './locales/kz.json'
+
+// WO-UI-26 кр.11: App.vue использует t() для панели ошибки — тесту нужен i18n.
+const i18n = createI18n({ legacy: false, locale: 'en', fallbackLocale: 'en', messages: { en, ru, kz } })
 
 // WO-UI-8: the app must render the shadcn-vue Sonner component (ui/sonner), NOT a bare
 // vue-sonner <Toaster>. The shadcn wrapper is what ties toasts to the design-system tokens.
@@ -17,7 +24,7 @@ vi.mock('vue-router', () => ({
 
 describe('App.vue notifications (WO-UI-8)', () => {
   it('criterion1: a fired toast renders with the shadcn design-system classes', async () => {
-    const wrapper = mount(App, { attachTo: document.body })
+    const wrapper = mount(App, { attachTo: document.body, global: { plugins: [i18n] } })
     // fire a toast through the real runtime API (the same one useToast wraps)
     const { toast } = await import('vue-sonner')
     toast.success('wo-ui-8')
@@ -40,7 +47,7 @@ describe('App.vue notifications (WO-UI-8)', () => {
   })
 
   it('criterion3: position/duration are forwarded, auto-dismiss toasts have no close button', () => {
-    const wrapper = mount(App)
+    const wrapper = mount(App, { global: { plugins: [i18n] } })
     const toaster = wrapper.findComponent(ShadcnSonner)
     expect(toaster.props('position')).toBe('top-center')
     expect(toaster.props('duration')).toBe(5000)
@@ -50,12 +57,12 @@ describe('App.vue notifications (WO-UI-8)', () => {
 
   it('criterion4: toast theme follows the app dark mode', async () => {
     mockUi.darkMode = false
-    let wrapper = mount(App)
+    let wrapper = mount(App, { global: { plugins: [i18n] } })
     expect(wrapper.findComponent(ShadcnSonner).props('theme')).toBe('light')
     wrapper.unmount()
 
     mockUi.darkMode = true
-    wrapper = mount(App)
+    wrapper = mount(App, { global: { plugins: [i18n] } })
     expect(wrapper.findComponent(ShadcnSonner).props('theme')).toBe('dark')
     wrapper.unmount()
     mockUi.darkMode = false

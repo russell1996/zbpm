@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
@@ -559,17 +559,35 @@ async function refreshLive() {
 // (дебаунс 250 мс, фолбэк-опрос 4 с, пауза в скрытой вкладке — всё внутри
 // композабла). Отписка — его же onUnmounted; route-смена id переинициализирует
 // через init/watch ниже, getInstanceId всегда читает актуальный стор.
-const { liveState } = useInstanceLiveUpdates({
+// WO-UI-26 Доп.3: терминальный инстанс — живые механизмы выключены
+// (isTerminal по completedAt), при running→completed — один finalRefresh.
+const { liveState, finalRefresh } = useInstanceLiveUpdates({
   getInstanceId: () => processStore.currentInstance?.id ?? null,
   refresh: refreshLive,
+  isTerminal: () => {
+    const pi = processStore.currentInstance
+    return !!pi && (!!pi.completedAt || processInstanceStatus(pi) === 'CANCELLED')
+  },
 })
 
-// WO-UI-25: ключи/классы индикатора — computed в script: сканер непереведённых
-// строк (WO-ACL-11 criterion 11) флагит строковые литералы-слова внутри {{ }}.
-const liveIndicatorKey = computed(() =>
-  liveState.value === 'live' ? 'liveConnected' : liveState.value === 'reconnecting' ? 'liveReconnecting' : 'livePolling')
-const liveDotClass = computed(() =>
-  liveState.value === 'live' ? 'bg-green-500' : liveState.value === 'reconnecting' ? 'bg-amber-500 animate-pulse' : 'bg-red-500')
+// WO-UI-26 Доп.3: завершение в открытой странице — финальный refresh и тишина.
+// События completed/cancelled ЭТОГО инстанса досылаем сюда отдельной подпиской
+// (основная подписка композабла терминальные уже игнорирует).
+import { subscribeRealtimeEvents as subscribeTerminalWatch } from '@/services/realtimeBus'
+const unsubscribeTerminalWatch = subscribeTerminalWatch((envelope) => {
+  const pi = processStore.currentInstance
+  if (!pi || envelope.processInstanceId !== pi.id) return
+  if (envelope.type === 'process-instance.completed' || envelope.type === 'process-instance.cancelled') {
+    finalRefresh()
+  }
+})
+onUnmounted(() => unsubscribeTerminalWatch())
+
+// WO-UI-26 Доп.7: индикатор канала УБРАН из шапки страницы целиком —
+// состояние транспорта не должно быть среди кнопок действий и отвлекать.
+// При сбое — одна нейтральная точка в глобальной шапке (ChannelStatusDot),
+// детали по клику. liveState ниже используется только внутренней логикой.
+void liveState
 
 // WO-UI-18 часть C: догрузка следующей страницы activities.
 // WO-UI-25 (критерий 8): номер страницы — в ?page= (переживает F5).
@@ -712,19 +730,9 @@ watch(activeTab, onTabChange)
               <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': processStore.loading || tabLoading }" />
               {{ t('refresh') }}
             </Button>
-            <!-- WO-UI-25 (критерий 3/5): индикатор живого канала. Ручная кнопка
-                 «Обновить» выше остаётся всегда; здесь только состояние. -->
-            <span
-              data-testid="live-indicator"
-              class="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground shrink-0"
-              :title="t(liveIndicatorKey)"
-            >
-              <span
-                class="h-1.5 w-1.5 rounded-full"
-                :class="liveDotClass"
-              />
-              {{ t(liveIndicatorKey) }}
-            </span>
+            <!-- WO-UI-26 Доп.7: индикатор канала убран из шапки страницы —
+                 состояние транспорта не среди кнопок действий. При сбое —
+                 нейтральная точка в глобальной шапке (ChannelStatusDot). -->
             <!-- WO-VT-3 раунд 2 (E-VT3-1): «Действия ▾» — отправка сообщения,
                  снимок переменных, ссылка на шаблоны процесса. -->
             <VariableRowMenu

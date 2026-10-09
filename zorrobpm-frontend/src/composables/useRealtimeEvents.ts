@@ -131,6 +131,36 @@ export function reconnectDelayMs(attempt: number): number {
   return Math.min(SSE_RECONNECT_BASE_DELAY_MS * 2 ** attempt, SSE_RECONNECT_MAX_DELAY_MS)
 }
 
+/**
+ * WO-UI-26 Доп.6 п.2/Доп.8: диагноз последней неудачи канала для панели
+ * диагностики (по клику на индикатор). `no-first-byte` — признак буферизации
+ * прокси (REL-70): соединение открыто, но ни одного байта за N секунд.
+ */
+export type ChannelErrorKind =
+  | 'none'
+  | 'http-401'
+  | 'http-403'
+  | 'http-429'
+  | 'http-other'
+  | 'network'
+  | 'timeout'
+  | 'no-first-byte'
+
+export interface ChannelDiagnostics {
+  /** Текущий диагноз (none = канал здоров или ещё не пробовали). */
+  lastError: ChannelErrorKind
+  /** HTTP-статус, если диагноз http-*. */
+  httpStatus: number | null
+  /** Время последней попытки соединения (ISO). */
+  lastAttemptAt: string | null
+  /** Число попыток (пересозданий EventSource) в текущей сессии вкладки. */
+  attempts: number
+  /** Последний известный Last-Event-ID (курсор catchup). */
+  lastEventId: string | null
+  /** Эта вкладка — лидер SSE (держит соединение). */
+  isLeader: boolean
+}
+
 export function useRealtimeEvents() {
   const isConnected = ref(false)
   const lastEventId = ref<string | null>(null)
@@ -153,6 +183,62 @@ export function useRealtimeEvents() {
   let eventSource: EventSource | null = null
   let reconnectAttempts = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  // WO-UI-26 Доп.6 п.2/Доп.8: диагностика канала для панели по клику.
+  const diagnostics = ref<ChannelDiagnostics>({
+    lastError: 'none',
+    httpStatus: null,
+    lastAttemptAt: null,
+    attempts: 0,
+    lastEventId: null,
+    isLeader: false,
+  })
+  // WO-UI-26 Доп.8: «нет первого байта» — соединение открыто, но onopen и
+  // события не приходят N секунд (буферизация прокси, REL-70). EventSource
+  // не отдаёт TTFB, поэтому меряем сами: таймер с момента construct.
+  let firstByteTimer: ReturnType<typeof setTimeout> | null = null
+  let firstByteSeen = false
+  const FIRST_BYTE_TIMEOUT_MS = 10000
+
+  function noteAttempt(): void {
+    diagnostics.value = {
+      ...diagnostics.value,
+      lastAttemptAt: new Date().toISOString(),
+      attempts: diagnostics.value.attempts + 1,
+      isLeader: isLeaderTab,
+    }
+  }
+
+  function noteError(kind: ChannelErrorKind, httpStatus: number | null = null): void {
+    // Первое наблюдение сильнее последующих повторов той же природы —
+    // но счётчик попыток и время всегда свежие (noteAttempt отдельно).
+    diagnostics.value = { ...diagnostics.value, lastError: kind, httpStatus }
+  }
+
+  function noteHealthy(): void {
+    diagnostics.value = { ...diagnostics.value, lastError: 'none', httpStatus: null }
+  }
+
+  function armFirstByteTimer(): void {
+    if (firstByteTimer) clearTimeout(firstByteTimer)
+    firstByteSeen = false
+    firstByteTimer = setTimeout(() => {
+      firstByteTimer = null
+      // onopen уже был (сервер ответил) — но ни одного события/heartbeat:
+      // поток висит без байтов = признак буферизации прокси (REL-70).
+      // CLOSED-источник уже ушёл в scheduleReconnect — не дублируем.
+      if (!firstByteSeen && eventSource && !isClosed(eventSource)) {
+        noteError('no-first-byte')
+      }
+    }, FIRST_BYTE_TIMEOUT_MS)
+  }
+
+  function markFirstByte(): void {
+    firstByteSeen = true
+    if (firstByteTimer) {
+      clearTimeout(firstByteTimer)
+      firstByteTimer = null
+    }
+  }
   // WO-UI-26 Доп.5 (кр.21): роль вкладки. Лидер держит EventSource и
   // ретранслирует события остальным через BroadcastChannel; follower только
   // слушает ретрансляцию (своего EventSource не открывает — экономия слотов
@@ -203,10 +289,12 @@ export function useRealtimeEvents() {
 
   function onNamedEvent(event: Event) {
     const msg = event as MessageEvent<string>
+    markFirstByte()
     // SSE id = серверный sequence-курсор (SseEventStreamService ставит
     // .id(sequence)); браузер перепошлёт его как Last-Event-ID при реконнекте.
     if (msg.lastEventId) {
       lastEventId.value = msg.lastEventId
+      diagnostics.value = { ...diagnostics.value, lastEventId: msg.lastEventId }
     }
     try {
       const envelope = JSON.parse(msg.data) as EventEnvelope
@@ -222,11 +310,28 @@ export function useRealtimeEvents() {
   }
 
   function openSource() {
+    noteAttempt()
     const source = new EventSource(buildStreamUrl(), { withCredentials: true })
     for (const type of REALTIME_EVENT_TYPES) {
       source.addEventListener(type, onNamedEvent)
     }
+    // Любой байт потока (событие ИЛИ heartbeat) гасит first-byte таймер.
+    // Именованные типы покрыты выше; heartbeat без имени ловим через
+    // message-фолбэк, если он есть у реализации.
+    try {
+      const anySource = source as EventSource & { onmessage?: ((e: Event) => void) | null }
+      const prev = anySource.onmessage
+      anySource.onmessage = (e: Event) => {
+        markFirstByte()
+        if (prev) prev(e)
+      }
+    } catch {
+      // ignore — heartbeat без имени просто не гасит таймер раньше onopen
+    }
+    armFirstByteTimer()
     source.onopen = () => {
+      markFirstByte()
+      noteHealthy()
       isConnected.value = true
       error.value = null
       sessionExpired.value = false
@@ -249,6 +354,11 @@ export function useRealtimeEvents() {
     source.onerror = () => {
       isConnected.value = false
       mirrorHealth({ isConnected: false })
+      // WO-UI-26 Доп.6 п.2: классифицируем обрыв для панели диагностики.
+      // Точный HTTP-код браузер не отдаёт (CLOSED без деталей): различаем
+      // «сеть» (transient, нативный автореконнект в полёте) и «закрыт»
+      // (сервер/прокси закрыл или не-200 — идёт refresh+пересоздание).
+      noteError('network')
       // WO-UI-26 Доп.5: обрыв видят и остальные вкладки.
       publishFanout({ kind: 'health', patch: { isConnected: false } })
       if (isClosed(source)) {
@@ -366,6 +476,10 @@ export function useRealtimeEvents() {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
     }
+    if (firstByteTimer) {
+      clearTimeout(firstByteTimer)
+      firstByteTimer = null
+    }
     reconnectAttempts = 0
     lastRefreshOk = null
     sessionExpired.value = false
@@ -407,5 +521,10 @@ export function useRealtimeEvents() {
     retryConnection,
     /** WO-UI-26 Доп.5: эта вкладка — лидер SSE (держит EventSource). */
     isLeaderTab: () => isLeaderTab,
+    /** WO-UI-26 Доп.6 п.2: диагноз канала для панели по клику. */
+    diagnostics,
+    /** Только для тестов: форсировать диагноз (RED-контроль панели). */
+    setChannelErrorForTest: (kind: ChannelErrorKind, httpStatus: number | null = null) =>
+      noteError(kind, httpStatus),
   }
 }
