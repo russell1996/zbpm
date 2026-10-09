@@ -161,6 +161,39 @@ export interface ChannelDiagnostics {
   isLeader: boolean
 }
 
+/**
+ * WO-UI-26 Н-3: курсор Last-Event-ID переживает смену лидера.
+ *
+ * Нативный EventSource шлёт Last-Event-ID сам, но только при реконнекте ТОГО
+ * ЖЕ соединения. Новый лидер открывает НОВЫЙ EventSource (заголовки ему не
+ * выставить — API EventSource их не поддерживает, а бэкенд читает курсор
+ * только из заголовка `Last-Event-ID`, без query-фолбэка) — разрыв между
+ * смертью старого лидера и connect нового серверным catchup не покрывает.
+ * Поэтому каждый экземпляр пишет последний id в sessionStorage (общий на
+ * вкладки одного origin): новый лидер подхватывает его в свой ref/диагностику
+ * (панель показывает непрерывность), а сам разрыв закрывается штатным
+ * запасным путём Доп.4 (один склеенный тихий refetch при реконнекте).
+ */
+const SSE_LAST_EVENT_STORAGE_KEY = 'zbpm.sse.lastEventId'
+
+function readStoredLastEventId(): string | null {
+  try {
+    if (typeof sessionStorage === 'undefined') return null
+    return sessionStorage.getItem(SSE_LAST_EVENT_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function storeLastEventId(id: string): void {
+  try {
+    if (typeof sessionStorage === 'undefined') return
+    sessionStorage.setItem(SSE_LAST_EVENT_STORAGE_KEY, id)
+  } catch {
+    // приватный режим/квота — курсор живёт только в ref, не фатально
+  }
+}
+
 export function useRealtimeEvents() {
   const isConnected = ref(false)
   const lastEventId = ref<string | null>(null)
@@ -214,6 +247,61 @@ export function useRealtimeEvents() {
     diagnostics.value = { ...diagnostics.value, lastError: kind, httpStatus }
   }
 
+  /**
+   * WO-UI-26 Б-2: handshake-probe при CLOSED-обрыве. Браузер НЕ отдаёт HTTP-код
+   * ошибки EventSource (onerror без деталей), поэтому при CLOSED делаем лёгкий
+   * `fetch` того же URL с той же кукой (`credentials: include`) и читаем
+   * СТАТУС, не тело: 401/403/429/прочий → точный диагноз панели (критерий 23);
+   * 200 → рукопожатие живо (обрыв transient — оставляем 'network'); обрыв
+   * fetch по нашему таймауту → 'timeout'; сетевая ошибка → 'network'.
+   * Тело при 200 не потребляем (сразу abort — слот maxClients не занимаем).
+   */
+  const HANDSHAKE_PROBE_TIMEOUT_MS = 5000
+
+  async function probeHandshakeStatus(): Promise<
+    { status: number } | { timeout: true } | { network: true }
+  > {
+    try {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), HANDSHAKE_PROBE_TIMEOUT_MS)
+      let resp: Response
+      try {
+        resp = await fetch(buildStreamUrl(), {
+          credentials: 'include',
+          headers: { Accept: 'text/event-stream' },
+          signal: ctrl.signal,
+        })
+      } finally {
+        clearTimeout(timer)
+      }
+      try {
+        await resp.body?.cancel()
+      } catch {
+        // ignore — тело не нужно, важен только статус
+      }
+      ctrl.abort()
+      return { status: resp.status }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') return { timeout: true }
+      return { network: true }
+    }
+  }
+
+  function classifyProbeResult(
+    result: { status: number } | { timeout: true } | { network: true },
+  ): void {
+    if ('status' in result) {
+      if (result.status === 401) noteError('http-401', 401)
+      else if (result.status === 403) noteError('http-403', 403)
+      else if (result.status === 429) noteError('http-429', 429)
+      else if (result.status !== 200) noteError('http-other', result.status)
+      // 200 — рукопожатие живо: оставляем уже выставленный 'network'.
+    } else if ('timeout' in result) {
+      noteError('timeout')
+    }
+    // network — уже выставлен вызывающим до probe, не трогаем.
+  }
+
   function noteHealthy(): void {
     diagnostics.value = { ...diagnostics.value, lastError: 'none', httpStatus: null }
   }
@@ -248,6 +336,9 @@ export function useRealtimeEvents() {
   let leadershipRelease: (() => void) | null = null
   let fanoutUnsubscribe: (() => void) | null = null
   let isLeaderTab = false
+  // WO-UI-26 Н-3: guard двойного connect + инвалидация протухших исходов.
+  let leadershipInflight = false
+  let connectGeneration = 0
 
   function dispatch(envelope: EventEnvelope) {
     // Каждый стор сам фильтрует по типу в своём handleEvent — дублирования
@@ -273,6 +364,10 @@ export function useRealtimeEvents() {
       // лидер уже применил событие у себя, follower применяет у себя.
       if (msg.envelope.sequence !== undefined) {
         lastEventId.value = String(msg.envelope.sequence)
+        // WO-UI-26 Н-3: follower тоже двигает общий курсор — при его повышении
+        // до лидера разрыв минимален.
+        storeLastEventId(String(msg.envelope.sequence))
+        diagnostics.value = { ...diagnostics.value, lastEventId: String(msg.envelope.sequence) }
       }
       dispatch(msg.envelope)
     } else if (msg.kind === 'health') {
@@ -297,6 +392,8 @@ export function useRealtimeEvents() {
     if (msg.lastEventId) {
       lastEventId.value = msg.lastEventId
       diagnostics.value = { ...diagnostics.value, lastEventId: msg.lastEventId }
+      // WO-UI-26 Н-3: курсор — в общее хранилище вкладок (смена лидера).
+      storeLastEventId(msg.lastEventId)
     }
     try {
       const envelope = JSON.parse(msg.data) as EventEnvelope
@@ -313,6 +410,17 @@ export function useRealtimeEvents() {
 
   function openSource() {
     noteAttempt()
+    // WO-UI-26 Н-3: новый лидер подхватывает курсор умершего (sessionStorage
+    // общий на вкладки): диагностика показывает непрерывность; сам разрыв —
+    // штатным запасным путём Доп.4 (нативный catchup здесь невозможен —
+    // соединение новое, см. шапку SSE_LAST_EVENT_STORAGE_KEY).
+    if (!lastEventId.value) {
+      const stored = readStoredLastEventId()
+      if (stored) {
+        lastEventId.value = stored
+        diagnostics.value = { ...diagnostics.value, lastEventId: stored }
+      }
+    }
     const source = new EventSource(buildStreamUrl(), { withCredentials: true })
     for (const type of REALTIME_EVENT_TYPES) {
       source.addEventListener(type, onNamedEvent)
@@ -366,6 +474,15 @@ export function useRealtimeEvents() {
       // WO-UI-26 Доп.5: обрыв видят и остальные вкладки.
       publishFanout({ kind: 'health', patch: { isConnected: false } })
       if (isClosed(source)) {
+        // WO-UI-26 Б-2: CLOSED — уточняем диагноз handshake-probe (тот же
+        // URL/кука): 401/403/429/http-other/timeout вместо слепого 'network'.
+        // Результат приходит асинхронно и только УТОЧНЯЕТ (более специфичный
+        // код побеждает 'network'; 200/сеть — оставляют 'network').
+        void probeHandshakeStatus().then((result) => {
+          // Не затираем диагноз, если канал уже поднялся новым соединением.
+          if (isConnected.value) return
+          classifyProbeResult(result)
+        })
         scheduleReconnect()
       } else {
         error.value = 'Realtime connection lost, retrying…'
@@ -426,6 +543,13 @@ export function useRealtimeEvents() {
     sessionExpired.value = true
     realtimeDown.value = false
     error.value = 'Session expired, please sign in again'
+    // WO-UI-26 Б-2: смерть сессии = 401-сигнал для панели (критерий 23).
+    // Не затираем более специфичный диагноз probe (403/429/http-other/
+    // timeout/no-first-byte) — только 'none'/'network' уточняем до http-401.
+    const cur = diagnostics.value.lastError
+    if (cur === 'none' || cur === 'network') {
+      noteError('http-401', 401)
+    }
     mirrorHealth({ realtimeDown: false, sessionExpired: true })
   }
 
@@ -451,7 +575,14 @@ export function useRealtimeEvents() {
   }
 
   function connect() {
-    if (eventSource || leadershipRelease || fanoutUnsubscribe) return
+    // WO-UI-26 Н-3: синхронный guard от двойного connect в одном тике
+    // (MainLayout remount): acquireSseLeadership резолвится асинхронно, и без
+    // флага два вызова оба уходили в locks.request — второй висел в очереди
+    // того же лока и после 1500 мс становился «follower» СВОЕГО ЖЕ таба
+    // (лишняя подписка + протухший onPromoted, открывающий второй EventSource
+    // после disconnect). Поколение `connectGeneration` инвалидирует протухшие
+    // исходы: disconnect между запросом и резолвом — игнор вместо openSource.
+    if (eventSource || leadershipRelease || fanoutUnsubscribe || leadershipInflight) return
     if (typeof EventSource === 'undefined') {
       // jsdom и подобные среды без SSE: сторам просто не прилетают
       // live-события, страница работает на явных fetch как раньше.
@@ -460,10 +591,25 @@ export function useRealtimeEvents() {
     // WO-UI-26 Доп.5 (кр.21): сначала роль. Лидер открывает EventSource,
     // follower только подписывается на ретрансляцию (своего EventSource нет —
     // экономия слотов HTTP/1.1). Без Web Locks — каждая вкладка сама, как раньше.
+    leadershipInflight = true
+    const myGeneration = ++connectGeneration
     void acquireSseLeadership(() => {
       // Лок отобран (вкладка закрывается / dispose): чистимся как follower.
       isLeaderTab = false
     }).then(({ leader, release, onPromoted }) => {
+      // WO-UI-26 Н-3: протухший исход (disconnect между запросом и резолвом) —
+      // молча отпускаем лок вместо openSource (иначе EventSource переживает
+      // disconnect и висит зомби). Лок нельзя «отменить» — только отпустить.
+      if (myGeneration !== connectGeneration) {
+        leadershipInflight = false
+        try {
+          release()
+        } catch {
+          // ignore
+        }
+        return
+      }
+      leadershipInflight = false
       if (leader) {
         isLeaderTab = true
         leadershipRelease = release
@@ -476,6 +622,8 @@ export function useRealtimeEvents() {
         // (ровно один новый; Last-Event-ID подхватит браузер сам) и
         // объявляет себя лидером. Без этого остальные вкладки протухали молча.
         onPromoted(() => {
+          // WO-UI-26 Н-3: повышение после disconnect — игнор (поколение ушло).
+          if (myGeneration !== connectGeneration) return
           if (fanoutUnsubscribe) {
             fanoutUnsubscribe()
             fanoutUnsubscribe = null
@@ -489,6 +637,10 @@ export function useRealtimeEvents() {
   }
 
   function disconnect() {
+    // WO-UI-26 Н-3: инвалидируем висящий запрос лидерства и протухшие
+    // onPromoted — их исход после этого игнорируется (лок отпускается).
+    connectGeneration++
+    leadershipInflight = false
     if (reconnectTimer) {
       clearTimeout(reconnectTimer)
       reconnectTimer = null
