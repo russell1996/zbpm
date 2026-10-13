@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-c840-callchild" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-C8-40, критерий 8: дочерний процесс для callActivity внутри MI-подпроцесса.
+       Одна user task: родитель ждёт её в каждом инстансе. -->
+  <bpmn:process id="c840-call-child" name="c840-call-child" isExecutable="true">
+    <bpmn:startEvent id="childStart">
+      <bpmn:outgoing>flowC1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowC1" sourceRef="childStart" targetRef="childWork" />
+    <bpmn:userTask id="childWork" name="childWork">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:assignmentDefinition assignee="=assigneeIn" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowC1</bpmn:incoming>
+      <bpmn:outgoing>flowC2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flowC2" sourceRef="childWork" targetRef="childEnd" />
+    <bpmn:endEvent id="childEnd">
+      <bpmn:incoming>flowC2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

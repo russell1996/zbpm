@@ -22,21 +22,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * WO-C8-34 (maintainer HOLD 2026-10-05, п.4) + WO-ENG-34 (maintainer's scope addition to it) —
- * «MI-подпроцесс на токене форка» / «парсер молча игнорирует
- * {@code multiInstanceLoopCharacteristics} на подпроцессе/call activity».
+ * WO-C8-34 (maintainer HOLD 2026-10-05, п.4) + WO-ENG-34 (maintainer's scope addition to it) +
+ * WO-C8-40 (D3: MI на embedded subProcess РЕАЛИЗОВАН — этот файл переписан под новый контракт).
  *
  * <p>The original statement of this test was a PROOF OF ABSENCE: "MI is not parsed onto a
  * container, therefore {@code EventTrigger.isMultiInstanceHost} can never be true for a container,
  * therefore the fork/MI concern does not exist today". True — and exactly the kind of silence
  * CR-08 is about: the author asked for three instances and got one, with no word.
  *
- * <p>WO-ENG-34 changes the CONTRACT, so this test now asserts the new one: the model is REFUSED AT
- * DEPLOY, with the container ids named, through the production deploy path
- * ({@code ProcessDefinitionService.addProcessDefinition} — what the REST endpoint and the batch
- * deployer call). The parser-level facts are kept below as the MECHANISM of that refusal (why the
- * gate fires at all), so the reasoning that closed the C8-34 question stays visible and stays
- * testable: if MI on containers is ever implemented, these assertions fail on purpose.
+ * <p>WO-ENG-34 changed the CONTRACT, so this test asserted refusal of both containers. WO-C8-40
+ * implements MI on the embedded subProcess (spawn/aggregation/join in
+ * {@code MultiInstanceExecutor}), so {@code miSub} now PARSES with the MI extension and DEPLOYS —
+ * the assertions below pin the new split contract: subProcess executes, callActivity is still
+ * refused at deploy (it would run once). If MI on subProcess is ever removed, the
+ * {@code multiInstanceOnSubProcess_ISAttached} assertion fails on purpose.
  *
  * <p>Per maintainer's instruction this is the ONE existing test of the WO that is rewritten; it is
  * rewritten in place (same file, same class name) rather than replaced by a new class, because it
@@ -53,10 +52,10 @@ class MultiInstanceOnContainersParseTest {
     @Autowired
     private BpmnParseService bpmnParseService;
 
-    // ─── the new contract: explicit refusal, naming the construct and the containers ───
+    // ─── the new contract: callActivity refused, subProcess executes (WO-C8-40 D3) ───
 
     @Test
-    void multiInstanceOnContainer_isRefusedAtDeployNamingBothContainers() {
+    void multiInstanceOnCallActivity_isRefusedAtDeployNamingIt() {
         assertThatThrownBy(() -> processDefinitionService.addProcessDefinition(bpmn()))
             .isInstanceOf(ApiException.class)
             .satisfies(ex -> {
@@ -65,13 +64,13 @@ class MultiInstanceOnContainersParseTest {
                     .as("the refusal must name the CONSTRUCT, not a generic parse error")
                     .isEqualTo("UNSUPPORTED_MULTI_INSTANCE_CONTAINER");
                 assertThat(api.getParams().get("elementIds")).asList()
-                    .containsExactly("miSub", "miCall");
+                    .containsExactly("miCall");
                 assertThat(api.getMessage()).contains("multiInstanceLoopCharacteristics");
             });
     }
 
     @Test
-    void multiInstanceOnContainer_isRecordedAsAFindingSoDeployCanRefuseIt() {
+    void multiInstanceOnCallActivity_isRecordedAsAFindingSoDeployCanRefuseIt() {
         // the mechanism half: parse does not THROW (a model stored by an earlier release must stay
         // loadable — this parser is also the runtime loader), it RECORDS the finding
         BpmnProcessDefinitionModel model = bpmnParseService.parse(bpmn());
@@ -80,22 +79,39 @@ class MultiInstanceOnContainersParseTest {
             .singleElement()
             .satisfies(finding -> {
                 assertThat(finding.code()).isEqualTo("UNSUPPORTED_MULTI_INSTANCE_CONTAINER");
-                assertThat(finding.elementIds()).containsExactly("miSub", "miCall");
+                assertThat(finding.elementIds()).containsExactly("miCall");
             });
     }
 
-    // ─── the parser facts that closed the C8-34 question (kept: they are why the gate fires) ───
+    @Test
+    void multiInstanceOnSubProcess_deploysThroughTheProductionPath() {
+        // the WO-C8-40 half of the split contract: the same fixture's MI subprocess is a
+        // SUPPORTED construct now — it must survive the very gate that refuses miCall.
+        // Deploy it alone (miCall removed) through the production deploy path.
+        String subOnly = bpmn().replaceAll(
+            "(?s)<bpmn:callActivity id=\"miCall\".*?</bpmn:callActivity>", "")
+            .replaceAll("<bpmn:sequenceFlow id=\"f2\".*?/>", "")
+            .replaceAll("<bpmn:sequenceFlow id=\"f3\".*?/>", "")
+            .replace("targetRef=\"miCall\"", "targetRef=\"miService\"")
+            .replace("sourceRef=\"miCall\"", "sourceRef=\"miService\"")
+            .replace("mi-on-container-parse", "mi-on-container-parse-subonly-" + UUID.randomUUID());
+        ProcessDefinition deployed = processDefinitionService.addProcessDefinition(subOnly);
+        assertThat(deployed.getKey()).isNotBlank();
+    }
+
+    // ─── the parser facts: subProcess attaches MI (WO-C8-40), callActivity does not ───
 
     @Test
-    void multiInstanceOnSubProcess_isNotAttachedToTheParsedElement() throws Exception {
+    void multiInstanceOnSubProcess_ISAttachedToTheParsedElement() throws Exception {
         BpmnProcessDefinitionModel bpmn = bpmnParseService.parse(bpmn());
 
         BpmnElementModel sub = bpmn.getElement("miSub");
         assertThat(sub).as("embedded subprocess parsed").isNotNull();
         assertThat(sub.getType()).isEqualTo(BpmnElementType.SUB_PROCESS);
         assertThat(sub.getExtensions() == null ? null : sub.getExtensions().getMultiInstanceExtension())
-            .as("MI on a subprocess is NOT parsed into the executable model")
-            .isNull();
+            .as("WO-C8-40: MI on an embedded subprocess IS parsed into the executable model "
+                + "(fails on purpose if MI-subprocess support is ever removed)")
+            .isNotNull();
     }
 
     @Test

@@ -206,6 +206,26 @@ curl -X POST https://<host>/user-tasks/$TASK/complete -H "$AUTH" -H 'Content-Typ
 # движок дошёл до service task send-email → ваш воркер выполнил → End.
 ```
 
+### Multi-instance subProcess (WO-C8-40)
+Параллельное согласование веток: `subProcess` с `multiInstanceLoopCharacteristics`
+(`inputCollection`/`inputElement`/`outputCollection`/`outputElement`, parallel и sequential)
+раскручивается в N инстансов — каждый со своим scope: `inputElement` и `loopCounter`
+привязаны в scope инстанса и видны всем элементам внутри (в т.ч. через ioMapping).
+По завершении инстансов `outputCollection` агрегируется позиционно (по `loopCounter`),
+дальше идёт исходящий поток после join. Пустая коллекция — 0 инстансов и `[]` сразу.
+- **Скоуп выходов внутри MI-подпроцесса (D1):** выходы ioMapping внутренних элементов
+  пишутся в scope инстанса подпроцесса, а не в root — lane-local переменные веток
+  (например, `taskUuid` в цепочке create → user task → decide) не перезаписывают друг
+  друга. Для НЕ-MI подпроцессов поведение прежнее (выходы в root).
+- **Что отвергается при деплое (D3, 400):** MI на `transaction` / `adHocSubProcess` /
+  `callActivity` (`UNSUPPORTED_MULTI_INSTANCE_CONTAINER`) и MI на `task` / `scriptTask` /
+  `manualTask` / `businessRuleTask` / `sendTask` / `receiveTask`
+  (`UNSUPPORTED_MULTI_INSTANCE_TASK`) — движок выполняет их один раз, поэтому модель
+  с таким маркером отклоняется, а не исполняется тихо. Поддержаны: `serviceTask`,
+  `userTask`, embedded `subProcess`.
+- **Отмена:** terminate/cancel процесса, interrupting boundary на MI-подпроцессе,
+  `terminate` end внутри инстанса снимают ВСЕ инстансы и их внутренние задачи/джобы/таймеры.
+
 ### Частые ошибки
 - **401/403 везде** — нет/просрочен токен; для машин `Authorization: Bearer zbpm_sk_…`. Читать может любой
   аутентифицированный; энфорс прав записи по владельцу ещё раскатывается (см. [Ограничения](#ограничения-и-замечания-по-проду)).

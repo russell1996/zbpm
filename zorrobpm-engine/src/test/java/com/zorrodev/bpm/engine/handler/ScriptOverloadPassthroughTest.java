@@ -48,6 +48,12 @@ class ScriptOverloadPassthroughTest {
     private static final ScriptOverloadException OVERLOAD =
         new ScriptOverloadException("Script execution rejected: pool overloaded (test), retry later", 5);
 
+
+    @SuppressWarnings("unchecked")
+    private static org.springframework.beans.factory.ObjectProvider<com.zorrodev.bpm.engine.handler.SubProcessHandler> subHandlerProvider() {
+        return mock(org.springframework.beans.factory.ObjectProvider.class);
+    }
+
     // --- MI cardinality: перегрузка inputCollection/cardinality-eval идёт наружу ---
 
     @Test
@@ -61,7 +67,8 @@ class ScriptOverloadPassthroughTest {
         MultiInstanceExecutor executor = new MultiInstanceExecutor(
             dbService, scriptService, mock(com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService.class),
             new tools.jackson.databind.ObjectMapper(), mock(com.zorrodev.bpm.engine.service.BpmnService.class),
-            mock(ElementSupport.class), mock(BoundaryScheduler.class), mock(FlowNavigator.class));
+            mock(ElementSupport.class), mock(BoundaryScheduler.class), mock(FlowNavigator.class),
+            subHandlerProvider());
 
         BpmnElementModel element = miElement("=input");
 
@@ -82,7 +89,8 @@ class ScriptOverloadPassthroughTest {
         MultiInstanceExecutor executor = new MultiInstanceExecutor(
             dbService, mock(ScriptService.class), mock(com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService.class),
             new tools.jackson.databind.ObjectMapper(), mock(com.zorrodev.bpm.engine.service.BpmnService.class),
-            elementSupport, mock(BoundaryScheduler.class), mock(FlowNavigator.class));
+            elementSupport, mock(BoundaryScheduler.class), mock(FlowNavigator.class),
+            subHandlerProvider());
 
         // userTask-ветка spawn path: priority резолвится на каждый инстанс.
         // Прямой вызов приватного spawn тяжёл — идём через публичный enter
@@ -94,7 +102,8 @@ class ScriptOverloadPassthroughTest {
         MultiInstanceExecutor executor2 = new MultiInstanceExecutor(
             dbService, scriptService, mock(com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService.class),
             new tools.jackson.databind.ObjectMapper(), mock(com.zorrodev.bpm.engine.service.BpmnService.class),
-            elementSupport, mock(BoundaryScheduler.class), mock(FlowNavigator.class));
+            elementSupport, mock(BoundaryScheduler.class), mock(FlowNavigator.class),
+            subHandlerProvider());
 
         BpmnElementModel element = miUserTaskElement("=3", true);
         assertThatThrownBy(() -> executor2.enter(UUID.randomUUID(), UUID.randomUUID(), element, mock(TokenExecutor.class)))
@@ -109,7 +118,10 @@ class ScriptOverloadPassthroughTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void userTaskPriority_overload_propagates_noIncident() {
         ElementSupport elementSupport = mock(ElementSupport.class);
-        when(elementSupport.resolveUserTaskPriorityOrThrow(any(), any())).thenThrow(OVERLOAD);
+        // WO-C8-40: createTaskRow резолвит приоритет в chain-контексте
+        // (resolveUserTaskPriorityInChainScopeOrThrow); старый root-метод
+        // прод больше не зовёт — стаб на нём был бы vacuous (strict-stubs).
+        when(elementSupport.resolveUserTaskPriorityInChainScopeOrThrow(any(), any(), any())).thenThrow(OVERLOAD);
         DBService dbService = mock(DBService.class);
         UserTaskHandler handler = new UserTaskHandler(dbService, elementSupport,
             mock(MultiInstanceExecutor.class), mock(BoundaryScheduler.class),
@@ -134,7 +146,8 @@ class ScriptOverloadPassthroughTest {
         ElementSupport elementSupport = mock(ElementSupport.class);
         com.zorrodev.bpm.contract.exception.EngineException broken =
             new com.zorrodev.bpm.contract.exception.EngineException("broken priorityDefinition");
-        when(elementSupport.resolveUserTaskPriorityOrThrow(any(), any())).thenThrow(broken);
+        // WO-C8-40: chain-контекст (см. выше).
+        when(elementSupport.resolveUserTaskPriorityInChainScopeOrThrow(any(), any(), any())).thenThrow(broken);
         DBService dbService = mock(DBService.class);
         UserTaskHandler handler = new UserTaskHandler(dbService, elementSupport,
             mock(MultiInstanceExecutor.class), mock(BoundaryScheduler.class),

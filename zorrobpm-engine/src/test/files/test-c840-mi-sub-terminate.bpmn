@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-c840-term" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-C8-40, критерий 8: terminate end внутри ОДНОГО инстанса MI-подпроцесса —
+       scope-отмена гасит соседние инстансы, поток продолжается с выхода контейнера. -->
+  <bpmn:process id="miSubProcessTerm" name="MI subprocess terminate" isExecutable="true">
+    <bpmn:startEvent id="startRepro">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowStart" sourceRef="startRepro" targetRef="subProbe" />
+    <bpmn:subProcess id="subProbe" name="probe">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=[&quot;a&quot;, &quot;b&quot;]" inputElement="item"
+                                     outputCollection="results" outputElement="=item" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>flowStart</bpmn:incoming>
+      <bpmn:outgoing>flowSubDone</bpmn:outgoing>
+      <bpmn:startEvent id="startProbe">
+        <bpmn:outgoing>flowProbeStart</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:userTask id="utProbe" name="probe">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=item" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowProbeStart</bpmn:incoming>
+        <bpmn:outgoing>flowProbeWorked</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="flowProbeStart" sourceRef="startProbe" targetRef="utProbe" />
+      <bpmn:sequenceFlow id="flowProbeWorked" sourceRef="utProbe" targetRef="termEnd" />
+      <bpmn:endEvent id="termEnd">
+        <bpmn:incoming>flowProbeWorked</bpmn:incoming>
+        <bpmn:terminateEventDefinition />
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="flowSubDone" sourceRef="subProbe" targetRef="endAfter" />
+    <bpmn:endEvent id="endAfter">
+      <bpmn:incoming>flowSubDone</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

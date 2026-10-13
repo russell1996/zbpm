@@ -45,6 +45,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @Service
 @Slf4j
@@ -351,6 +352,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     // container's own <bpmn:extensionElements> (same unmarshalled source string, no
                     // second parser, narrow child-only match — nested elements keep their own mappings).
                     attachSubProcessIoMapping(element, bpmn, subProcess.getId());
+                    attachSubProcessMultiInstance(element, bpmn, subProcess.getId());
                     element.setParentContainerElementId(null); // WO-C8-38: process-level element, no lexical scope
                     pd.addElement(element);
                 }
@@ -624,6 +626,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
         element.setExtensions(new BpmnElementExtensionModel());
         element.getExtensions().setSubProcessExtension(ext);
+        // WO-C8-40: MI на embedded subProcess выполняется движком (spawn/агрегация/join
+        // в MultiInstanceExecutor) — парсим маркер тем же attachMultiInstance, что задачи.
+        // transaction/adHoc/call остаются без привязки (сканер D3 их отвергает при деплое).
+        attachMultiInstance(element, sub.getMultiInstanceLoopCharacteristics());
         // WO-DIFF-1: the container's own ioMapping is attached by the CALLER
         // (attachSubProcessIoMapping at each toSubProcessElement call site — it holds
         // the raw source there), not here: this method is also reached from nested
@@ -685,6 +691,77 @@ public class BpmnParseServiceImpl implements BpmnParseService {
     }
 
     /**
+     * WO-C8-40: attaches the multi-instance marker of a plain subProcess written in the
+     * Camunda 8/Zeebe spelling — INSIDE the container's own direct
+     * {@code <bpmn:extensionElements>} block (consumer's approval-route v2; the standard
+     * BPMN 2.0 direct-child spelling is bound by the JAXB field in {@code toSubProcessElement}
+     * and already attached by the time this runs). No-op when the extension is already
+     * present (standard spelling) or the block carries no marker (non-MI container — zero
+     * behaviour change, criterion 4).
+     */
+    private void attachSubProcessMultiInstance(BpmnElementModel element, String rawBpmn, String containerId) {
+        if (element.getExtensions() != null
+            && element.getExtensions().getMultiInstanceExtension() != null) {
+            return;
+        }
+        BpmnMultiInstanceModel mi = readSubProcessMultiInstance(rawBpmn, containerId);
+        if (mi != null) {
+            attachMultiInstance(element, mi);
+        }
+    }
+
+    /**
+     * WO-C8-40: test-visible extraction step — raw XML of the container's own direct
+     * {@code <bpmn:extensionElements>} block → the {@code <bpmn:multiInstanceLoopCharacteristics>}
+     * element (null when the container has no such marker in that block). The parse reuses
+     * the SHARED {@link BpmnMultiInstanceModel} type (same as {@code attachMultiInstance}).
+     */
+    static BpmnMultiInstanceModel readSubProcessMultiInstance(String rawBpmn, String containerId) {
+        String block = subProcessExtensionBlock(
+            rawBpmn, containerId, Set.of("multiInstanceLoopCharacteristics"));
+        if (block == null) {
+            return null;
+        }
+        int open = block.indexOf("<bpmn:multiInstanceLoopCharacteristics");
+        if (open == -1) {
+            return null;
+        }
+        int headEnd = tagHeadEnd(block, open);
+        if (headEnd == -1) {
+            return null;
+        }
+        String elementXml;
+        if (block.charAt(headEnd - 1) == '/') {
+            elementXml = block.substring(open, headEnd);
+        } else {
+            // The marker's inner <bpmn:extensionElements> closes as </bpmn:extensionElements>,
+            // so the FIRST MI close tag is the marker's own (MI does not nest MI).
+            int close = block.indexOf("</bpmn:multiInstanceLoopCharacteristics>", headEnd);
+            if (close == -1) {
+                return null;
+            }
+            elementXml = block.substring(open, close + "</bpmn:multiInstanceLoopCharacteristics>".length());
+        }
+        try {
+            BpmnSubProcessMultiInstanceWrapper wrapper = SecureXmlParser.unmarshal(
+                "<subProcessMultiInstance xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\""
+                    + " xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">"
+                    + elementXml + "</subProcessMultiInstance>",
+                BpmnSubProcessMultiInstanceWrapper.class);
+            if (wrapper == null || wrapper.getMultiInstance() == null) {
+                log.warn("WO-C8-40: subProcess '{}' extension block parsed to no multi-instance marker — marker ignored",
+                    containerId);
+                return null;
+            }
+            return wrapper.getMultiInstance();
+        } catch (RuntimeException e) {
+            log.warn("WO-C8-40: subProcess '{}' extension block failed to parse multi-instance marker — marker ignored: {}",
+                containerId, e.toString());
+            return null;
+        }
+    }
+
+    /**
      * WO-DIFF-1: locates the DIRECT {@code <bpmn:extensionElements>} child block of
      * the {@code <bpmn:subProcess id="...">} (or {@code <bpmn:transaction>}) container
      * and returns it wrapped as a standalone {@code <extensionElements>} document
@@ -694,6 +771,20 @@ public class BpmnParseServiceImpl implements BpmnParseService {
      * are never picked up.
      */
     static String subProcessExtensionBlock(String rawBpmn, String containerId) {
+        // WO-DIFF-1 contract: the container's own block carries zeebe:* only —
+        // no <bpmn:* child at all. WO-C8-40's Camunda-8 MI spelling needs the
+        // marker allowed explicitly (3-arg overload below), never by default.
+        return subProcessExtensionBlock(rawBpmn, containerId, Set.of());
+    }
+
+    /**
+     * Same as {@link #subProcessExtensionBlock(String, String)}, but the block may additionally
+     * contain {@code <bpmn:{allowedBpmnChildren}>} children of the container itself. WO-C8-40:
+     * the Camunda 8/Zeebe dialect writes {@code <bpmn:multiInstanceLoopCharacteristics>} INSIDE
+     * the container's own {@code <bpmn:extensionElements>} (consumer's approval-route v2) — the
+     * plain guard would mistake it for a nested element's block and return null.
+     */
+    static String subProcessExtensionBlock(String rawBpmn, String containerId, Set<String> allowedBpmnChildren) {
         if (rawBpmn == null || containerId == null || containerId.isBlank()) {
             return null;
         }
@@ -741,26 +832,37 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             String closeTag = "</bpmn:" + tag + ">";
             from = close + closeTag.length();
             String body = rawBpmn.substring(headEnd + 1, close);
-            // The container's direct <bpmn:extensionElements> is the FIRST child element
-            // of the container (BPMN XSD sequence: extensionElements precedes incoming/
-            // outgoing/flow nodes). Skip only whitespace/comments — the first real child
-            // tag decides: extensionElements → own block; anything else → the container
+            // The container's direct <bpmn:extensionElements> precedes incoming/
+            // outgoing/flow nodes (BPMN XSD sequence), but NOT necessarily as the
+            // FIRST child: the XSD places <bpmn:documentation> (zero or more)
+            // BEFORE extensionElements, and real files use it (consumer's
+            // approval-route v2: documentation, then the MI-marker block). So skip
+            // whitespace/comments/documentation until the first real child tag
+            // decides: extensionElements → own block; anything else → the container
             // has none (a nested element's block can never be "the container's own").
             // NOTE: the tag may carry attributes or be self-closed across files, so the
             // match is prefix-based ("<bpmn:extensionElements" + '>' or whitespace),
             // never an exact "<bpmn:extensionElements>" literal.
             int cursor = 0;
-            while (cursor < body.length() && Character.isWhitespace(body.charAt(cursor))) {
-                cursor++;
-            }
-            if (body.startsWith("<!--", cursor)) {
-                int commentEnd = body.indexOf("-->", cursor + 4);
-                if (commentEnd == -1) {
-                    return null;
-                }
-                cursor = commentEnd + 3;
+            while (true) {
                 while (cursor < body.length() && Character.isWhitespace(body.charAt(cursor))) {
                     cursor++;
+                }
+                if (body.startsWith("<!--", cursor)) {
+                    int commentEnd = body.indexOf("-->", cursor + 4);
+                    if (commentEnd == -1) {
+                        return null;
+                    }
+                    cursor = commentEnd + 3;
+                } else if (body.startsWith("<bpmn:documentation", cursor)) {
+                    // tDocumentation is text-only (no nested tags) — skip to its close.
+                    int docEnd = body.indexOf("</bpmn:documentation>", cursor + 20);
+                    if (docEnd == -1) {
+                        return null;
+                    }
+                    cursor = docEnd + "</bpmn:documentation>".length();
+                } else {
+                    break;
                 }
             }
             String extPrefix = "<bpmn:extensionElements";
@@ -776,14 +878,19 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 return null;
             }
             int innerFrom = extHeadEnd + 1;
-            // The container's own block ends at ITS close tag. Inner content is
-            // zeebe:* (ioMapping/input/output, different prefix, never confused)
-            // plus whitespace/comments, so the close tag is searched directly.
+            // The container's own block ends at ITS close tag — the one PAIRED with
+            // this open, depth-aware: an allowed child (WO-C8-40 MI marker) carries
+            // a nested <bpmn:extensionElements> of its own, and a plain indexOf
+            // would cut the block at the INNER close (truncated element → parse
+            // failure). Inner content is otherwise zeebe:* (different prefix, never
+            // confused) plus whitespace/comments.
             // Narrowness guard after: the block must not smuggle a nested flow
             // node. Any other '<bpmn:' open before the close (outside a comment)
             // means this extension block belongs to a nested element, not to the
-            // container.
-            int extClose = body.indexOf("</bpmn:extensionElements>", innerFrom);
+            // container — except the names in allowedBpmnChildren, which the
+            // container's OWN block may carry (WO-C8-40: the Camunda-8-spelling
+            // multiInstanceLoopCharacteristics, see the 3-arg caller).
+            int extClose = matchingCloseTag(body, extHeadEnd, "extensionElements");
             if (extClose == -1) {
                 return null;
             }
@@ -802,7 +909,32 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                     probe = commentEnd + 3;
                     continue;
                 }
-                return null;
+                String allowedName = null;
+                for (String a : allowedBpmnChildren) {
+                    if (between.startsWith("<bpmn:" + a, nested)) {
+                        allowedName = a;
+                        break;
+                    }
+                }
+                if (allowedName == null) {
+                    return null;
+                }
+                // Skip the allowed element WHOLE (opaque): it carries nested
+                // <bpmn:*> of its own — the MI marker's inner
+                // <bpmn:extensionElements> — which must not be probed.
+                int allowedHeadEnd = tagHeadEnd(between, nested);
+                if (allowedHeadEnd == -1) {
+                    return null;
+                }
+                if (between.charAt(allowedHeadEnd - 1) == '/') {
+                    probe = allowedHeadEnd + 1;
+                } else {
+                    int allowedClose = matchingCloseTag(between, allowedHeadEnd, allowedName);
+                    if (allowedClose == -1) {
+                        return null;
+                    }
+                    probe = allowedClose + ("</bpmn:" + allowedName + ">").length();
+                }
             }
             return "<subProcessIoMapping xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\""
                 + " xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">"
@@ -1208,6 +1340,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 BpmnElementModel child = toSubProcessElement(nested, rawBpmn, pd, registry, messageNames, messageKeys);
                 child.setProcessDefinition(pd);
                 attachSubProcessIoMapping(child, rawBpmn, nested.getId());
+                attachSubProcessMultiInstance(child, rawBpmn, nested.getId());
                 child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
             }

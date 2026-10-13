@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-c840-escbnd" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:escalation id="bizEsc" name="Business Escalation" escalationCode="ESC-1" />
+  <!-- WO-C8-40, критерий 8 (доп. к красной команде r1, находка №4): interrupting escalation
+       boundary на MI-подпроцессе — escalation end внутри ОДНОГО инстанса гасит ВСЕ инстансы
+       и продолжает с границы. Код-близнец error-пути (test-c840-mi-sub-error-boundary.bpmn):
+       escalate-ветка ErrorEscalationThrower.throwEscalation обязана вести себя как error-ветка.
+       Форма escalation end — как в test-escalation-interrupting.bpmn (escalationRef на bpmn:escalation). -->
+  <bpmn:process id="miSubProcessEscBnd" name="MI subprocess escalation boundary" isExecutable="true">
+    <bpmn:startEvent id="startRepro">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowStart" sourceRef="startRepro" targetRef="subProbe" />
+    <bpmn:subProcess id="subProbe" name="probe">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=[&quot;a&quot;, &quot;b&quot;]" inputElement="item"
+                                     outputCollection="results" outputElement="=item" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>flowStart</bpmn:incoming>
+      <bpmn:outgoing>flowSubDone</bpmn:outgoing>
+      <bpmn:startEvent id="startProbe">
+        <bpmn:outgoing>flowProbeStart</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:userTask id="utProbe" name="probe">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=item" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowProbeStart</bpmn:incoming>
+        <bpmn:outgoing>flowProbeWorked</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="flowProbeStart" sourceRef="startProbe" targetRef="utProbe" />
+      <bpmn:sequenceFlow id="flowProbeWorked" sourceRef="utProbe" targetRef="svcWork" />
+      <bpmn:serviceTask id="svcWork" name="work">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="svcWork" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowProbeWorked</bpmn:incoming>
+        <bpmn:outgoing>flowWorkDone</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="flowWorkDone" sourceRef="svcWork" targetRef="escEnd" />
+      <bpmn:endEvent id="escEnd">
+        <bpmn:incoming>flowWorkDone</bpmn:incoming>
+        <bpmn:escalationEventDefinition id="escDefEnd" escalationRef="bizEsc" />
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="bndEsc" attachedToRef="subProbe">
+      <bpmn:outgoing>flowBndOut</bpmn:outgoing>
+      <bpmn:escalationEventDefinition id="escDefBnd" escalationRef="bizEsc" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="flowSubDone" sourceRef="subProbe" targetRef="endRepro" />
+    <bpmn:sequenceFlow id="flowBndOut" sourceRef="bndEsc" targetRef="endAfter" />
+    <bpmn:endEvent id="endRepro">
+      <bpmn:incoming>flowSubDone</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endAfter">
+      <bpmn:incoming>flowBndOut</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

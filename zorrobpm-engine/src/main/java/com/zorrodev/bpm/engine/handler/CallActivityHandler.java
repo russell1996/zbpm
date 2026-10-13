@@ -59,7 +59,7 @@ public class CallActivityHandler implements ElementHandler, TypedElementHandler 
         boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, bpmnElement);
         boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, bpmnElement);
 
-        List<ProcessVariable> variables = resolveChildInitialVariables(bpmnElement, processInstanceId);
+        List<ProcessVariable> variables = resolveChildInitialVariables(bpmnElement, processInstanceId, activityId);
 
         // null-safe: a malformed call activity (no zeebe:calledElement / processId) or an undeployed target
         // becomes an informative incident (a non-EngineException is parked by execute()'s handler) instead of
@@ -137,8 +137,15 @@ public class CallActivityHandler implements ElementHandler, TypedElementHandler 
      * variables); without mappings the child starts with an empty set. Deliberately NOT
      * {@code ElementSupport.applyIoMappings}: that writes into the CURRENT instance at activity scope,
      * while here we build the seed set for a child instance that does not exist yet.
+     *
+     * <p>WO-C8-40: the evaluation context is the caller chain (root + enclosing scopes + own,
+     * nearest-wins) — the same visibility the caller itself has — not root alone. A call activity
+     * inside an (MI-)subprocess maps its instance scope into the child (e.g. {@code =item} from
+     * the MI loop variable); a top-level call sees an empty chain, i.e. exactly the old root
+     * context. The default branch (propagate-all) is untouched.
      */
-    private List<ProcessVariable> resolveChildInitialVariables(BpmnElementModel bpmnElement, UUID processInstanceId) {
+    private List<ProcessVariable> resolveChildInitialVariables(BpmnElementModel bpmnElement, UUID processInstanceId,
+            UUID activityId) {
         Boolean propagateParent = Optional.ofNullable(bpmnElement.getExtensions())
             .map(BpmnElementExtensionModel::getCallActivityExtension)
             .map(CallActivityExtensionModel::getPropagateAllParentVariables)
@@ -154,7 +161,7 @@ public class CallActivityHandler implements ElementHandler, TypedElementHandler 
             log.info("{}: propagateAllParentVariables=false without Input mappings — child starts with no variables", processInstanceId);
             return List.of();
         }
-        List<ProcessVariable> parentVariables = dbService.getVariables(processInstanceId);
+        List<ProcessVariable> parentVariables = elementSupport.visibleVariables(processInstanceId, activityId);
         List<ProcessVariable> seed = new ArrayList<>();
         for (IoMappingExtensionModel.Mapping mapping : inputs) {
             ProcessVariable result = elementSupport.evaluateMapping(mapping, parentVariables);

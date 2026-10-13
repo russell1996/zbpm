@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-c840-nested" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-C8-40, критерий 8 (вложенность):
+       - обычный вложенный subProcess внутри MI-подпроцесса видит цикл-переменную
+         внешнего инстанса (assignee =activity через цепочку скоупов);
+       - MI-user-task внутри MI-подпроцесса: inputCollection ссылается на поле
+         внешнего inputElement (=activity.members), assignee внутреннего MI —
+         внутренняя цикл-переменная (=member).
+       items извне: [{who:"a", members:["a1","a2"]}, {who:"b", members:["b1"]}] -->
+  <bpmn:process id="miSubProcessNested" name="MI subprocess nested" isExecutable="true">
+    <bpmn:startEvent id="startRepro">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowStart" sourceRef="startRepro" targetRef="subOuter" />
+    <bpmn:subProcess id="subOuter" name="outer">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=items" inputElement="activity"
+                                     outputCollection="results" outputElement="=activity.who" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>flowStart</bpmn:incoming>
+      <bpmn:outgoing>flowSubDone</bpmn:outgoing>
+      <bpmn:startEvent id="startOuter">
+        <bpmn:outgoing>flowOuterStart</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:subProcess id="subInner" name="inner plain">
+        <bpmn:incoming>flowOuterStart</bpmn:incoming>
+        <bpmn:outgoing>flowInnerDone</bpmn:outgoing>
+        <bpmn:startEvent id="startInner">
+          <bpmn:outgoing>flowInnerStart</bpmn:outgoing>
+        </bpmn:startEvent>
+        <bpmn:userTask id="utInner" name="inner">
+          <bpmn:extensionElements>
+            <zeebe:userTask />
+            <zeebe:assignmentDefinition assignee="=activity.who" />
+          </bpmn:extensionElements>
+          <bpmn:incoming>flowInnerStart</bpmn:incoming>
+          <bpmn:outgoing>flowInnerEnd</bpmn:outgoing>
+        </bpmn:userTask>
+        <bpmn:sequenceFlow id="flowInnerStart" sourceRef="startInner" targetRef="utInner" />
+        <bpmn:sequenceFlow id="flowInnerEnd" sourceRef="utInner" targetRef="endInner" />
+        <bpmn:endEvent id="endInner">
+          <bpmn:incoming>flowInnerEnd</bpmn:incoming>
+        </bpmn:endEvent>
+      </bpmn:subProcess>
+      <!-- WO-C8-40: обычный вложенный subProcess — на ПРЯМОМ пути (оба внешних
+           инстанса проходят subInner/utInner: assignee =activity.who проверяет
+           chain-контекст). За ним шлюз: default — сразу к endOuter, условная
+           ветка (root-переменная routeToMi = true — условия шлюзов оцениваются
+           в ROOT-контексте, pre-existing) — во внутренний MI miTaskA. -->
+      <bpmn:exclusiveGateway id="gwInner" name="inner branch" default="flowToInner">
+        <bpmn:incoming>flowInnerDone</bpmn:incoming>
+        <bpmn:outgoing>flowToMi</bpmn:outgoing>
+        <bpmn:outgoing>flowToInner</bpmn:outgoing>
+      </bpmn:exclusiveGateway>
+      <bpmn:sequenceFlow id="flowOuterStart" sourceRef="startOuter" targetRef="subInner" />
+      <bpmn:sequenceFlow id="flowInnerDone" sourceRef="subInner" targetRef="gwInner" />
+      <bpmn:sequenceFlow id="flowToInner" sourceRef="gwInner" targetRef="endOuter" />
+      <bpmn:sequenceFlow id="flowToMi" sourceRef="gwInner" targetRef="miTaskA">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">=routeToMi</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:userTask id="miTaskA" name="inner-mi-a">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=member" />
+        </bpmn:extensionElements>
+        <!-- WO-C8-40: внутренний MI БЕЗ outputCollection/outputElement: агрегация
+             пишет только root (setJsonElementAt — NULL-скоуп в SQL), и два внешних
+             инстанса перезаписали бы общий membersDone (тот же класс гонки, что D1).
+             Скоупированная агрегация внутреннего MI — отдельный follow-up WO (V7),
+             здесь проверяются скоупы привязки (критерий 8), а не сборка.
+             inputCollection — ИЗ ВНЕШНЕГО scope (=activity.members цикл-переменной
+             внешнего инстанса): без chain-контекста входа (старый rootVariablesFor)
+             коллекция не резолвится и спавнится 0 инстансов. Batch/join-ключи
+             внешнего и внутреннего MI разделены скоупом batch-переменной
+             (innermost scope токена входа), иначе join-ключи "miTaskA::batch"
+             двух внешних инстансов коллидировали бы (класс WO-ENG-7). -->
+        <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+          <bpmn:extensionElements>
+            <zeebe:loopCharacteristics inputCollection="=activity.members" inputElement="member" />
+          </bpmn:extensionElements>
+        </bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:incoming>flowToMi</bpmn:incoming>
+        <bpmn:outgoing>flowToMiDone</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="flowToMiDone" sourceRef="miTaskA" targetRef="endOuter" />
+
+      <bpmn:endEvent id="endOuter">
+        <bpmn:incoming>flowInnerDone</bpmn:incoming>
+        <bpmn:incoming>flowToMiDone</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="flowSubDone" sourceRef="subOuter" targetRef="endRepro" />
+    <bpmn:endEvent id="endRepro">
+      <bpmn:incoming>flowSubDone</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

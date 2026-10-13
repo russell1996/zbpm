@@ -39,6 +39,10 @@ public class FlowNavigator {
     private final tools.jackson.databind.ObjectMapper objectMapper;
     // WO-C8-33: scope-job (re)issue on inner completions (job-worker mode only).
     private final ServiceTaskEnqueueService serviceTaskEnqueueService;
+    // WO-C8-40: MI-хвост выхода инстанса подпроцесса (агрегация + join).
+    // Лениво через provider: MultiInstanceExecutor тянет SubProcessHandler
+    // (тот зависит от MultiInstanceExecutor) — прямая пара дала бы Spring-цикл.
+    private final org.springframework.beans.factory.ObjectProvider<MultiInstanceExecutor> multiInstanceExecutorProvider;
 
     /**
      * Follows every outgoing sequence flow of {@code element} unconditionally and executes the
@@ -501,6 +505,44 @@ public class FlowNavigator {
     }
 
     /**
+     * WO-C8-40: MI-хвост завершения инстанса подпроцесса — зеркало task-хвостов
+     * в {@code CompletionService} (агрегация → дроп локалов → join). Вызывается
+     * из {@link #finishBranch} на scope-ветке, когда контейнер — MI-подпроцесс.
+     *
+     * @return true, если инстансов ещё ждут (хвост завершён, продолжать нечего);
+     *         false, если join собран и вызывающий продолжает историческим путём
+     *         (выходы контейнера → complete → исходящий поток один раз).
+     */
+    private boolean finishMiSubProcessInstance(UUID processInstanceId, Token endToken,
+            BpmnProcessDefinitionModel bpmn, BpmnElementModel subProcessElement,
+            UUID subProcessActivityId, TokenExecutor executor) {
+        MultiInstanceExecutor mi = multiInstanceExecutorProvider.getIfAvailable();
+        if (mi == null) {
+            throw new com.zorrodev.bpm.contract.exception.EngineException("Multi-instance "
+                + subProcessElement.getId() + ": MultiInstanceExecutor bean unavailable for instance completion");
+        }
+        // WO-REL-59/63: join сериализуется с отменой инстанса — тот же порядок
+        // instance-lock ПЕРВЫМ, что task-хвосты (lockInstanceFirst).
+        Activity scope = elementSupport.lockInstanceFirst(subProcessActivityId);
+        if (scope == null || (scope.getStatus()
+                != com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED
+            && scope.getStatus() != com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS)) {
+            // Гонка с отменой: scope уже снят — тихий no-op, как stale-пути WO-REL-30.
+            log.info("{}/{}: MI subprocess instance {} already {} — completion swallowed by cancel",
+                processInstanceId, endToken.getId(), subProcessActivityId,
+                scope == null ? "gone" : scope.getStatus());
+            return true;
+        }
+        mi.aggregateMultiInstanceOutput(processInstanceId, subProcessActivityId, subProcessElement);
+        dbService.deleteVariables(processInstanceId, subProcessActivityId);
+        // Токен MI-инстансов — входящий токен контейнера (спaун шёл на нём):
+        // join bookkeeping идёт на нём же, complete строки — ниже у вызывающего.
+        UUID miToken = scope.getToken();
+        return !mi.multiInstanceContinue(processInstanceId, miToken, subProcessElement,
+            subProcessActivityId, executor);
+    }
+
+    /**
      * Ends the current branch at an end event: if the token is inside an embedded subprocess scope,
      * completes the container and continues the parent token from the subprocess's outgoing flows;
      * otherwise consumes the current token and checks whether any active activities remain in the
@@ -558,6 +600,24 @@ public class FlowNavigator {
             // SUB_PROCESS only: event sub-processes share the parse but stay runtime-inert
             // here (different trigger/lifecycle path), and ad-hoc containers have their
             // own completion machinery below. No ioMapping → zero behaviour change.
+            //
+            // WO-C8-40: MI-инстанс подпроцесса идёт MI-хвостом (агрегация outputElement
+            // в outputCollection по слоту loopCounter + join через multiInstanceContinue
+            // под instance-lock; исходящий поток — только после join, sequential спавнит
+            // следующий инстанс). Локалы инстанса дропаются, как у task-хвостов.
+            // НЕ-MI подпроцесс — историческим путём ниже без изменений (критерий 4).
+            if (subProcessElement != null
+                && subProcessElement.getType() == BpmnElementType.SUB_PROCESS
+                && subProcessElement.getExtensions() != null
+                && subProcessElement.getExtensions().getMultiInstanceExtension() != null) {
+                if (finishMiSubProcessInstance(processInstanceId, endToken, bpmn,
+                    subProcessElement, subProcessActivityId, executor)) {
+                    return;
+                }
+                // multiInstanceContinue сказал «join собран»: хвост ниже доводит
+                // контейнер (выходы в root по WO-DIFF-1 — контейнерные маппинги
+                // НЕ-MI-семантики) и продолжает исходящий поток один раз.
+            }
             if (subProcessElement != null
                 && subProcessElement.getType() == BpmnElementType.SUB_PROCESS
                 && subProcessElement.getExtensions() != null

@@ -40,23 +40,39 @@ public final class BpmnSupportScanner {
     private static final String BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL";
 
     /**
-     * The element kinds multi-instance is NOT implemented for. MI binds only on serviceTask and
-     * userTask (both call {@code attachMultiInstance}); on a container it parses into an ordinary
-     * single-instance element and runs once — the silent semantic change this WO closes.
+     * The element kinds multi-instance is NOT implemented for. MI binds on serviceTask,
+     * userTask (both call {@code attachMultiInstance}) and — с WO-C8-40 — на embedded
+     * {@code subProcess} (MI-вход/агрегация/join в {@code MultiInstanceExecutor}).
+     * На {@code transaction}/{@code adHocSubProcess}/{@code callActivity} маркер
+     * парсится в обычный одноинстансный элемент и выполняется один раз — тихое
+     * изменение семантики, которое этот WO закрывает отказом при деплое.
      *
-     * <p>Deliberately a positive list, not "everything except serviceTask/userTask": maintainer scoped this
-     * WO to containers, and widening it silently would change behaviour for element kinds this WO
-     * never characterised. WO-ENG-34 раунд 10 уточнил формулировку: прежняя версия этого javadoc
-     * обосновывала сужение тем, что multiInstanceLoopCharacteristics встречается на
-     * {@code intermediateThrowEvent}, — но {@code tThrowEvent} по XSD не содержит
-     * {@code loopCharacteristics}, так что такого документа не бывает. Реальное основание: MI не
-     * привязывается ещё на шести видах activity ({@code task}, {@code scriptTask},
-     * {@code manualTask}, {@code businessRuleTask}, {@code sendTask}, {@code receiveTask}), и они
-     * сохраняют сегодняшнее поведение; решение о расширении списка — за maintainer (рецензия Н-2,
-     * follow-up WO).
+     * <p>Deliberately a positive list, not "everything except serviceTask/userTask/subProcess":
+     * maintainer scoped this WO to containers, and widening it silently would change behaviour for
+     * element kinds this WO never characterised. WO-ENG-34 раунд 10 уточнил формулировку:
+     * прежняя версия этого javadoc обосновывала сужение тем, что
+     * multiInstanceLoopCharacteristics встречается на {@code intermediateThrowEvent}, — но
+     * {@code tThrowEvent} по XSD не содержит {@code loopCharacteristics}, так что такого
+     * документа не бывает. Реальное основание: MI не привязывается ещё на шести видах
+     * activity ({@code task}, {@code scriptTask}, {@code manualTask},
+     * {@code businessRuleTask}, {@code sendTask}, {@code receiveTask}), и они сохраняют
+     * сегодняшнее поведение; решение о расширении списка — за maintainer (рецензия Н-2, follow-up WO).
      */
     private static final Set<String> MULTI_INSTANCE_UNSUPPORTED_HOSTS =
-        Set.of("subProcess", "transaction", "adHocSubProcess", "callActivity");
+        Set.of("transaction", "adHocSubProcess", "callActivity");
+
+    /**
+     * WO-C8-40 (D3): the activity kinds multi-instance is NOT implemented for. MI binds only on
+     * serviceTask, userTask (both call {@code attachMultiInstance}) and embedded subProcess
+     * (WO-C8-40: {@code toSubProcessElement} + {@code MultiInstanceExecutor}). On these six kinds
+     * the marker is dropped at parse (no {@code attachMultiInstance} call on their model, no MI
+     * branch in {@code SyncTaskHandler}) and the activity runs ONCE — the same silent semantic
+     * change rule 4 closes for containers, closed here with its own code so neither message can
+     * ever be false about the case it is shown for (a task author told to "move the marker onto
+     * a task inside the container" would be nonsense — the ENG-34 distinction principle, rule 4b).
+     */
+    private static final Set<String> MULTI_INSTANCE_UNSUPPORTED_TASKS =
+        Set.of("task", "scriptTask", "manualTask", "businessRuleTask", "sendTask", "receiveTask");
 
     /**
      * The BPMN 2.0 flow-node kinds — the only elements a {@code sequenceFlow} may legally point at,
@@ -150,21 +166,39 @@ public final class BpmnSupportScanner {
                 UnsupportedBpmnConstructCodes.UNSUPPORTED_STANDARD_LOOP, standardLoops,
                 "Standard loop (standardLoopCharacteristics) is not supported: "
                     + String.join(", ", standardLoops) + " would run once instead of looping. "
-                    + "Use multi-instance (supported on serviceTask/userTask) or model the repetition "
+                    + "Use multi-instance (supported on serviceTask/userTask/subProcess) or model the repetition "
                     + "explicitly."));
         }
 
         // 4. multi-instance on a container: parsed into an ordinary single-instance container.
+        // WO-C8-40: embedded subProcess ИСКЛЮЧЁН — MI на нём выполняется движком
+        // (MultiInstanceExecutor), тишины нет, отказ не нужен. transaction/adHoc/call
+        // по-прежнему выполняются один раз молча — их отказ остаётся.
         List<String> multiInstanceOnContainers = idsOfElementsWithLoopKind(
             document, MULTI_INSTANCE_UNSUPPORTED_HOSTS, LoopKind.MULTI_INSTANCE);
         if (!multiInstanceOnContainers.isEmpty()) {
             findings.add(new UnsupportedBpmnConstruct(
                 UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_CONTAINER,
                 multiInstanceOnContainers,
-                "Multi-instance is supported on serviceTask and userTask only: "
+                "Multi-instance is supported on serviceTask, userTask and embedded subProcess: "
                     + String.join(", ", multiInstanceOnContainers) + " carries "
                     + "multiInstanceLoopCharacteristics on a container and would run once. "
                     + "Move the multi-instance marker onto a task inside the container, or drop it."));
+        }
+
+        // 4c. WO-C8-40 (D3): multi-instance on an activity kind that does not implement it.
+        // Readable spelling only (rule 4b owns the unreadable one — the two findings stay disjoint,
+        // same as rules 4/4b): the parser drops the marker and the activity runs once.
+        List<String> multiInstanceOnTasks = idsOfElementsWithReadableLoopKind(
+            document, MULTI_INSTANCE_UNSUPPORTED_TASKS, LoopKind.MULTI_INSTANCE);
+        if (!multiInstanceOnTasks.isEmpty()) {
+            findings.add(new UnsupportedBpmnConstruct(
+                UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_TASK,
+                multiInstanceOnTasks,
+                "Multi-instance is supported on serviceTask, userTask and embedded subProcess only: "
+                    + String.join(", ", multiInstanceOnTasks) + " carries "
+                    + "multiInstanceLoopCharacteristics on an activity kind that runs it once. "
+                    + "Move the multi-instance marker onto a serviceTask, userTask or subProcess, or drop it."));
         }
 
         // 4b. multi-instance written as the schema head element <loopCharacteristics xsi:type=…>,
@@ -220,7 +254,20 @@ public final class BpmnSupportScanner {
                                                            Set<String> hostNames,
                                                            LoopKind kind) {
         Set<String> seen = new LinkedHashSet<>();
-        collectLoopMarkers(document.getDocumentElement(), seen, hostNames, kind);
+        collectLoopMarkers(document.getDocumentElement(), seen, hostNames, kind, false);
+        return List.copyOf(seen);
+    }
+
+    /**
+     * WO-C8-40 (D3, rule 4c): same as {@link #idsOfElementsWithLoopKind}, but only the READABLE
+     * (direct-element) spelling counts — the head-element spelling is owned by rule 4b, and the
+     * two findings must never overlap on one host (the ENG-34 4/4b disjointness principle).
+     */
+    private static List<String> idsOfElementsWithReadableLoopKind(Document document,
+                                                                  Set<String> hostNames,
+                                                                  LoopKind kind) {
+        Set<String> seen = new LinkedHashSet<>();
+        collectLoopMarkers(document.getDocumentElement(), seen, hostNames, kind, true);
         return List.copyOf(seen);
     }
 
@@ -253,7 +300,7 @@ public final class BpmnSupportScanner {
     }
 
     private static void collectLoopMarkers(Element element, Set<String> ids, Set<String> hostNames,
-                                           LoopKind kind) {
+                                            LoopKind kind, boolean readableOnly) {
         NodeList children = element.getChildNodes();
         for (int i = 0; i < children.getLength(); i++) {
             Node child = children.item(i);
@@ -261,13 +308,15 @@ public final class BpmnSupportScanner {
                 continue;
             }
             Element childElement = (Element) child;
+            LoopMarker marker = loopMarkerOf(childElement);
             if ((hostNames == null || hostNames.contains(localName(childElement)))
-                && loopMarkerOf(childElement).kind() == kind) {
+                && marker.kind() == kind
+                && (!readableOnly || !marker.unreadableSpelling())) {
                 ids.add(label(childElement));
             }
             // recurse: sub-process/transaction/adHoc bodies carry the same element kinds, and a
             // construct hidden inside a nested container must be found exactly like a top-level one
-            collectLoopMarkers(childElement, ids, hostNames, kind);
+            collectLoopMarkers(childElement, ids, hostNames, kind, readableOnly);
         }
     }
 
@@ -562,6 +611,7 @@ public final class BpmnSupportScanner {
         UnsupportedBpmnConstructCodes.UNSUPPORTED_COMPLEX_GATEWAY,
         UnsupportedBpmnConstructCodes.UNSUPPORTED_STANDARD_LOOP,
         UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_CONTAINER,
+        UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_TASK,
         UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE,
         UnsupportedBpmnConstructCodes.UNSUPPORTED_CONDITIONAL_START_EVENT,
         UnsupportedBpmnConstructCodes.UNRESOLVED_SEQUENCE_FLOW_REF);
@@ -572,6 +622,13 @@ public final class BpmnSupportScanner {
         public static final String UNSUPPORTED_COMPLEX_GATEWAY = "UNSUPPORTED_COMPLEX_GATEWAY";
         public static final String UNSUPPORTED_STANDARD_LOOP = "UNSUPPORTED_STANDARD_LOOP";
         public static final String UNSUPPORTED_MULTI_INSTANCE_CONTAINER = "UNSUPPORTED_MULTI_INSTANCE_CONTAINER";
+        /**
+         * WO-C8-40 (D3, rule 4c): multi-instance on an activity kind that does not implement it
+         * (task/scriptTask/manualTask/businessRuleTask/sendTask/receiveTask), readable spelling.
+         * Separate from {@link #UNSUPPORTED_MULTI_INSTANCE_CONTAINER} so neither code's message can
+         * ever be false about the case it is now shown for (the ENG-34 distinction principle).
+         */
+        public static final String UNSUPPORTED_MULTI_INSTANCE_TASK = "UNSUPPORTED_MULTI_INSTANCE_TASK";
         /**
          * WO-ENG-34 раунд 10: multi-instance written as {@code <loopCharacteristics xsi:type=…>}.
          * Separate from {@link #UNSUPPORTED_MULTI_INSTANCE_CONTAINER} so neither code's message can

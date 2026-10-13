@@ -398,12 +398,14 @@ public class CompletionService {
 
         log.info("{}/{}: Completing {}: {}/{}", processInstanceId, token, BpmnElementType.USER_TASK, userTaskId, bpmnElement.getId());
 
-        elementSupport.applyIoMappings(processInstanceId, userTaskId, bpmnElement, false);
+        // WO-C8-40 (D1): выходы внутренних элементов MI-подпроцесса — в скоуп
+        // инстанса (lane-local без перекрёста); вне MI — прежняя запись в root.
+        elementSupport.applyScopedOutputs(processInstanceId, userTaskId, bpmnElement, bpmn);
         // multi-instance: append this instance's outputElement to the outputCollection before its scoped
         // variables (inputElement/loopCounter) are dropped
         multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, userTaskId, bpmnElement);
         dbService.deleteVariables(processInstanceId, userTaskId);
-        if (multiInstanceExecutor.isMultiInstance(bpmnElement) && !multiInstanceExecutor.multiInstanceContinue(processInstanceId, token, bpmnElement, userTaskId)) {
+        if (multiInstanceExecutor.isMultiInstance(bpmnElement) && !multiInstanceExecutor.multiInstanceContinue(processInstanceId, token, bpmnElement, userTaskId, executor)) {
             // more instances are outstanding (parallel) or the next one was just started (sequential)
             return;
         }
@@ -1326,14 +1328,16 @@ public class CompletionService {
         // перегрузка пула) сюда НЕ попадает — он EngineException-наследник и
         // идёт прежним путём (контейнерный retry, см. ServiceTaskCompleteListener).
         try {
-            elementSupport.applyIoMappings(processInstanceId, serviceTaskId, bpmnElement, false);
+            // WO-C8-40 (D1): как в user-task хвосте — выходы внутри MI-подпроцесса
+            // в скоуп инстанса, вне — в root без изменений.
+            elementSupport.applyScopedOutputs(processInstanceId, serviceTaskId, bpmnElement, bpmn);
         } catch (com.zorrodev.bpm.engine.service.FeelEvaluationException e) {
             incidentService.raiseIncident(processInstanceId, tokenId, bpmnElement, e);
             return;
         }
         multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, serviceTaskId, bpmnElement);
         dbService.deleteVariables(processInstanceId, serviceTaskId);
-        if (multiInstanceExecutor.isMultiInstance(bpmnElement) && !multiInstanceExecutor.multiInstanceContinue(processInstanceId, tokenId, bpmnElement, serviceTaskId)) {
+        if (multiInstanceExecutor.isMultiInstance(bpmnElement) && !multiInstanceExecutor.multiInstanceContinue(processInstanceId, tokenId, bpmnElement, serviceTaskId, executor)) {
             // more instances are outstanding (parallel) or the next one was just started (sequential)
             return;
         }

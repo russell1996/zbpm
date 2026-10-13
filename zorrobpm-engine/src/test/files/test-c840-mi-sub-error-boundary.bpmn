@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-c840-errbnd" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:error id="bizErr" name="Business Error" errorCode="E-1" />
+  <!-- WO-C8-40, критерий 8: interrupting error boundary на MI-подпроцессе —
+       ошибка внутри ОДНОГО инстанса гасит ВСЕ инстансы и продолжает с границы.
+       Форма error end — как в test-error-boundary.bpmn (errorRef на bpmn:error). -->
+  <bpmn:process id="miSubProcessErrBnd" name="MI subprocess error boundary" isExecutable="true">
+    <bpmn:startEvent id="startRepro">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowStart" sourceRef="startRepro" targetRef="subProbe" />
+    <bpmn:subProcess id="subProbe" name="probe">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=[&quot;a&quot;, &quot;b&quot;]" inputElement="item"
+                                     outputCollection="results" outputElement="=item" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>flowStart</bpmn:incoming>
+      <bpmn:outgoing>flowSubDone</bpmn:outgoing>
+      <bpmn:startEvent id="startProbe">
+        <bpmn:outgoing>flowProbeStart</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:userTask id="utProbe" name="probe">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=item" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowProbeStart</bpmn:incoming>
+        <bpmn:outgoing>flowProbeWorked</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="flowProbeStart" sourceRef="startProbe" targetRef="utProbe" />
+      <bpmn:sequenceFlow id="flowProbeWorked" sourceRef="utProbe" targetRef="svcThrow" />
+      <bpmn:serviceTask id="svcThrow" name="throw">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="svcThrow" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowProbeWorked</bpmn:incoming>
+        <bpmn:outgoing>flowThrowDone</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="flowThrowDone" sourceRef="svcThrow" targetRef="endProbe" />
+      <bpmn:endEvent id="endProbe">
+        <bpmn:incoming>flowThrowDone</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="bndErr" attachedToRef="subProbe">
+      <bpmn:outgoing>flowBndOut</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="errDef2" errorRef="bizErr" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="flowSubDone" sourceRef="subProbe" targetRef="endRepro" />
+    <bpmn:sequenceFlow id="flowBndOut" sourceRef="bndErr" targetRef="endAfter" />
+    <bpmn:endEvent id="endRepro">
+      <bpmn:incoming>flowSubDone</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="endAfter">
+      <bpmn:incoming>flowBndOut</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
