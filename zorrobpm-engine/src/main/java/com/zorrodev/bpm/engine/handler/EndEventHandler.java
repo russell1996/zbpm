@@ -108,21 +108,62 @@ public class EndEventHandler {
             UUID scopeActivityId = token.getScopeActivityId();
             List<Activity> inScope = elementSupport.filterActivitiesInScope(
                 ctx.processInstanceId(), dbService.getActiveActivities(ctx.processInstanceId()), scopeActivityId);
+            // WO-C8-40: terminate внутри инстанса MI-подпроцесса гасит СОСЕДНИЕ
+            // инстансы того же MI-контейнера и их внутренности: иначе сосед висит
+            // CREATED без scope, процесс RUNNING навсегда (критерий 8).
+            // Соседи — строки с тем же bpmnElementId в инстансе (входящий токен
+            // контейнера у них общий); внутренности каждого соседа — по его
+            // scope-цепочке (тот же обход, что ElementSupport.enclosingScopeChain).
+            // Обычный scope — как раньше, плюс MI-соседи.
+            Activity scope = dbService.getActivity(scopeActivityId);
+            inScope = new java.util.ArrayList<>(inScope);
+            BpmnElementModel scopeElement = scope == null ? null
+                : bpmn.getElement(scope.getBpmnElementId());
+            if (scopeElement != null && scopeElement.getExtensions() != null
+                && scopeElement.getExtensions().getMultiInstanceExtension() != null) {
+                UUID containerToken = scope.getToken();
+                java.util.Set<UUID> miScopes = new java.util.HashSet<>();
+                miScopes.add(scopeActivityId);
+                for (Activity sibling : dbService.getActiveActivities(ctx.processInstanceId())) {
+                    if (sibling == null || sibling.getId() == null
+                        || sibling.getId().equals(scopeActivityId)) {
+                        continue;
+                    }
+                    if (scope.getBpmnElementId().equals(sibling.getBpmnElementId())
+                        && containerToken != null && containerToken.equals(sibling.getToken())) {
+                        miScopes.add(sibling.getId());
+                        if (inScope.stream().noneMatch(a -> a.getId().equals(sibling.getId()))) {
+                            inScope.add(sibling);
+                        }
+                    }
+                }
+                // Внутренности соседних инстансов: scope-цепочка содержит их контейнер.
+                for (Activity live : dbService.getActiveActivities(ctx.processInstanceId())) {
+                    if (live == null || live.getId() == null
+                        || inScope.stream().anyMatch(a -> a.getId().equals(live.getId()))) {
+                        continue;
+                    }
+                    if (chainContains(ctx.processInstanceId(), live, miScopes)
+                        && !live.getId().equals(scopeActivityId)
+                        && !miScopes.contains(live.getId())) {
+                        inScope.add(live);
+                    }
+                }
+            }
             for (Activity active : inScope) {
                 dbService.cancelActivity(active.getId());
             }
-            Activity scope = dbService.getActivity(scopeActivityId);
             // WO-C8-37 (C37-4): terminate closes the scope like a normal exit —
             // the container's output mappings are promoted to root and the scope
             // locals are dropped, exactly as FlowNavigator.finishBranch does
             // (same gate: SUB_PROCESS with an ioMapping extension; otherwise zero
             // behaviour change). Row status stays CANCELLED (terminate semantic).
-            BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
-            if (scopeElement != null
-                && scopeElement.getType() == BpmnElementType.SUB_PROCESS
-                && scopeElement.getExtensions() != null
-                && scopeElement.getExtensions().getIoMappingExtension() != null) {
-                elementSupport.applyIoMappings(ctx.processInstanceId(), scopeActivityId, scopeElement, false);
+            BpmnElementModel scopeContainerElement = bpmn.getElement(scope.getBpmnElementId());
+            if (scopeContainerElement != null
+                && scopeContainerElement.getType() == BpmnElementType.SUB_PROCESS
+                && scopeContainerElement.getExtensions() != null
+                && scopeContainerElement.getExtensions().getIoMappingExtension() != null) {
+                elementSupport.applyIoMappings(ctx.processInstanceId(), scopeActivityId, scopeContainerElement, false);
                 dbService.deleteVariables(ctx.processInstanceId(), scopeActivityId);
             }
             dbService.cancelActivity(scopeActivityId);
@@ -131,7 +172,25 @@ public class EndEventHandler {
             // хвост отменённого потока, контрпример раунда 4).
             dbService.clearParallelGatewayArrivalsInJoins(ctx.processInstanceId(),
                 scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, scope.getBpmnElementId()));
-            flowNavigator.proceedToOutgoing(ctx.processInstanceId(), token.getParentId(), bpmn, scopeElement, ctx.executor());
+            flowNavigator.proceedToOutgoing(ctx.processInstanceId(), token.getParentId(), bpmn, scopeContainerElement, ctx.executor());
+        }
+
+        /**
+         * WO-C8-40: scope-цепочка активности содержит один из scopeId — тот же обход
+         * токенов, что {@code ElementSupport.enclosingScopeChain} (локальная копия:
+         * этот класс — static handler-группа без ElementSupport в части конструкторов).
+         */
+        private boolean chainContains(UUID processInstanceId, Activity activity, java.util.Set<UUID> scopeIds) {
+            java.util.Optional<Token> token = dbService.findToken(activity.getToken());
+            while (token.isPresent()) {
+                UUID scopeId = token.get().getScopeActivityId();
+                if (scopeId != null && scopeIds.contains(scopeId)) {
+                    return true;
+                }
+                UUID parentId = token.get().getParentId();
+                token = parentId == null ? java.util.Optional.empty() : dbService.findToken(parentId);
+            }
+            return false;
         }
     }
 

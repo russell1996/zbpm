@@ -1,0 +1,514 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_0agny33" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.51.1" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.9.0">
+  <bpmn:process id="testApprovalRouteProcess" name="Маршрут согласования" isExecutable="true">
+    <bpmn:startEvent id="startRoute" name="Запуск маршрута">
+      <bpmn:outgoing>flowRouteStarted</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="srvRouteCreate" name="Создать маршрут">
+      <bpmn:documentation>POST /api/v1/route — создать маршрут.
+Вход: createdEmployeeId. Выход: routeUuid. authorEmployeeId в POST не уходит, остаётся переменной процесса для карточки решения автора.
+Каталог: ant-approval-api.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvRouteCreate" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=createdEmployeeId" target="createdEmployeeId" />
+          <zeebe:output source="=routeUuid" target="routeUuid" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowRouteStarted</bpmn:incoming>
+      <bpmn:outgoing>flowRouteCreated</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="srvRouteSourceMapLink" name="Привязать версию источника">
+      <bpmn:documentation>POST /api/v1/route/source-map — привязать версию источника к маршруту.
+Вход: routeUuid, processTypeId, sourceUuid, sourceVersion. Плоская форма каталога: routeUuid передаётся в теле, не в пути.
+Выходов нет: ответ повторяет routeUuid, работает слияние ответа по умолчанию.
+Каталог: ant-approval-api.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvRouteSourceMapLink" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=routeUuid" target="routeUuid" />
+          <zeebe:input source="=processTypeId" target="processTypeId" />
+          <zeebe:input source="=sourceUuid" target="sourceUuid" />
+          <zeebe:input source="=sourceVersion" target="sourceVersion" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowRouteSourceMap</bpmn:incoming>
+      <bpmn:outgoing>flowRouteSourceMapped</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="srvStageCreateWithActivities" name="Создать этапы с шагами">
+      <bpmn:documentation>POST /api/v1/stage/with-activities — создать этапы со шагами одним вызовом, одной транзакцией.
+Вход: routeUuid, stages. Элемент stages: {stageSequence, modeId, validFrom?, validTo?, activities[]}, без routeStageUuid — его обогащает воркер.
+Выходов нет: работает слияние ответа по умолчанию, ответ перезаписывает входную переменную stages.
+Читать так: stages[i].uuid — uuid этапа; stages[i].modeId — 1 SEQUENTIAL или 2 PARALLEL; stages[i].activities[j].uuid — uuid шага, .employeeId — исполнитель, .employeeEmail/.employeeLastName/.employeeFirstName/.employeeMiddleName — слепок для рассылки, .activitySequence — порядок в этапе, .activityTypeId, .sourceVersion.
+Каталог: ant-approval-api.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvStageCreateWithActivities" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=routeUuid" target="routeUuid" />
+          <zeebe:input source="=stages" target="stages" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowRouteStagesCreate</bpmn:incoming>
+      <bpmn:outgoing>flowRouteStagesCreated</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="srvResourceCreate" name="Создать ресурс">
+      <bpmn:documentation>PUT /api/resource/v1/resources — upsert ресурса «согласование» по ключу (processId, processObjectId); повторный вызов не плодит дубль.
+Вход: processId = 4, processObjectId = routeUuid, processObjectNumber = routeUuid, subjectRu, subjectKz, authorEmployeeId = createdEmployeeId.
+Выход: resourceUuid — uuid ресурса из ответа.
+Каталог: ant-resource-api.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvResourceCreate" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=4" target="processId" />
+          <zeebe:input source="=routeUuid" target="processObjectId" />
+          <zeebe:input source="=routeUuid" target="processObjectNumber" />
+          <zeebe:input source="=&#34;Согласование&#34;" target="subjectRu" />
+          <zeebe:input source="=&#34;Келісу&#34;" target="subjectKz" />
+          <zeebe:input source="=createdEmployeeId" target="authorEmployeeId" />
+          <zeebe:output source="=resourceUuid" target="resourceUuid" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowRouteResourceCreate</bpmn:incoming>
+      <bpmn:outgoing>flowRouteResourceCreated</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="srvRouteStart" name="Запустить маршрут">
+      <bpmn:documentation>PATCH /api/v1/route/{uuid} — перевести маршрут в 2 IN_PROGRESS.
+Вход: routeUuid, statusId = 2, started = now() с приведением зоны к +05:00.
+Выходов нет: ответ повторяет uuid маршрута.
+Каталог: ant-approval-api.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvRouteStart" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=routeUuid" target="routeUuid" />
+          <zeebe:input source="=2" target="statusId" />
+          <zeebe:input source="=now()" target="started" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowRouteSetupJoined</bpmn:incoming>
+      <bpmn:outgoing>flowRoutePollingStarted</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="flowRouteStarted" sourceRef="startRoute" targetRef="srvRouteCreate" />
+    <bpmn:endEvent id="endRouteCompleted" name="Маршрут согласован">
+      <bpmn:documentation>Конец процесса. Ничего не пишет в БД: статус маршрута задан PATCH-кубиком — 4 APPROVED либо 3 PAUSED в srvRouteChangeStatus.</bpmn:documentation>
+      <bpmn:incoming>flowRouteApproved</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowRouteCompleted" name="CLOSED" sourceRef="gwRouteActivityOpen" targetRef="gwRouteVerdict">
+      <bpmn:documentation>Открытых шагов не осталось (hasOpen = false, default-ветка) — дальше вердикт: APPROVED в конец «Маршрут согласован», REJECTED в конец «Маршрут отклонён».</bpmn:documentation>
+    </bpmn:sequenceFlow>
+    <bpmn:exclusiveGateway id="gwRouteActivityOpen" name="Есть открытые шаги?" default="flowRouteCompleted">
+      <bpmn:incoming>flowRoutePolled</bpmn:incoming>
+      <bpmn:outgoing>flowRouteActivityOpen</bpmn:outgoing>
+      <bpmn:outgoing>flowRouteCompleted</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:subProcess id="subWorkTaskStage" name="Исполнение рабочего задания">
+      <bpmn:documentation>Один инстанс — один исполнитель открытого шага: inputElement activity из activities (опрос srvRouteOpenActivities), режим — PARALLEL.
+Каждый инстанс: создание задания на своего исполнителя → сдача решения исполнителем → запись решения в БД в момент сдачи, без ожидания остальных исполнителей этапа.
+Join инстансов собирает решения в decisions (массив {decision, comment}) — дальше gwWorkTaskDecision: REJECTED — маршрут на паузу, APPROVED — возврат на srvRouteOpenActivities.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <bpmn:multiInstanceLoopCharacteristics>
+          <bpmn:extensionElements>
+            <zeebe:loopCharacteristics inputCollection="=activities" inputElement="activity" outputCollection="decisions" outputElement="{&#34;decision&#34;: decision, &#34;comment&#34;: comment}" />
+          </bpmn:extensionElements>
+        </bpmn:multiInstanceLoopCharacteristics>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowRouteActivityOpen</bpmn:incoming>
+      <bpmn:outgoing>flowWorkTasksDecided</bpmn:outgoing>
+      <bpmn:startEvent id="startWorkTask" name="Начало исполнения">
+        <bpmn:outgoing>flowWorkTaskStageStart</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flowWorkTaskStageStart" sourceRef="startWorkTask" targetRef="srvWorkTaskCreate" />
+      <bpmn:serviceTask id="srvWorkTaskCreate" name="Создать рабочее задание">
+        <bpmn:documentation>POST /api/resource/v1/tasks — рабочее задание на открытый шаг этапа.
+Один инстанс subWorkTaskStage — один исполнитель: assigneeEmployeeId — activity.employeeId, задание создаётся на ресурсе согласования.
+Вход: resourceUuid (из srvResourceCreate), assigneeEmployeeId, taskSubjectRu, taskSubjectKz, taskTypeId, taskStatusId.
+Выход: taskUuid — задание инстанса; его сдаст исполнитель этого же инстанса.
+Каталог: ant-resource-api.</bpmn:documentation>
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="srvWorkTaskCreate" retries="3" />
+          <zeebe:ioMapping>
+            <zeebe:input source="=resourceUuid" target="resourceUuid" />
+            <zeebe:input source="=activity.employeeId" target="assigneeEmployeeId" />
+            <zeebe:input source="=&#34;Согласование&#34;" target="taskSubjectRu" />
+            <zeebe:input source="=&#34;Келісу&#34;" target="taskSubjectKz" />
+            <zeebe:input source="=1" target="taskTypeId" />
+            <zeebe:input source="=1" target="taskStatusId" />
+            <zeebe:output source="=taskUuid" target="taskUuid" />
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowWorkTaskStageStart</bpmn:incoming>
+        <bpmn:outgoing>flowWorkTaskCreated</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:userTask id="utWorkTaskExecute" name="Сдача решения исполнителем">
+        <bpmn:documentation>External form KT Docs: инбокс рабочего задания (routeUuid, taskSubjectRu/Kz).
+Один инстанс subWorkTaskStage — один исполнитель: assignee — activity.employeeId, своё задание — taskUuid (uuid задания в ant-resource-api, по нему сторонняя система открывает таску) либо BFF GET /tasks?processObjectNumber=&lt;routeUuid&gt; (список текущего пользователя).
+Исполнитель только сдаёт решение: complete {decision: APPROVED/REJECTED, comment — обязателен при REJECTED}.
+Решение пишет в БД сразу следующий кубик srvWorkTaskDecide — в момент сдачи, без ожидания остальных исполнителей этапа.
+Свой activityUuid исполнитель находит сам: GET /route/{uuid}/open-activities, фильтр по своему employeeId.</bpmn:documentation>
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=activity.employeeId" />
+          <zeebe:ioMapping>
+            <zeebe:input source="=taskUuid" target="taskUuid" />
+          </zeebe:ioMapping>
+          <zeebe:formDefinition externalReference="utWorkTaskExecuteForm" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowWorkTaskCreated</bpmn:incoming>
+        <bpmn:outgoing>flowWorkTaskExecuted</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="flowWorkTaskCreated" sourceRef="srvWorkTaskCreate" targetRef="utWorkTaskExecute">
+        <bpmn:documentation>Задание создано — дальше сдача решения исполнителем.</bpmn:documentation>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="flowWorkTaskExecuted" sourceRef="utWorkTaskExecute" targetRef="srvWorkTaskDecide">
+        <bpmn:documentation>Решение сдано — дальше кубик пишет его в БД.</bpmn:documentation>
+      </bpmn:sequenceFlow>
+      <bpmn:serviceTask id="srvWorkTaskDecide" name="Записать решение исполнителя">
+        <bpmn:documentation>PATCH /api/v1/activity/{activityUuid} + PATCH /api/v1/tasks/status — решение исполнителя в БД в момент сдачи его юзер-таски, без ожидания остальных исполнителей этапа.
+Вход: taskUuid — задание инстанса, activityUuid — activity.uuid инстанса, decision, comment (из complete юзер-таски; comment обязателен при REJECTED — CHECK в БД). Без sourceVersion: сервис требует его строго больше текущего, поле нужно смене версии, а не решению.
+APPROVED: шаг → 3 APPROVED, задание → 2 Исполнен. REJECTED: шаг → 4 REJECTED, задание → 3 Аннулирован. Неизвестный decision — ошибка, джоба в инцидент.
+Каталог: ant-approval-api, ant-resource-api.</bpmn:documentation>
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="srvWorkTaskDecide" retries="3" />
+          <zeebe:ioMapping>
+            <zeebe:input source="=taskUuid" target="taskUuid" />
+            <zeebe:input source="=activity.uuid" target="activityUuid" />
+            <zeebe:input source="=decision" target="decision" />
+            <zeebe:input source="=comment" target="comment" />
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowWorkTaskExecuted</bpmn:incoming>
+        <bpmn:outgoing>flowWorkTaskDecided</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="endWorkTaskDone" name="Исполнение завершено">
+        <bpmn:incoming>flowWorkTaskDecided</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="flowWorkTaskDecided" sourceRef="srvWorkTaskDecide" targetRef="endWorkTaskDone" />
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="flowWorkTasksDecided" sourceRef="subWorkTaskStage" targetRef="gwWorkTaskDecision">
+      <bpmn:documentation>Все решения инстансов записаны в БД в момент сдачи — дальше ветка по decisions.</bpmn:documentation>
+    </bpmn:sequenceFlow>
+    <bpmn:exclusiveGateway id="gwWorkTaskDecision" name="Какое решение приняли исполнители?" default="flowWorkTaskApproved">
+      <bpmn:incoming>flowWorkTasksDecided</bpmn:incoming>
+      <bpmn:outgoing>flowWorkTaskApproved</bpmn:outgoing>
+      <bpmn:outgoing>flowWorkTaskRejected</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="flowWorkTaskApproved" name="APPROVED" sourceRef="gwWorkTaskDecision" targetRef="srvRouteOpenActivities">
+      <bpmn:documentation>Отказов нет — перепроверить открытые шаги: следующий шаг SEQUENTIAL, следующий этап или вердикт.</bpmn:documentation>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowWorkTaskRejected" name="REJECTED" sourceRef="gwWorkTaskDecision" targetRef="srvRouteChangeStatus">
+      <bpmn:documentation>Хотя бы один исполнитель отклонил (decision = REJECTED) — маршрут ставится на паузу.</bpmn:documentation>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">= some d in decisions satisfies d.decision = "REJECTED"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:serviceTask id="srvRouteChangeStatus" name="Сменить статус маршрута">
+      <bpmn:documentation>PATCH /api/v1/route/{uuid} — смена статуса маршрута значением из входа.
+Вход: routeUuid, statusId (1 INITIAL, 2 IN_PROGRESS, 3 PAUSED, 4 APPROVED, 5 REJECTED, 6 CANCELED; здесь 3 — ожидание доработки). Выходов нет: ответ повторяет uuid маршрута. Переходы проверяет BPMN, сервис — только диапазон.
+Каталог: ant-approval-api.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvRouteChangeStatus" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=routeUuid" target="routeUuid" />
+          <zeebe:input source="=3" target="statusId" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowWorkTaskRejected</bpmn:incoming>
+      <bpmn:outgoing>flowRoutePaused</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="flowRoutePaused" sourceRef="srvRouteChangeStatus" targetRef="endRoutePaused" />
+    <bpmn:endEvent id="endRoutePaused" name="Маршрут на паузе">
+      <bpmn:incoming>flowRoutePaused</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:exclusiveGateway id="gwRouteVerdict" name="Вердикт маршрута?" default="flowRouteApproved">
+      <bpmn:incoming>flowRouteCompleted</bpmn:incoming>
+      <bpmn:outgoing>flowRouteApproved</bpmn:outgoing>
+      <bpmn:outgoing>flowRouteRejected</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="flowRouteRejected" name="REJECTED" sourceRef="gwRouteVerdict" targetRef="endRouteRejected">
+      <bpmn:documentation>Открытых шагов не осталось и этап отклонён (hasOpen = false, hasRejected = true).</bpmn:documentation>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=hasRejected = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowRouteApproved" name="APPROVED" sourceRef="gwRouteVerdict" targetRef="endRouteCompleted" />
+    <bpmn:endEvent id="endRouteRejected" name="Маршрут отклонён">
+      <bpmn:incoming>flowRouteRejected</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowRoutePolled" sourceRef="srvRouteOpenActivities" targetRef="gwRouteActivityOpen" />
+    <bpmn:sequenceFlow id="flowRouteActivityOpen" name="OPEN" sourceRef="gwRouteActivityOpen" targetRef="subWorkTaskStage">
+      <bpmn:documentation>Есть открытые шаги (hasOpen = true) — подпроцесс subWorkTaskStage: один инстанс на исполнителя, решение пишется в БД в момент сдачи.</bpmn:documentation>
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=hasOpen = true</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:parallelGateway id="pgwRouteSetupFork">
+      <bpmn:incoming>flowRouteCreated</bpmn:incoming>
+      <bpmn:outgoing>flowRouteSourceMap</bpmn:outgoing>
+      <bpmn:outgoing>flowRouteStagesCreate</bpmn:outgoing>
+      <bpmn:outgoing>flowRouteResourceCreate</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flowRouteCreated" sourceRef="srvRouteCreate" targetRef="pgwRouteSetupFork" />
+    <bpmn:sequenceFlow id="flowRouteSourceMap" sourceRef="pgwRouteSetupFork" targetRef="srvRouteSourceMapLink" />
+    <bpmn:sequenceFlow id="flowRouteStagesCreate" sourceRef="pgwRouteSetupFork" targetRef="srvStageCreateWithActivities" />
+    <bpmn:sequenceFlow id="flowRouteResourceCreate" sourceRef="pgwRouteSetupFork" targetRef="srvResourceCreate" />
+    <bpmn:parallelGateway id="pgwRouteSetupJoin">
+      <bpmn:incoming>flowRouteSourceMapped</bpmn:incoming>
+      <bpmn:incoming>flowRouteStagesCreated</bpmn:incoming>
+      <bpmn:incoming>flowRouteResourceCreated</bpmn:incoming>
+      <bpmn:outgoing>flowRouteSetupJoined</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="flowRouteSourceMapped" sourceRef="srvRouteSourceMapLink" targetRef="pgwRouteSetupJoin" />
+    <bpmn:sequenceFlow id="flowRouteStagesCreated" sourceRef="srvStageCreateWithActivities" targetRef="pgwRouteSetupJoin" />
+    <bpmn:sequenceFlow id="flowRouteResourceCreated" sourceRef="srvResourceCreate" targetRef="pgwRouteSetupJoin" />
+    <bpmn:sequenceFlow id="flowRouteSetupJoined" sourceRef="pgwRouteSetupJoin" targetRef="srvRouteStart" />
+    <bpmn:sequenceFlow id="flowRoutePollingStarted" sourceRef="srvRouteStart" targetRef="srvRouteOpenActivities" />
+    <bpmn:serviceTask id="srvRouteOpenActivities" name="Опрос текущего этапа">
+      <bpmn:documentation>Опрос шагов этапа. Основное чтение одно: GET /route/{uuid}/open-activities — текущий этап маршрута и его открытые шаги, в пути параметр называется uuid и принимает uuid маршрута. Второй вызов GET /route/{uuid}/stage-status уходит только когда открытых шагов не осталось — из него считается признак отказа.
+Вход: routeUuid, stages (обогащённый ответ with-activities: режим этапа берётся отсюда по uuid этапа, движок отдаёт только объявленные входы).
+Выход, пять переменных, слияние ответа по умолчанию выключено:
+• routeStageUuid — uuid этапа, в котором есть открытые шаги, тип UUID; пусто, когда таких этапов нет;
+• stageModeId — режим этапа, тип LONG: 1 SEQUENTIAL, 2 PARALLEL; берётся по uuid опрашиваемого этапа, а когда открытых шагов не осталось — у последнего по stageSequence;
+• activities — коллекция шагов к выдаче, тип JSON: при stageModeId 1 SEQUENTIAL только шаг с наименьшим activitySequence, при 2 PARALLEL все открытые. Пустая коллекция — открытых шагов нет;
+• hasOpen — есть ли открытые шаги, тип BOOLEAN. Объявлять BOOLEAN обязательно: строкой «true» FEEL прочитает как ложь;
+• hasRejected — отклонён ли этап, на котором остановился опрос, тип BOOLEAN: при hasOpen = false берётся первый по stageSequence этап не в APPROVED и его statusCode = REJECTED, пока есть открытые шаги — false.
+Шаг без statusId в переменной stages считается открытым (PENDING): ответ with-activities не сериализует неустановленные значения. Значение вне справочника — ошибка, а не «считать открытым».
+Каталог: ant-approval-api.</bpmn:documentation>
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="srvRouteOpenActivities" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=routeUuid" target="routeUuid" />
+          <zeebe:input source="=stages" target="stages" />
+          <zeebe:output source="=routeStageUuid" target="routeStageUuid" />
+          <zeebe:output source="=stageModeId" target="stageModeId" />
+          <zeebe:output source="=activities" target="activities" />
+          <zeebe:output source="=hasOpen" target="hasOpen" />
+          <zeebe:output source="=hasRejected" target="hasRejected" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowRoutePollingStarted</bpmn:incoming>
+      <bpmn:incoming>flowWorkTaskApproved</bpmn:incoming>
+      <bpmn:outgoing>flowRoutePolled</bpmn:outgoing>
+    </bpmn:serviceTask>
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_1">
+    <bpmndi:BPMNPlane id="BPMNPlane_1" bpmnElement="testApprovalRouteProcess">
+      <bpmndi:BPMNShape id="startRoute_di" bpmnElement="startRoute">
+        <dc:Bounds x="182" y="232" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="157" y="275" width="89" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="srvRouteCreate_di" bpmnElement="srvRouteCreate">
+        <dc:Bounds x="265" y="210" width="110" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="srvRouteSourceMapLink_di" bpmnElement="srvRouteSourceMapLink">
+        <dc:Bounds x="485" y="120" width="110" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="srvStageCreateWithActivities_di" bpmnElement="srvStageCreateWithActivities">
+        <dc:Bounds x="475" y="210" width="130" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="srvResourceCreate_di" bpmnElement="srvResourceCreate">
+        <dc:Bounds x="475" y="300" width="130" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="srvRouteStart_di" bpmnElement="srvRouteStart">
+        <dc:Bounds x="705" y="210" width="110" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="endRouteCompleted_di" bpmnElement="endRouteCompleted">
+        <dc:Bounds x="1132" y="122" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1121" y="162" width="58" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gwRouteActivityOpen_di" bpmnElement="gwRouteActivityOpen" isMarkerVisible="true">
+        <dc:Bounds x="1020" y="225" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1007" y="285" width="76" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="subWorkTaskStage_di" bpmnElement="subWorkTaskStage" isExpanded="true">
+        <dc:Bounds x="1100" y="170" width="550" height="160" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1105" y="176" width="150" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="startWorkTask_di" bpmnElement="startWorkTask">
+        <dc:Bounds x="1120" y="232" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1117" y="275" width="95" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="srvWorkTaskCreate_di" bpmnElement="srvWorkTaskCreate">
+        <dc:Bounds x="1180" y="210" width="110" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="utWorkTaskExecute_di" bpmnElement="utWorkTaskExecute">
+        <dc:Bounds x="1320" y="210" width="110" height="80" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1316" y="294" width="118" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="endWorkTaskDone_di" bpmnElement="endWorkTaskDone">
+        <dc:Bounds x="1600" y="232" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1555" y="334" width="110" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gwWorkTaskDecision_di" bpmnElement="gwWorkTaskDecision" isMarkerVisible="true">
+        <dc:Bounds x="1700" y="225" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1688" y="279" width="79" height="40" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="endRoutePaused_di" bpmnElement="endRoutePaused">
+        <dc:Bounds x="1980" y="232" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1967" y="272" width="63" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="gwRouteVerdict_di" bpmnElement="gwRouteVerdict" isMarkerVisible="true">
+        <dc:Bounds x="1020" y="115" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1016" y="77.5" width="58" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="endRouteRejected_di" bpmnElement="endRouteRejected">
+        <dc:Bounds x="907" y="122" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="902" y="162" width="47" height="27" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="pgwRouteSetupFork_di" bpmnElement="pgwRouteSetupFork">
+        <dc:Bounds x="405" y="225" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="pgwRouteSetupJoin_di" bpmnElement="pgwRouteSetupJoin">
+        <dc:Bounds x="625" y="225" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="srvRouteOpenActivities_di" bpmnElement="srvRouteOpenActivities">
+        <dc:Bounds x="860" y="210" width="130" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="srvRouteChangeStatus_di" bpmnElement="srvRouteChangeStatus">
+        <dc:Bounds x="1810" y="210" width="130" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="srvWorkTaskDecide_di" bpmnElement="srvWorkTaskDecide">
+        <dc:Bounds x="1460" y="210" width="110" height="80" />
+        <bpmndi:BPMNLabel />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="flowRouteStarted_di" bpmnElement="flowRouteStarted">
+        <di:waypoint x="218" y="250" />
+        <di:waypoint x="265" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteCompleted_di" bpmnElement="flowRouteCompleted">
+        <di:waypoint x="1045" y="225" />
+        <di:waypoint x="1045" y="165" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1047" y="189" width="46" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowWorkTaskStageStart_di" bpmnElement="flowWorkTaskStageStart">
+        <di:waypoint x="1156" y="250" />
+        <di:waypoint x="1180" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowWorkTaskCreated_di" bpmnElement="flowWorkTaskCreated">
+        <di:waypoint x="1290" y="250" />
+        <di:waypoint x="1320" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowWorkTaskExecuted_di" bpmnElement="flowWorkTaskExecuted">
+        <di:waypoint x="1430" y="250" />
+        <di:waypoint x="1460" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowWorkTaskDecided_di" bpmnElement="flowWorkTaskDecided">
+        <di:waypoint x="1570" y="250" />
+        <di:waypoint x="1600" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowWorkTasksDecided_di" bpmnElement="flowWorkTasksDecided">
+        <di:waypoint x="1650" y="250" />
+        <di:waypoint x="1700" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowWorkTaskApproved_di" bpmnElement="flowWorkTaskApproved">
+        <di:waypoint x="1725" y="225" />
+        <di:waypoint x="1725" y="100" />
+        <di:waypoint x="925" y="100" />
+        <di:waypoint x="925" y="210" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1300" y="82" width="62" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowWorkTaskRejected_di" bpmnElement="flowWorkTaskRejected">
+        <di:waypoint x="1750" y="250" />
+        <di:waypoint x="1810" y="250" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1753" y="232" width="59" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRoutePaused_di" bpmnElement="flowRoutePaused">
+        <di:waypoint x="1940" y="250" />
+        <di:waypoint x="1980" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteRejected_di" bpmnElement="flowRouteRejected">
+        <di:waypoint x="1020" y="140" />
+        <di:waypoint x="943" y="140" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="950" y="122" width="59" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteApproved_di" bpmnElement="flowRouteApproved">
+        <di:waypoint x="1070" y="140" />
+        <di:waypoint x="1132" y="140" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1070" y="122" width="62" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRoutePolled_di" bpmnElement="flowRoutePolled">
+        <di:waypoint x="990" y="250" />
+        <di:waypoint x="1020" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteActivityOpen_di" bpmnElement="flowRouteActivityOpen">
+        <di:waypoint x="1070" y="250" />
+        <di:waypoint x="1100" y="250" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1074" y="232" width="32" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteCreated_di" bpmnElement="flowRouteCreated">
+        <di:waypoint x="375" y="250" />
+        <di:waypoint x="405" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteSourceMap_di" bpmnElement="flowRouteSourceMap">
+        <di:waypoint x="430" y="225" />
+        <di:waypoint x="430" y="160" />
+        <di:waypoint x="485" y="160" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteStagesCreate_di" bpmnElement="flowRouteStagesCreate">
+        <di:waypoint x="455" y="250" />
+        <di:waypoint x="475" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteResourceCreate_di" bpmnElement="flowRouteResourceCreate">
+        <di:waypoint x="430" y="275" />
+        <di:waypoint x="430" y="340" />
+        <di:waypoint x="475" y="340" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteSourceMapped_di" bpmnElement="flowRouteSourceMapped">
+        <di:waypoint x="595" y="160" />
+        <di:waypoint x="650" y="160" />
+        <di:waypoint x="650" y="225" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteStagesCreated_di" bpmnElement="flowRouteStagesCreated">
+        <di:waypoint x="605" y="250" />
+        <di:waypoint x="625" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteResourceCreated_di" bpmnElement="flowRouteResourceCreated">
+        <di:waypoint x="605" y="340" />
+        <di:waypoint x="650" y="340" />
+        <di:waypoint x="650" y="275" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRouteSetupJoined_di" bpmnElement="flowRouteSetupJoined">
+        <di:waypoint x="675" y="250" />
+        <di:waypoint x="705" y="250" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="flowRoutePollingStarted_di" bpmnElement="flowRoutePollingStarted">
+        <di:waypoint x="815" y="250" />
+        <di:waypoint x="860" y="250" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

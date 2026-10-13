@@ -115,8 +115,24 @@ public class ErrorEscalationThrower {
             Activity scope = dbService.getActivity(tok.getScopeActivityId());
             BpmnElementModel boundary = findErrorBoundary(bpmn, scope.getBpmnElementId(), errorCode);
             if (boundary != null) {
-                dbService.cancelActiveActivitiesForToken(tok.getId());
-                dbService.cancelActivity(scope.getId());
+                // WO-C8-40: MI-подпроцесс — scope с N строками инстансов на одном
+                // токене: гасим ВСЕ инстансы и их внутренности ПРЯМЫМИ вызовами
+                // в ветке (helper — только чистое вычисление id; см.
+                // miSubProcessInstanceIds/miSubProcessInnerIds). Обычный scope —
+                // исторический путь без изменений.
+                if (isMiSubProcessScope(scope, bpmn)) {
+                    java.util.Set<UUID> instanceIds = miSubProcessInstanceIds(processInstanceId, scope);
+                    for (UUID instanceId : instanceIds) {
+                        dbService.cancelActivity(instanceId);
+                    }
+                    for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {
+                        dbService.cancelActivity(innerId);
+                    }
+                    dbService.cancelActivity(scope.getId());
+                } else {
+                    dbService.cancelActiveActivitiesForToken(tok.getId());
+                    dbService.cancelActivity(scope.getId());
+                }
                 // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемого scope —
                 // та же транзакция, без резюма (см. поле scopeContainment).
                 dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
@@ -177,7 +193,7 @@ public class ErrorEscalationThrower {
 
     /**
      * Finds an interrupting error boundary attached to {@code attachedToRef} whose error code matches
-     * {@code errorCode}; a boundary with no code is a catch-all. Returns {@code null} if none.
+     * {@code errorCode}; a boundary without a code is a catch-all. Returns {@code null} if none.
      * WO-C8-4: a specific code always wins over catch-all, regardless of XML order.
      */
     private BpmnElementModel findErrorBoundary(BpmnProcessDefinitionModel bpmn, String attachedToRef, String errorCode) {
@@ -230,6 +246,79 @@ public class ErrorEscalationThrower {
         return catchAll;
     }
 
+    /**
+     * WO-C8-40: id инстансов MI-подпроцесса для гашения при error/escalation-границе
+     * (чистое вычисление — НЕ деактивация: сами cancel-вызовы стоят ПРЯМО в ветках
+     * throwError/throwEscalation, потому что охранный тест DeactivationWakeupCoverageTest
+     * считает сайты по месту вызова, и вынос гашения в helper прятал бы их за одной
+     * записью; прецедент C8-39 — замена вызов-на-вызов в той же ветке).
+     * Строки ищутся по ИНСТАСУ, а не по токену бросания: токен бросания — scope-токен
+     * ОДНОГО инстанса, а инстансы делят входящий токен контейнера. Инстанс бросания
+     * (scope из walk) — тоже инстанс: его id берём из scope.getId().
+     */
+    private java.util.Set<UUID> miSubProcessInstanceIds(UUID processInstanceId, Activity scope) {
+        java.util.Set<UUID> instanceIds = new java.util.HashSet<>();
+        instanceIds.add(scope.getId());
+        for (Activity sibling : dbService.getActiveActivities(processInstanceId)) {
+            if (sibling == null || sibling.getId() == null) {
+                continue;
+            }
+            if (scope.getBpmnElementId().equals(sibling.getBpmnElementId())
+                && (sibling.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED
+                    || sibling.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS)) {
+                instanceIds.add(sibling.getId());
+            }
+        }
+        return instanceIds;
+    }
+
+    /**
+     * WO-C8-40: внутренности инстансов MI-подпроцесса (activity, чья scope-цепочка
+     * содержит один из инстансов) — чистое вычисление для прямых cancel-циклов
+     * в ветках throwError/throwEscalation (см. выше, почему не helper с cancel).
+     */
+    private java.util.List<UUID> miSubProcessInnerIds(UUID processInstanceId, java.util.Set<UUID> instanceIds) {
+        java.util.List<UUID> inner = new java.util.ArrayList<>();
+        for (Activity live : dbService.getActiveActivities(processInstanceId)) {
+            if (live == null || live.getId() == null || instanceIds.contains(live.getId())) {
+                continue;
+            }
+            if (chainContains(processInstanceId, live, instanceIds)) {
+                inner.add(live.getId());
+            }
+        }
+        return inner;
+    }
+
+    /**
+     * WO-C8-40: isMultiInstance-контейнер ли scope (лексика модели, не runtime).
+     */
+    private boolean isMiSubProcessScope(Activity scope, BpmnProcessDefinitionModel bpmn) {
+        BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
+        return scopeElement != null
+            && scopeElement.getType() == BpmnElementType.SUB_PROCESS
+            && scopeElement.getExtensions() != null
+            && scopeElement.getExtensions().getMultiInstanceExtension() != null;
+    }
+
+    /**
+     * WO-C8-40: scope-цепочка активности содержит один из scopeId — тот же обход
+     * токенов, что {@code ElementSupport.enclosingScopeChain} (локальная копия:
+     * зависимость ElementSupport сюда тянуть нельзя — см. выше).
+     */
+    private boolean chainContains(UUID processInstanceId, Activity activity, java.util.Set<UUID> scopeIds) {
+        java.util.Optional<Token> token = dbService.findToken(activity.getToken());
+        while (token.isPresent()) {
+            UUID scopeId = token.get().getScopeActivityId();
+            if (scopeId != null && scopeIds.contains(scopeId)) {
+                return true;
+            }
+            UUID parentId = token.get().getParentId();
+            token = parentId == null ? java.util.Optional.empty() : dbService.findToken(parentId);
+        }
+        return false;
+    }
+
     public String escalationCode(BpmnElementModel element) {
         return Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getEventDefinition)
@@ -258,8 +347,21 @@ public class ErrorEscalationThrower {
             BpmnElementModel boundary = findEscalationBoundary(bpmn, scope.getBpmnElementId(), escalationCode);
             if (boundary != null) {
                 if (isInterrupting(boundary)) {
-                    dbService.cancelActiveActivitiesForToken(tok.getId());
-                    dbService.cancelActivity(scope.getId());
+                    // WO-C8-40: та же MI-отмена, что в error-пути выше (прямые
+                    // вызовы в ветке, helper — только вычисление id).
+                    if (isMiSubProcessScope(scope, bpmn)) {
+                        java.util.Set<UUID> instanceIds = miSubProcessInstanceIds(processInstanceId, scope);
+                        for (UUID instanceId : instanceIds) {
+                            dbService.cancelActivity(instanceId);
+                        }
+                        for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {
+                            dbService.cancelActivity(innerId);
+                        }
+                        dbService.cancelActivity(scope.getId());
+                    } else {
+                        dbService.cancelActiveActivitiesForToken(tok.getId());
+                        dbService.cancelActivity(scope.getId());
+                    }
                     // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемого scope —
                     // та же транзакция, без резюма (см. поле scopeContainment).
                     dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,

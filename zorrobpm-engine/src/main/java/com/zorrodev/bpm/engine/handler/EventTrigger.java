@@ -150,6 +150,35 @@ public class EventTrigger {
             if (isScopeContainerHost(hostElement) && !miHost) {
                 cancelCandidates = cancelScopeContainer(processInstanceId, tokenId, hostActivityId, host);
                 clearScopeJoinArrivals(processInstanceId, bpmn, host.getBpmnElementId());
+            } else if (miHost && hostElement != null
+                && hostElement.getType() == BpmnElementType.SUB_PROCESS) {
+                // WO-C8-40: MI-подпроцесс — scope-контейнер с N строками инстансов:
+                // отмена идёт по scope-цепочке В КАЖДЫЙ инстанс ПРЯМЫМИ вызовами
+                // в ветке (helper cancelMiSubProcess — только вычисление списков;
+                // см. его javadoc, почему не вызовы). C38-2-чистка — один раз на
+                // контейнер, snapshot кандидатов — общий, ДО отмены (как везде).
+                List<Activity> miInstances = dbService.getActivitiesByTokenAndBpmnElementId(
+                        tokenId, host.getBpmnElementId()).stream()
+                    .filter(a -> a.getStatus() == ActivityStatus.CREATED
+                        || a.getStatus() == ActivityStatus.IN_PROGRESS)
+                    .toList();
+                List<Activity> miInScope = cancelMiSubProcessInScope(processInstanceId, miInstances);
+                cancelCandidates = miInScope.stream()
+                    .filter(a -> a.getType() == BpmnElementType.USER_TASK
+                        && (a.getStatus() == ActivityStatus.CREATED
+                            || a.getStatus() == ActivityStatus.IN_PROGRESS))
+                    .map(Activity::getId)
+                    .toList();
+                for (Activity active : miInScope) {
+                    dbService.cancelActivity(active.getId());
+                }
+                for (Activity instance : miInstances) {
+                    dbService.cancelActivity(instance.getId());
+                }
+                dbService.cancelActivity(hostActivityId);
+                log.info("{}/{}: Boundary interrupting MI subprocess {} — cancelled {} in-scope activities in {} instances",
+                    processInstanceId, tokenId, host.getBpmnElementId(), miInScope.size(), miInstances.size());
+                clearScopeJoinArrivals(processInstanceId, bpmn, host.getBpmnElementId());
             } else if (miHost && isPlainHostOnSharedToken(processInstanceId, tokenId, host)) {
                 // WO-C8-34 (CR-05, red-team M2): an MI host that sits on a FORK token.
                 // Token-wide cancel is right for MI siblings (they share the token,
@@ -430,6 +459,29 @@ public class EventTrigger {
             String scopeElementId) {
         dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
             scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, scopeElementId));
+    }
+
+    /**
+     * WO-C8-40: внутренности ВСЕХ инстансов MI-подпроцесса (чистое вычисление —
+     * НЕ деактивация: сами cancel-вызовы стоят ПРЯМО в ветке fireBoundary выше,
+     * потому что охранный тест DeactivationWakeupCoverageTest считает сайты по
+     * месту вызова, и вынос гашения в helper прятал бы их за одной записью;
+     * прецедент C8-39 — замена вызов-на-вызов в той же ветке). Каждый инстанс —
+     * отдельная scope-строка: внутренности лежат в ЕГО цепочке
+     * ({@code filterActivitiesInScope} на каждую строку инстанса).
+     */
+    private List<Activity> cancelMiSubProcessInScope(UUID processInstanceId, List<Activity> instances) {
+        List<Activity> inScope = new ArrayList<>();
+        for (Activity instance : instances) {
+            for (Activity active : elementSupport.filterActivitiesInScope(
+                    processInstanceId, dbService.getActiveActivities(processInstanceId),
+                    instance.getId())) {
+                if (inScope.stream().noneMatch(a -> a.getId().equals(active.getId()))) {
+                    inScope.add(active);
+                }
+            }
+        }
+        return inScope;
     }
 
     /**

@@ -281,7 +281,12 @@ public class ServiceTaskEnqueueServiceImpl implements ServiceTaskEnqueueService 
             return;
         }
 
-        Map<String, ProcessVariable> variables = toJobVariables(dbService.getVariables(processInstanceId, serviceTaskId));
+        // WO-C8-40: payload джобы — chain-контекст задачи (root + цепочка скоупов +
+        // own, nearest-wins), а не root+own: задача внутри (MI-)подпроцесса несёт в
+        // payload цикл-переменные/seed внешних скоупов. Для задач верхнего уровня
+        // цепочка пуста и merge равен прежнему getVariables(pi, serviceTaskId).
+        Map<String, ProcessVariable> variables =
+            toJobVariables(elementSupport.visibleVariables(processInstanceId, serviceTaskId));
 
         JobDetailModel detail = new JobDetailModel();
         detail.setServiceTaskId(serviceTaskId);

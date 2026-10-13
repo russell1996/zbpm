@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- WO-C8-34 (CTO HOLD п.4): the same multiInstanceLoopCharacteristics on all four
-     element kinds. The parser attaches it to userTask/serviceTask only, so the two
-     container elements parse as ORDINARY containers — which is what makes the
-     interrupting-boundary MI branch unreachable for them. The control pair in the
-     same fixture proves the parser did not drop MI everywhere. -->
+<!-- WO-C8-34 (CTO HOLD п.4) + WO-ENG-34 + WO-C8-40 (D3): the same
+     multiInstanceLoopCharacteristics on all four element kinds. WO-C8-40 implements MI
+     on the embedded subProcess, so miSub now parses WITH the extension and deploys;
+     miCall is still refused at deploy (UNSUPPORTED_MULTI_INSTANCE_CONTAINER).
+     The control pair in the same fixture proves the parser did not drop MI everywhere. -->
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_micontainer" targetNamespace="http://bpmn.io/schema/bpmn">
   <bpmn:process id="mi-on-container-parse" name="mi-on-container-parse" isExecutable="true">
     <bpmn:startEvent id="startEvent" name="startEvent">

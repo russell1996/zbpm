@@ -96,8 +96,19 @@ class DeactivationWakeupCoverageTest {
      * cancelActivity внутри scope, cancelActivity строки scope-контейнера, child-instance
      * cancel — все разобраны выше причинами R10N). Старый сайт целого инстанса
      * (triggerEventSubprocess[if (ext.isInterrupting())]) ушёл вместе с веткой.
+     *
+     * <p>WO-C8-40: 115 → 124. Новые сайты MI-отмены (все — гашение ЦЕЛОГО MI-scope,
+     * резюм запрещён контрпримером раунда 4, R08): 3 в ветке fireBoundary
+     * (внутренности инстансов, строки инстансов, host), по 5 в ветках
+     * throwError/throwEscalation (строки инстансов, внутренности, финальный scope
+     * MI-ветки + 2 исторических вызова обычных scope в else-ветках — сканер
+     * считает их отдельными сайтами, раньше они жили одной строкой на ветку).
+     * Плюс 1 переименованный сайт: {@code EndEventHandler} продолжает
+     * terminate-выход через {@code scopeContainerElement} (было {@code scopeElement},
+     * та же ветка R08 — старая запись удалена, новая внесена). Итого: 115 − 5
+     * старых (4 Thrower + 1 EndEvent) + 14 новых = 124.
      */
-    private static final int EXPECTED_SITE_COUNT = 115;
+    private static final int EXPECTED_SITE_COUNT = 124;
 
     /** site key -> причина, почему перепроверка здесь не нужна. Непустая — проверяется тестом. */
     private static final Map<String, String> WHITELIST = new LinkedHashMap<>();
@@ -249,10 +260,10 @@ class DeactivationWakeupCoverageTest {
         // (форк-соседи тоже гасятся); число сайтов то же — счёт не меняется.
         WHITELIST.put("CancelEndHandler.java#processCancelEnd[for (Activity active : inScope) {]|dbService.cancelActivity(active.getId())", R08);
         WHITELIST.put("CancelEndHandler.java#processCancelEnd[]|dbService.cancelActivity(scopeActivityId)", R08);
-        WHITELIST.put("ErrorEscalationThrower.java#throwError[if (boundary != null) { #2]|dbService.cancelActiveActivitiesForToken(tok.getId())", R08);
-        WHITELIST.put("ErrorEscalationThrower.java#throwError[if (boundary != null) { #2]|dbService.cancelActivity(scope.getId())", R08);
-        WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[if (isInterrupting(boundary)) {]|dbService.cancelActiveActivitiesForToken(tok.getId())", R08);
-        WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[if (isInterrupting(boundary)) {]|dbService.cancelActivity(scope.getId())", R08);
+        // WO-C8-40: token-wide вызовы обычных scope остались в MI-ветках тех же методов
+        // прямыми вызовами (else-ветки if (isMiSubProcessScope...)) — их ключи ниже
+        // в блоке MI-записей; отдельные cancelMiOrSingleScope-записи не нужны
+        // (helper'ы вычисления id сканер сайтами не считает — там нет dbService-вызовов).
         // ── TERMINATE: гасится весь инстанс и доводится до конца в этом же хвосте. У…
         WHITELIST.put("EndEventHandler.java#handle[for (Activity active : inScope) {]|dbService.cancelActivity(active.getId())", R09);
         WHITELIST.put("EndEventHandler.java#handle[]|dbService.cancelActivity(scopeActivityId)", R09);
@@ -280,6 +291,26 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("EventTrigger.java#cancelScopeContainer[for (Activity active : inScope) {]|dbService.cancelActivity(active.getId())", R11);
         WHITELIST.put("EventTrigger.java#cancelScopeContainer[]|dbService.cancelActivity(hostActivityId)", R11);
         WHITELIST.put("EventTrigger.java#cancelScopeContainer[for (UUID childInstanceId : dbService.findRunningChildInstanceIds(hostActivityId)) {]|dbService.cancelActiveActivities(childInstanceId)", R11);
+        // ── WO-C8-40: MI-подпроцесс — гашение ЦЕЛОГО MI-scope (все инстансы и их ──
+        // внутренности) ПРЯМЫМИ вызовами в ветках fireBoundary/throwError/throwEscalation
+        // (helper'ы — только чистое вычисление id: cancelMiSubProcessInScope,
+        // miSubProcessInstanceIds/miSubProcessInnerIds; сканер их не считает сайтами —
+        // там нет dbService-вызовов). Воскрешать join отменённого scope нельзя
+        // (R08, контрпример раунда 4). Ключи — дословно из вывода сканера
+        // (ветка + вызов), иначе stale/нарушение ловят расхождение.
+        WHITELIST.put("EventTrigger.java#fireBoundary[for (Activity active : miInScope) {]|dbService.cancelActivity(active.getId())", R08);
+        WHITELIST.put("EventTrigger.java#fireBoundary[for (Activity instance : miInstances) {]|dbService.cancelActivity(instance.getId())", R08);
+        WHITELIST.put("EventTrigger.java#fireBoundary[&& hostElement.getType() == BpmnElementType.SUB_PROCESS) {]|dbService.cancelActivity(hostActivityId)", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwError[for (UUID instanceId : instanceIds) {]|dbService.cancelActivity(instanceId)", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwError[for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {]|dbService.cancelActivity(innerId)", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwError[if (isMiSubProcessScope(scope, bpmn)) {]|dbService.cancelActivity(scope.getId())", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwError[} else {]|dbService.cancelActiveActivitiesForToken(tok.getId())", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwError[} else {]|dbService.cancelActivity(scope.getId())", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[for (UUID instanceId : instanceIds) {]|dbService.cancelActivity(instanceId)", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {]|dbService.cancelActivity(innerId)", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[if (isMiSubProcessScope(scope, bpmn)) {]|dbService.cancelActivity(scope.getId())", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[} else {]|dbService.cancelActiveActivitiesForToken(tok.getId())", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[} else {]|dbService.cancelActivity(scope.getId())", R08);
         // ── ветка ПРЕРЫВАЮЩЕЙ границы в EventTrigger.fireBoundary: хост (или его MI-…
         WHITELIST.put("EventTrigger.java#fireBoundary[for (Activity instance : ownInstances) {]|dbService.cancelActivity(instance.getId())", R12);
         WHITELIST.put("EventTrigger.java#fireBoundary[} else if (!miHost && isPlainHostOnSharedToken(processInstanceId, tokenId, host)) {]|dbService.cancelActivity(hostActivityId)", R12);
@@ -308,7 +339,9 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("FlowNavigator.java#finishBranch[if (parentActivityId != null) {]|proceedToOutgoing(parentProcessInstanceId, parentToken, parentBpmn, parentBpmnElement, executor)", R01);
         WHITELIST.put("InclusiveGatewayHandler.java#handle[} else { #2]|flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor)", R14);
         // ── погашены ВЕСЬ scope / весь инстанс — воскрешать join отменённого потока нельзя ────
-        WHITELIST.put("EndEventHandler.java#handle[]|flowNavigator.proceedToOutgoing(ctx.processInstanceId(), token.getParentId(), bpmn, scopeElement, ctx.executor())", R08);
+        // (WO-C8-40: ключ переименован scopeElement → scopeContainerElement — та же ветка,
+        // то же R08; старое имя удалено, иначе stale-проверка ловит мёртвую запись.)
+        WHITELIST.put("EndEventHandler.java#handle[]|flowNavigator.proceedToOutgoing(ctx.processInstanceId(), token.getParentId(), bpmn, scopeContainerElement, ctx.executor())", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwError[if (boundary != null) { #2]|flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor)", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[if (isInterrupting(boundary)) {]|flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor)", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[if (boundary != null) {]|flowNavigator.proceedToOutgoing(processInstanceId, branch.getId(), bpmn, boundary, executor)", R17);

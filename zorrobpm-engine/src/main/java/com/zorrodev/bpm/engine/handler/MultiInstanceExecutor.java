@@ -37,8 +37,14 @@ public class MultiInstanceExecutor {
     private final BpmnService bpmnService;
     private final ElementSupport elementSupport;
     private final BoundaryScheduler boundaryScheduler;
-
     private final FlowNavigator flowNavigator;
+    // WO-C8-40: MI-спaун инстансов подпроцесса — через ObjectProvider, а не прямую
+    // инъекцию: SubProcessHandler уже зависит от MultiInstanceExecutor (MI-вход),
+    // прямая пара дала бы Spring circular dependency (прецедент — HandlerRegistry
+    // резолвит хендлеры лениво по той же причине). ПОРЯДОК ПОЛЕЙ ЗАМОРОЖЕН:
+    // provider — ПОСЛЕДНИМ, иначе ломаются ручные new в юнит-тестах (P-24: один
+    // конструктор Lombok на всех вызывающих).
+    private final org.springframework.beans.factory.ObjectProvider<SubProcessHandler> subProcessHandlerProvider;
 
     /**
      * WO-REL-31 F23: upper bound on how many MI instances a single multi-instance entry may
@@ -88,6 +94,56 @@ public class MultiInstanceExecutor {
         return dbService.getScopedVariablesByNames(processInstanceId, scopeId, names);
     }
 
+    /**
+     * WO-C8-40: chain-контекст токена для MI-входа вложенных элементов —
+     * root + ВСЯ цепочка внешних скоупов токена (nearest-wins), pinpoint по
+     * именам выражений. Элемент верхнего уровня (токен без scope-цепочки)
+     * получает ровно root — поведение побайтово то же, что rootVariablesFor.
+     * Нужно MI внутри (MI-)подпроцессов: их inputCollection ссылается на
+     * цикл-переменную внешнего инстанса, которой в root нет.
+     */
+    private List<ProcessVariable> chainVariablesFor(UUID processInstanceId, UUID token, String... expressions) {
+        Set<String> names = new LinkedHashSet<>();
+        for (String e : expressions) {
+            names.addAll(extractFeelVariableNames(e));
+        }
+        List<UUID> chain = scopeChainOfToken(processInstanceId, token);
+        if (chain.isEmpty()) {
+            return dbService.getVariablesByNames(processInstanceId, names);
+        }
+        java.util.Map<String, ProcessVariable> merged = new java.util.LinkedHashMap<>();
+        for (ProcessVariable v : dbService.getVariablesByNames(processInstanceId, names)) {
+            merged.put(v.getName(), v);
+        }
+        for (UUID scopeId : chain) {
+            for (ProcessVariable v : dbService.getScopedVariablesByNames(processInstanceId, scopeId, names)) {
+                merged.put(v.getName(), v);
+            }
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    /**
+     * WO-C8-40: scope-цепочка токена (outermost-first): от корня через
+     * scopeActivityId-звенья до непосредственного scope токена. Тот же обход,
+     * что {@code ElementSupport.enclosingScopeChain}, но от токена, а не от
+     * activity — у MI-входа строки инстанса ещё нет.
+     */
+    private List<UUID> scopeChainOfToken(UUID processInstanceId, UUID tokenId) {
+        List<UUID> chain = new ArrayList<>();
+        Optional<com.zorrodev.bpm.engine.dto.Token> token = dbService.findToken(tokenId);
+        while (token.isPresent()) {
+            UUID scopeId = token.get().getScopeActivityId();
+            if (scopeId != null && !chain.contains(scopeId)) {
+                chain.add(scopeId);
+            }
+            UUID parentId = token.get().getParentId();
+            token = parentId == null ? Optional.empty() : dbService.findToken(parentId);
+        }
+        java.util.Collections.reverse(chain);
+        return chain;
+    }
+
     public boolean isMultiInstance(BpmnElementModel element) {
         return Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getMultiInstanceExtension)
@@ -112,8 +168,10 @@ public class MultiInstanceExecutor {
             // WO-PERF-9 (B-8, full-scan): the read is pinpoint — only the
             // variables the inputCollection/loopCardinality expressions can
             // reference, not the whole instance scope.
+            // WO-C8-40: контекст — chain токена (вложенный MI видит внешние
+            // скоупы); сверху цепочка пуста и это ровно rootVariablesFor.
             List<ProcessVariable> variables =
-                rootVariablesFor(processInstanceId, mi.getInputCollection(), mi.getCardinality());
+                chainVariablesFor(processInstanceId, token, mi.getInputCollection(), mi.getCardinality());
             collection = null;
             if (mi.getInputCollection() != null && !mi.getInputCollection().isBlank()) {
                 collection = scriptService.evaluateExpression(mi.getInputCollection(), variables);
@@ -160,16 +218,24 @@ public class MultiInstanceExecutor {
         // WO-ENG-7: unique batch UUID per MI entry isolates join-bookkeeping between loop iterations.
         // Without this, every iteration reuses the same (processInstanceId, miId) key and data from
         // different iterations can collide (=done=true fires too early — the prod bug 52e6b64c).
+        // WO-C8-40: batch пишется в scope токена входа (вложенный MI — в scope
+        // внешнего инстанса, верхний — в root): два внешних инстанса делят miId,
+        // но НЕ scope — их join-ключи не коллидируют. Resolve — там же.
         String batchUuid = UUID.randomUUID().toString();
         ProcessVariable batchVar = new ProcessVariable();
         batchVar.setName("_mi_batch_" + miId);
         batchVar.setType(ProcessVariableType.STRING);
         batchVar.setValue(batchUuid);
-        dbService.setVariables(processInstanceId, List.of(batchVar));
+        UUID batchScope = innermostScopeOfToken(token);
+        if (batchScope == null) {
+            dbService.setVariables(processInstanceId, List.of(batchVar));
+        } else {
+            dbService.setVariables(processInstanceId, batchScope, List.of(batchVar));
+        }
         dbService.recordInclusiveExpected(processInstanceId, miId + "::" + batchUuid, count);
         int spawn = mi.isSequential() ? 1 : count;
         for (int i = 0; i < spawn; i++) {
-            spawnMiInstance(processInstanceId, token, bpmnElement, mi, collection, i);
+            spawnMiInstance(processInstanceId, token, bpmnElement, mi, collection, i, executor);
         }
         log.info("{}/{}: Entering multi-instance {}: {} {} instance(s) batch={}", processInstanceId, token, miId, count, mi.isSequential() ? "sequential" : "parallel", batchUuid);
     }
@@ -179,9 +245,20 @@ public class MultiInstanceExecutor {
      * For sequential MI not yet done, the next instance is started here.
      */
     public boolean multiInstanceContinue(UUID processInstanceId, UUID token, BpmnElementModel element, UUID completedActivityId) {
+        return multiInstanceContinue(processInstanceId, token, element, completedActivityId, null);
+    }
+
+    /**
+     * WO-C8-40: executor-параметр нужен sequential MI-подпроцессу (спaун следующего
+     * инстанса стартует nested flow через {@code executor.execute}); task-хвосты
+     * передают свой executor, остальные вызывающие — null (parallel-путь executor
+     * не использует). Null допустим: parallel-ветка в него не заходит.
+     */
+    public boolean multiInstanceContinue(UUID processInstanceId, UUID token, BpmnElementModel element,
+            UUID completedActivityId, TokenExecutor executor) {
         String miId = element.getId();
         // WO-ENG-7: resolve the per-entry batch UUID so bookkeeping is isolated between loop iterations
-        String batchUuid = resolveBatchUuid(processInstanceId, miId);
+        String batchUuid = resolveBatchUuid(processInstanceId, miId, token);
         String gatewayKey = miId + "::" + batchUuid;
         MultiInstanceExtensionModel mi = element.getExtensions().getMultiInstanceExtension();
         dbService.recordParallelGatewayArrival(processInstanceId, gatewayKey, completedActivityId.toString());
@@ -194,7 +271,10 @@ public class MultiInstanceExecutor {
             return true;
         }
         if (mi.isSequential()) {
-            spawnMiInstance(processInstanceId, token, element, mi, miInputCollection(processInstanceId, mi), arrived);
+            // WO-C8-40: sequential-continue — та же chain-семантика, что enter
+            // (вложенный sequential MI перечитывает коллекцию из внешних скоупов).
+            spawnMiInstance(processInstanceId, token, element, mi,
+                miInputCollection(processInstanceId, token, mi), arrived, executor);
             log.info("{}/{}: Multi-instance {} starting next sequential instance ({} of {} done)", processInstanceId, token, miId, arrived, expected);
         } else {
             log.info("{}: Multi-instance {} not ready: {} of {} instances done batch={}", processInstanceId, miId, arrived, expected, batchUuid);
@@ -230,7 +310,14 @@ public class MultiInstanceExecutor {
 
     // ─── Private MI-only helpers ───────────────────────────────────────────
 
-    private void spawnMiInstance(UUID processInstanceId, UUID token, BpmnElementModel element, MultiInstanceExtensionModel mi, Object collection, int index) {
+    private void spawnMiInstance(UUID processInstanceId, UUID token, BpmnElementModel element, MultiInstanceExtensionModel mi, Object collection, int index, TokenExecutor executor) {
+        // WO-C8-40: вход MI-подпроцесса делегируется spawnMiSubProcessInstance —
+        // там свой порядок (контейнерная строка + привязка + chain + токен + старт),
+        // общий хвост ниже (boundary-расписание) един для всех видов.
+        if (element.getType() == BpmnElementType.SUB_PROCESS) {
+            spawnMiSubProcessInstance(processInstanceId, token, element, mi, collection, index, executor);
+            return;
+        }
         UUID activityId = dbService.createActivity(processInstanceId, token, element);
         bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index);
         if (element.getType() == BpmnElementType.USER_TASK) {
@@ -277,6 +364,36 @@ public class MultiInstanceExecutor {
             serviceTaskEnqueueService.enqueueAfterCommit(activityId);
         }
         // WO-ENG-3: schedule boundary timers/messages/signals on each MI instance's activity
+        boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, element);
+        boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, element);
+        boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, element);
+    }
+
+    /**
+     * WO-C8-40: спаун одного инстанса MI-подпроцесса. Порядок — зеркало одиночного
+     * входа {@code SubProcessHandler} (контейнерная строка → chain-bound seed →
+     * привязка цикла → дочерний токен → старт внутреннего start event), ПЛЮС:
+     * {@code bindMiInstanceVariables} ДО chain (seed видит inputElement, WO-DIFF-1),
+     * boundary-расписание на инстанс (WO-ENG-3). Контейнерная ioMapping-output
+     * здесь НЕ применяется (выходы контейнера — только на MI-выходе после join).
+     */
+    private void spawnMiSubProcessInstance(UUID processInstanceId, UUID token,
+            BpmnElementModel element, MultiInstanceExtensionModel mi, Object collection, int index,
+            TokenExecutor executor) {
+        UUID activityId = dbService.createActivity(processInstanceId, token, element);
+        // Привязка цикла ПЕРВОЙ — chain-bound seed и внутренние элементы видят
+        // inputElement/loopCounter с первой строки (порядок WO-DIFF-1 + MI).
+        bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index);
+        elementSupport.applyChainedIoInputs(processInstanceId, activityId, element);
+        SubProcessHandler sub = subProcessHandlerProvider.getIfAvailable();
+        if (sub == null) {
+            throw new EngineException("Multi-instance " + element.getId()
+                + ": SubProcessHandler bean unavailable for instance spawn");
+        }
+        sub.startNestedFlow(processInstanceId, token, activityId, element.getProcessDefinition(),
+            element, executor, true);
+        // WO-ENG-3: границы контейнера взводятся на каждый инстанс — зеркало
+        // одиночного входа (тот же trio, тот же относительный порядок).
         boundaryScheduler.scheduleBoundaryTimers(processInstanceId, activityId, element);
         boundaryScheduler.scheduleMessageBoundaries(processInstanceId, activityId, element);
         boundaryScheduler.scheduleSignalBoundaries(processInstanceId, activityId, element);
@@ -349,15 +466,16 @@ public class MultiInstanceExecutor {
         throw new EngineException("Multi-instance " + elementId + " inputCollection did not evaluate to a list: " + collection);
     }
 
-    private Object miInputCollection(UUID processInstanceId, MultiInstanceExtensionModel mi) {
+    private Object miInputCollection(UUID processInstanceId, UUID token, MultiInstanceExtensionModel mi) {
         if (mi.getInputElement() == null || mi.getInputElement().isBlank()
             || mi.getInputCollection() == null || mi.getInputCollection().isBlank()) {
             return null;
         }
         // WO-PERF-9 (B-8, full-scan): sequential-continue re-evaluates the
         // inputCollection on its own transition — pinpoint, same as enter().
+        // WO-C8-40: контекст — chain токена, как в enter (вложенный MI).
         return scriptService.evaluateExpression(mi.getInputCollection(),
-            rootVariablesFor(processInstanceId, mi.getInputCollection()));
+            chainVariablesFor(processInstanceId, token, mi.getInputCollection()));
     }
 
     private void bindMiInstanceVariables(UUID processInstanceId, UUID scopeId, MultiInstanceExtensionModel mi, Object collection, int index) {
@@ -442,10 +560,48 @@ public class MultiInstanceExecutor {
      * complete their first MI entry).
      * <p>
      * WO-REL-41 (B-8, п.2): ONE pinpoint row read, not the full variable list.
+     * <p>
+     * WO-C8-40: batch ищется сначала в innermost scope токена завершающейся
+     * задачи (вложенный MI пишет его в scope внешнего инстанса), потом в root.
+     * Токен continue совпадает с токеном enter (spawn идёт на нём же), поэтому
+     * scope тот же, что при записи. Null-safe к мокам (findToken → null).
      */
-    private String resolveBatchUuid(UUID processInstanceId, String miId) {
-        return dbService.getVariableTextValue(processInstanceId, "_mi_batch_" + miId)
+    private String resolveBatchUuid(UUID processInstanceId, String miId, UUID token) {
+        String name = "_mi_batch_" + miId;
+        UUID innerScope = innermostScopeOfToken(token);
+        if (innerScope != null) {
+            Optional<String> scoped = dbService
+                .getScopedVariablesByNames(processInstanceId, innerScope, Set.of(name)).stream()
+                .filter(v -> name.equals(v.getName()))
+                .map(ProcessVariable::getValue)
+                .findFirst();
+            if (scoped.isPresent()) {
+                return scoped.get();
+            }
+        }
+        return dbService.getVariableTextValue(processInstanceId, name)
             .orElse(miId);
+    }
+
+    /**
+     * WO-C8-40: innermost scope токена (scopeActivityId самого токена) —
+     * null для корневых токенов и для моков (findToken → null). Не путать с
+     * {@link #scopeChainOfToken} (вся цепочка): batch пишется/читается только
+     * в непосредственном scope входа.
+     */
+    private UUID innermostScopeOfToken(UUID tokenId) {
+        if (tokenId == null) {
+            return null;
+        }
+        try {
+            Optional<com.zorrodev.bpm.engine.dto.Token> token = dbService.findToken(tokenId);
+            if (token == null || token.isEmpty()) {
+                return null;
+            }
+            return token.get().getScopeActivityId();
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private boolean completionConditionMet(UUID processInstanceId, int arrived, Integer expected, MultiInstanceExtensionModel mi) {

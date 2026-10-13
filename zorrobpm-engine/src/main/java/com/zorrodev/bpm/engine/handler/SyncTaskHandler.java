@@ -61,7 +61,10 @@ public class SyncTaskHandler {
                 throw new IllegalStateException("Script task '" + el.getId() + "' has an empty script");
             }
 
-            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+            // WO-C8-40: скрипт видит chain-контекст (root + цепочка скоупов + own),
+            // а не только root: внутри (MI-)подпроцесса скрипт читает цикл-переменные
+            // и lane-local значения. Сверху цепочка пуста — ровно getVariables.
+            List<ProcessVariable> variables = elementSupport.visibleVariables(processInstanceId, activityId);
             Object result = scriptService.evaluateExpression(script, variables);
             // WO-SEC-53 (E6): the evaluated VALUE is deliberately not logged — script results
             // can carry PII/business secrets (same reasoning as WO-SEC-29, which downgraded
