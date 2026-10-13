@@ -395,6 +395,17 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public List<ProcessVariable> getScopeOnlyVariablesByNames(@NonNull UUID processInstanceId, UUID scopeId,
+            java.util.Collection<String> names) {
+        return variableDbOperations.getScopeOnlyVariablesByNames(processInstanceId, scopeId, names);
+    }
+
+    @Override
+    public List<ProcessVariable> getScopeVariables(@NonNull UUID processInstanceId, UUID scopeId) {
+        return variableDbOperations.getScopeVariables(processInstanceId, scopeId);
+    }
+
+    @Override
     public Optional<String> getVariableTextValue(@NonNull UUID processInstanceId, String name) {
         return variableDbOperations.getVariableTextValue(processInstanceId, name);
     }

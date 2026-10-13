@@ -260,6 +260,14 @@ public class ElementSupport {
      * собственный скоуп (nearest-wins), а не только root+own. Элемент верхнего
      * уровня (цепочка пуста) получает ровно тот же контекст, что ByNames-версия.
      * Чтения — pinpoint по именам из выражения (Б-1 IN-4: чужие JSON не трогаем).
+     *
+     * <p>WO-C8-42: собственный слой — scope-ONLY чтение
+     * ({@code getScopeOnlyVariablesByNames}), а не root+own merge. Merge-ридер
+     * возвращал root-строки для имён, которых own скоуп не писал, и они
+     * перетирали байнды внешних MI-скоупов (stale root activity/loopCounter
+     * затеняли цикл-переменную инстанса — дефект консьюмера 2026-10-14).
+     * Root остаётся ПЕРВЫМ слоем (fallback для имён, которых нет ни в одном
+     * скоупе — nearest-wins, паритет Zeebe S0/S8a-1).
      */
     public String resolveExpressionInChainScopeByNames(String raw, UUID processInstanceId, UUID activityId) {
         if (raw == null || raw.isBlank()) return null;
@@ -272,11 +280,14 @@ public class ElementSupport {
             merged.put(v.getName(), v);
         }
         for (UUID scopeId : enclosingScopeChain(processInstanceId, activityId)) {
-            for (ProcessVariable v : dbService.getScopedVariablesByNames(processInstanceId, scopeId, names)) {
+            // WO-C8-42: scope-ONLY слои (см. javadoc выше): merge-ридер подмешивал
+            // stale root в КАЖДЫЙ enclosing-слой и перетирал байнды внешних
+            // MI-скоупов — тот же класс дефекта для вложенных MI.
+            for (ProcessVariable v : dbService.getScopeOnlyVariablesByNames(processInstanceId, scopeId, names)) {
                 merged.put(v.getName(), v);
             }
         }
-        for (ProcessVariable v : dbService.getScopedVariablesByNames(processInstanceId, activityId, names)) {
+        for (ProcessVariable v : dbService.getScopeOnlyVariablesByNames(processInstanceId, activityId, names)) {
             merged.put(v.getName(), v);
         }
         return resolveExpressionInScope(raw, processInstanceId, new ArrayList<>(merged.values()));
@@ -861,6 +872,10 @@ public class ElementSupport {
      * агрегации: outputElement MI-задачи внутри MI-подпроцесса ссылается на
      * completion-переменную, которая после F1 живёт в скоупе КОНТЕЙНЕРА
      * (own scope задачи её не содержит) — root+own давал бы null вместо значения.
+     *
+     * <p>WO-C8-42: собственный слой — scope-ONLY (та же причина, что
+     * {@link #resolveExpressionInChainScopeByNames}: merge-ридер подмешивал
+     * stale root и перетирал внешние скоупы).
      */
     public List<ProcessVariable> chainVariablesForNames(UUID processInstanceId, UUID activityId,
             java.util.Collection<String> names) {
@@ -872,11 +887,12 @@ public class ElementSupport {
             merged.put(v.getName(), v);
         }
         for (UUID scopeId : enclosingScopeChain(processInstanceId, activityId)) {
-            for (ProcessVariable v : dbService.getScopedVariablesByNames(processInstanceId, scopeId, names)) {
+            // WO-C8-42: scope-ONLY (см. resolveExpressionInChainScopeByNames).
+            for (ProcessVariable v : dbService.getScopeOnlyVariablesByNames(processInstanceId, scopeId, names)) {
                 merged.put(v.getName(), v);
             }
         }
-        for (ProcessVariable v : dbService.getScopedVariablesByNames(processInstanceId, activityId, names)) {
+        for (ProcessVariable v : dbService.getScopeOnlyVariablesByNames(processInstanceId, activityId, names)) {
             merged.put(v.getName(), v);
         }
         return new ArrayList<>(merged.values());
@@ -1002,8 +1018,14 @@ public class ElementSupport {
      * outermost first, the element's own scope last (nearest-wins for duplicate
      * names). Elements with no enclosing scope get exactly the historical
      * root+own merged view (same single repository read, zero behaviour change).
-     * Reuses the existing merged {@code getVariables} reads only — no new
-     * repository methods (the variable-ownership boundary stays untouched).
+     *
+     * <p>WO-C8-42: enclosing/own слои — scope-ONLY чтения. Merge-ридер
+     * {@code getVariables(pi, scopeId)} возвращал root+scope и его root-строки
+     * перетирали байнды внешних MI-скоупов на каждом слое (stale root
+     * activity/loopCounter затеняли цикл-переменную инстанса — дефект
+     * консьюмера 2026-10-14: decide нёс чужой activityUuid, повторный вход шёл
+     * по устаревшему activity). При чистом root множество побайтово то же
+     * (scope-строки те же, root уже лежит первым слоем).
      */
     public List<ProcessVariable> visibleVariables(UUID processInstanceId, UUID activityId) {
         List<UUID> enclosing = enclosingScopeChain(processInstanceId, activityId);
@@ -1015,11 +1037,11 @@ public class ElementSupport {
             merged.put(v.getName(), v);
         }
         for (UUID scopeId : enclosing) {
-            for (ProcessVariable v : dbService.getVariables(processInstanceId, scopeId)) {
+            for (ProcessVariable v : dbService.getScopeVariables(processInstanceId, scopeId)) {
                 merged.put(v.getName(), v);
             }
         }
-        for (ProcessVariable v : dbService.getVariables(processInstanceId, activityId)) {
+        for (ProcessVariable v : dbService.getScopeVariables(processInstanceId, activityId)) {
             merged.put(v.getName(), v);
         }
         return new ArrayList<>(merged.values());

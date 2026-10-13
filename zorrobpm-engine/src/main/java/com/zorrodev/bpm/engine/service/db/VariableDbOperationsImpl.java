@@ -357,6 +357,32 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
     }
 
     @Override
+    public List<ProcessVariable> getScopeOnlyVariablesByNames(@NonNull UUID processInstanceId, UUID scopeId,
+            java.util.Collection<String> names) {
+        // WO-C8-42: scope rows only, no root fallback (the caller layers root
+        // itself). Null scope → nothing: the root layer is the caller's, this
+        // method must never return the whole root by accident.
+        if (names == null || names.isEmpty() || scopeId == null) {
+            return List.of();
+        }
+        return variableRepository.findByProcessInstanceIdAndScopeIdAndNameIn(processInstanceId, scopeId, names)
+            .stream()
+            .map(this::toProcessVariable)
+            .toList();
+    }
+
+    @Override
+    public List<ProcessVariable> getScopeVariables(@NonNull UUID processInstanceId, UUID scopeId) {
+        // WO-C8-42: см. интерфейс — только строки скоупа, null scope → пусто.
+        if (scopeId == null) {
+            return List.of();
+        }
+        return variableRepository.findByProcessInstanceIdAndScopeId(processInstanceId, scopeId).stream()
+            .map(this::toProcessVariable)
+            .toList();
+    }
+
+    @Override
     public Optional<String> getVariableTextValue(@NonNull UUID processInstanceId, String name) {
         return variableRepository.findByProcessInstanceIdAndNameAndScopeIdIsNull(processInstanceId, name)
             .map(ProcessVariableEntity::getTextValue);

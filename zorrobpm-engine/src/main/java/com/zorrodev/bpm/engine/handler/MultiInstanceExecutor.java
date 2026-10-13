@@ -101,6 +101,10 @@ public class MultiInstanceExecutor {
      * получает ровно root — поведение побайтово то же, что rootVariablesFor.
      * Нужно MI внутри (MI-)подпроцессов: их inputCollection ссылается на
      * цикл-переменную внешнего инстанса, которой в root нет.
+     *
+     * <p>WO-C8-42: слои цепочки — scope-ONLY (root идёт первым слоем как
+     * fallback): merge-ридер подмешивал stale root в каждый слой и перетирал
+     * байнды внешних скоупов. При чистом root множество побайтово то же.
      */
     private List<ProcessVariable> chainVariablesFor(UUID processInstanceId, UUID token, String... expressions) {
         Set<String> names = new LinkedHashSet<>();
@@ -116,7 +120,7 @@ public class MultiInstanceExecutor {
             merged.put(v.getName(), v);
         }
         for (UUID scopeId : chain) {
-            for (ProcessVariable v : dbService.getScopedVariablesByNames(processInstanceId, scopeId, names)) {
+            for (ProcessVariable v : dbService.getScopeOnlyVariablesByNames(processInstanceId, scopeId, names)) {
                 merged.put(v.getName(), v);
             }
         }

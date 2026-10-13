@@ -40,6 +40,29 @@ public interface VariableDbOperations {
         java.util.Collection<String> names);
 
     /**
+     * WO-C8-42: scoped pinpoint WITHOUT the root merge — rows of this scope
+     * only. Final layer of the chain-context merge in
+     * {@code ElementSupport.resolveExpressionInChainScopeByNames} /
+     * {@code chainVariablesForNames}: the own scope's own rows must shadow the
+     * enclosing scopes, while the root+scope merge reader would re-introduce
+     * stale root rows for names the own scope never wrote (loop-var shadowing
+     * defect of the consumer report 2026-10-14). Empty names → empty list
+     * without touching the DB. A null scopeId reads nothing (root is layered
+     * separately by the caller), never the whole root.
+     */
+    List<ProcessVariable> getScopeOnlyVariablesByNames(@NonNull UUID processInstanceId, UUID scopeId,
+        java.util.Collection<String> names);
+
+    /**
+     * WO-C8-42: все строки ОДНОГО скоупа (scope rows only, без root merge).
+     * Слои {@code ElementSupport.visibleVariables}: enclosing/own слои обязаны
+     * нести только свои строки — merge-ридер подмешивал stale root и перетирал
+     * байнды внешних MI-скоупов. Null scope → пусто (root слоем выше кладёт
+     * вызывающий).
+     */
+    List<ProcessVariable> getScopeVariables(@NonNull UUID processInstanceId, UUID scopeId);
+
+    /**
      * WO-REL-41 (B-8, п.2): pinpoint read of ONE root variable's text value
      * (the MI batch-UUID lookup). Root scope only — a scoped variable with
      * the same name must never leak in. Empty when the row is absent.

@@ -255,6 +255,20 @@ public interface DBService {
         java.util.Collection<String> names);
 
     /**
+     * WO-C8-42: scoped pinpoint WITHOUT the root merge — rows of this scope
+     * only (null scope → empty). Final layer of the chain-context merge.
+     * See {@link com.zorrodev.bpm.engine.service.db.VariableDbOperations#getScopeOnlyVariablesByNames}.
+     */
+    List<ProcessVariable> getScopeOnlyVariablesByNames(@NonNull UUID processInstanceId, UUID scopeId,
+        java.util.Collection<String> names);
+
+    /**
+     * WO-C8-42: все строки одного скоупа без root merge (null scope → пусто).
+     * See {@link com.zorrodev.bpm.engine.service.db.VariableDbOperations#getScopeVariables}.
+     */
+    List<ProcessVariable> getScopeVariables(@NonNull UUID processInstanceId, UUID scopeId);
+
+    /**
      * WO-REL-41 (B-8, п.2): pinpoint read of ONE root variable's text value.
      * See {@link com.zorrodev.bpm.engine.service.db.VariableDbOperations#getVariableTextValue}.
      */
