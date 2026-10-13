@@ -246,4 +246,100 @@ public class MiSubProcessApprovalRouteIT {
         assertThat(polls2).as("all APPROVED returns to open-activities poll").hasSize(1);
         assertThat(incidents(pi)).as("no incidents").isZero();
     }
+
+    /**
+     * Критерий 3 (REJECTED-ветка): те же 2 исполнителя, но вторая user task сдаётся
+     * с REJECTED → join, decisions=[APPROVED, REJECTED] в порядке инстансов,
+     * gwWorkTaskDecision ведёт в srvRouteChangeStatus → endRoutePaused
+     * (flowWorkTaskRejected), а НЕ назад на опрос.
+     */
+    @Transactional
+    @Test
+    void approvalRoute_oneRejected_routePaused() throws Exception {
+        UUID pdId = deploy();
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(pdId);
+        dto.setVariables(List.of(
+            pv("createdEmployeeId", ProcessVariableType.LONG, "100"),
+            pv("routeUuid", ProcessVariableType.STRING, "route-2"),
+            pv("processTypeId", ProcessVariableType.LONG, "4"),
+            pv("sourceUuid", ProcessVariableType.STRING, "src-2"),
+            pv("sourceVersion", ProcessVariableType.LONG, "1"),
+            pv("stages", ProcessVariableType.JSON, "[]"),
+            pv("resourceUuid", ProcessVariableType.STRING, "res-2")));
+        UUID pi = runtimeService.startProcessInstance(dto).getId();
+
+        for (String setup : List.of("srvRouteCreate", "srvRouteSourceMapLink",
+            "srvStageCreateWithActivities", "srvResourceCreate")) {
+            List<ActivityEntity> jobs = activities(pi, setup, ActivityStatus.CREATED);
+            assertThat(jobs).as("setup job " + setup).hasSize(1);
+            if ("srvRouteCreate".equals(setup)) {
+                runtimeService.completeServiceTask(jobs.get(0).getId(),
+                    List.of(pv("routeUuid", ProcessVariableType.STRING, "route-2")));
+            } else if ("srvResourceCreate".equals(setup)) {
+                runtimeService.completeServiceTask(jobs.get(0).getId(),
+                    List.of(pv("resourceUuid", ProcessVariableType.STRING, "res-2")));
+            } else {
+                runtimeService.completeServiceTask(jobs.get(0).getId(), List.of());
+            }
+        }
+        List<ActivityEntity> starters = activities(pi, "srvRouteStart", ActivityStatus.CREATED);
+        assertThat(starters).hasSize(1);
+        runtimeService.completeServiceTask(starters.get(0).getId(), List.of());
+        List<ActivityEntity> polls = activities(pi, "srvRouteOpenActivities", ActivityStatus.CREATED);
+        assertThat(polls).hasSize(1);
+        runtimeService.completeServiceTask(polls.get(0).getId(), List.of(
+            pv("routeStageUuid", ProcessVariableType.STRING, "stage-1"),
+            pv("stageModeId", ProcessVariableType.LONG, "2"),
+            pv("activities", ProcessVariableType.JSON,
+                "[{\"employeeId\":21346,\"uuid\":\"act-1\"},{\"employeeId\":29250,\"uuid\":\"act-2\"}]"),
+            pv("hasOpen", ProcessVariableType.BOOLEAN, "true"),
+            pv("hasRejected", ProcessVariableType.BOOLEAN, "false")));
+
+        List<ActivityEntity> creates = activities(pi, "srvWorkTaskCreate", ActivityStatus.CREATED);
+        assertThat(creates).as("2 parallel srvWorkTaskCreate").hasSize(2);
+        for (int i = 0; i < creates.size(); i++) {
+            runtimeService.completeServiceTask(creates.get(i).getId(),
+                List.of(pv("taskUuid", ProcessVariableType.STRING, "task-r" + (i + 1))));
+        }
+
+        List<ActivityEntity> userTasks = activities(pi, "utWorkTaskExecute", ActivityStatus.CREATED);
+        assertThat(userTasks).as("2 parallel user tasks").hasSize(2);
+
+        // Первая — APPROVED, вторая — REJECTED (comment обязателен при REJECTED).
+        runtimeService.completeUserTask(userTasks.get(0).getId(), List.of(
+            pv("decision", ProcessVariableType.STRING, "APPROVED"),
+            pv("comment", ProcessVariableType.STRING, "ok-1")));
+        List<ActivityEntity> decides = activities(pi, "srvWorkTaskDecide", ActivityStatus.CREATED);
+        assertThat(decides).hasSize(1);
+        runtimeService.completeServiceTask(decides.get(0).getId(), List.of());
+
+        List<ActivityEntity> remaining = activities(pi, "utWorkTaskExecute", ActivityStatus.CREATED);
+        assertThat(remaining).hasSize(1);
+        runtimeService.completeUserTask(remaining.get(0).getId(), List.of(
+            pv("decision", ProcessVariableType.STRING, "REJECTED"),
+            pv("comment", ProcessVariableType.STRING, "needs rework")));
+        List<ActivityEntity> decides2 = activities(pi, "srvWorkTaskDecide", ActivityStatus.CREATED);
+        assertThat(decides2).as("decide job of the second branch").hasSize(1);
+        runtimeService.completeServiceTask(decides2.get(0).getId(), List.of());
+
+        ObjectMapper om = new ObjectMapper();
+        ProcessVariableEntity decisions = variableRepository
+            .findByNameAndProcessInstanceId("decisions", pi).orElseThrow();
+        List<Map<String, Object>> rows = om.readValue(decisions.getTextValue(),
+            new tools.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+        assertThat(rows).as("decisions aggregated in instance order").hasSize(2);
+        assertThat(rows.stream().map(r -> String.valueOf(r.get("decision"))).toList())
+            .containsExactly("APPROVED", "REJECTED");
+
+        // Хотя бы один REJECTED → смена статуса и конец «на паузе», не возврат на опрос.
+        List<ActivityEntity> changeStatus = activities(pi, "srvRouteChangeStatus", ActivityStatus.CREATED);
+        assertThat(changeStatus).as("one REJECTED pauses the route").hasSize(1);
+        assertThat(activities(pi, "srvRouteOpenActivities", ActivityStatus.CREATED))
+            .as("no return to the poll on REJECTED").isEmpty();
+        runtimeService.completeServiceTask(changeStatus.get(0).getId(), List.of());
+        assertThat(activities(pi, "endRoutePaused", ActivityStatus.COMPLETED))
+            .as("route paused end reached").hasSize(1);
+        assertThat(incidents(pi)).as("no incidents").isZero();
+    }
 }
