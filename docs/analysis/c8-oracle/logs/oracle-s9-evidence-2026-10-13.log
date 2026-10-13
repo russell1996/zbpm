@@ -1,0 +1,12 @@
+CONNECTED brokers=1 gw=8.5.0
+DEPLOY s9-evidence -> s9MiSub v3
+START s9MiSub -> piKey=2251799813686411
+--- S9-evidence w initial: 3 job(s) ---
+key=2251799813686436 elementId=w piKey=2251799813686411 vars={"item":"a","loopCounter":1,"results":[null,null,null]}
+key=2251799813686437 elementId=w piKey=2251799813686411 vars={"item":"b","loopCounter":2,"results":[null,null,null]}
+key=2251799813686438 elementId=w piKey=2251799813686411 vars={"item":"c","loopCounter":3,"results":[null,null,null]}
+COMPLETED 1 (key=2251799813686436), sleeping 35s to outlive 30s sibling locks...
+--- S9-evidence w after one completion: 0 job(s) (S9-1: expect 0) ---
+--- S9-evidence dump: 1 job(s) (S9-2: expect partial results) ---
+key=2251799813686449 elementId=dump piKey=2251799813686411 vars={"results":["a",null,null]}
+S9-EVIDENCE DONE
