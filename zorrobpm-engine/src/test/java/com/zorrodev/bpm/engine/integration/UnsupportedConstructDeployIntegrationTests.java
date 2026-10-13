@@ -224,7 +224,9 @@ public class UnsupportedConstructDeployIntegrationTests {
     @Test
     void criterion5_multiInstanceOnContainer_rejected() {
         // the maintainer-named scope addition (found by the WO-C8-34 review): multiInstanceLoopCharacteristics
-        // on a subProcess/callActivity parsed into an ordinary single-instance container
+        // on a callActivity parsed into an ordinary single-instance container.
+        // WO-C8-40: the embedded subProcess is NOT refused anymore — MI on it executes
+        // (MultiInstanceExecutor), so the same fixture now names only "miCall".
         String bpmn = readBpmn("test-mi-on-container-parse.bpmn");
 
         assertThatThrownBy(() -> processDefinitionService.addProcessDefinition(bpmn))
@@ -233,7 +235,7 @@ public class UnsupportedConstructDeployIntegrationTests {
                 ApiException api = (ApiException) ex;
                 assertThat(api.getCode()).isEqualTo("UNSUPPORTED_MULTI_INSTANCE_CONTAINER");
                 assertThat(api.getParams().get("elementIds")).asList()
-                    .containsExactly("miSub", "miCall");
+                    .containsExactly("miCall");
             });
 
         assertThat(processDefinitionRepository.findAll())
@@ -250,12 +252,13 @@ public class UnsupportedConstructDeployIntegrationTests {
     @Test
     void criterion6_supportedCounsinsOfEveryRejectedConstruct_stillDeploy() {
         for (String fixture : List.of(
-            // multi-instance on the two kinds that support it
+            // multi-instance on the kinds that support it (WO-C8-40: + subProcess)
             "test-multi-instance.bpmn",
             "test-multi-instance-sequential.bpmn",
             "test-multi-instance-service.bpmn",
             "test-mi-reenter.bpmn",
             "test-eng-8-completioncondition.bpmn",
+            "test-c840-mi-sub-minimal.bpmn",
             // conditional events on the kinds that DO implement them (boundary + intermediate catch)
             "test-conditional-boundary.bpmn",
             "test-conditional-catch.bpmn",
