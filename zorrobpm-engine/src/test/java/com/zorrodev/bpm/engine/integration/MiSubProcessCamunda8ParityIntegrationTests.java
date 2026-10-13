@@ -44,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
-public class MiSubProcessCamunda8ParityIT {
+public class MiSubProcessCamunda8ParityIntegrationTests {
 
     @Autowired
     private ProcessDefinitionService processDefinitionService;
