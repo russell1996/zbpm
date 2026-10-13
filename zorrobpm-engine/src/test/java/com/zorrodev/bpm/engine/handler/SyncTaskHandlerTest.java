@@ -63,7 +63,8 @@ class SyncTaskHandlerTest {
         el.setExtensions(elExt);
 
         when(dbService.createActivity(eq(piId), eq(tokenId), eq(el))).thenReturn(activityId);
-        when(dbService.getVariables(piId)).thenReturn(List.of());
+        // WO-C8-40: скрипт видит chain-контекст (visibleVariables), не root.
+        when(elementSupport.visibleVariables(eq(piId), eq(activityId))).thenReturn(List.of());
         when(scriptService.evaluateExpression(eq("x + 1"), any())).thenReturn(42L);
         when(elementSupport.toProcessVariable(eq("result"), eq(42L))).thenReturn(new ProcessVariable());
 

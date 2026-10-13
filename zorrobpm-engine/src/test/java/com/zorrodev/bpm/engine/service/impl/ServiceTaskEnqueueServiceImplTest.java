@@ -141,7 +141,7 @@ class ServiceTaskEnqueueServiceImplTest {
         when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
-        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(elementSupport.visibleVariables(processInstanceId, serviceTaskId)).thenReturn(List.of()); // WO-C8-40: payload read goes through visibleVariables
         when(objectMapper.writeValueAsString(any())).thenReturn("{}");
 
         service.enqueueAfterCommit(serviceTaskId);
@@ -196,7 +196,7 @@ class ServiceTaskEnqueueServiceImplTest {
         when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
-        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(elementSupport.visibleVariables(processInstanceId, serviceTaskId)).thenReturn(List.of()); // WO-C8-40: payload read goes through visibleVariables
         try {
             when(objectMapper.writeValueAsString(any())).thenReturn("{}");
         } catch (Exception e) {
@@ -285,7 +285,7 @@ class ServiceTaskEnqueueServiceImplTest {
         when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
-        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(elementSupport.visibleVariables(processInstanceId, serviceTaskId)).thenReturn(List.of()); // WO-C8-40: payload read goes through visibleVariables
         when(objectMapper.writeValueAsString(any())).thenReturn("{}");
 
         service.enqueueAfterCommit(serviceTaskId);
@@ -329,7 +329,7 @@ class ServiceTaskEnqueueServiceImplTest {
         when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
-        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(elementSupport.visibleVariables(processInstanceId, serviceTaskId)).thenReturn(List.of()); // WO-C8-40: payload read goes through visibleVariables
         when(objectMapper.writeValueAsString(any())).thenReturn("{}");
 
         service.enqueueAfterCommit(serviceTaskId);
@@ -345,9 +345,10 @@ class ServiceTaskEnqueueServiceImplTest {
         // will consume actually contains taskHeaders (proves the exchange-DTO change end to end).
         // WO-C8-9: SUT constructor gained ElementSupport — a permissive mock keeps this
         // headers-only test focused (priority resolves to null, headers path untouched).
+        ElementSupport headersSupport = mock(ElementSupport.class);
         ServiceTaskEnqueueServiceImpl realMapperService = new ServiceTaskEnqueueServiceImpl(
             dbService, bpmnService, outboxRepository, new tools.jackson.databind.ObjectMapper(),
-            mock(ElementSupport.class), mock(ElementListenerPhaseRepository.class),
+            headersSupport, mock(ElementListenerPhaseRepository.class),
             com.zorrodev.bpm.engine.tracing.TracingSupport.noop());
 
         UUID serviceTaskId = UUID.randomUUID();
@@ -380,7 +381,7 @@ class ServiceTaskEnqueueServiceImplTest {
         when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
-        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(headersSupport.visibleVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
 
         realMapperService.enqueueAfterCommit(serviceTaskId);
 
@@ -671,7 +672,7 @@ class ServiceTaskEnqueueServiceImplTest {
         when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
-        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(elementSupport.visibleVariables(processInstanceId, serviceTaskId)).thenReturn(List.of()); // WO-C8-40: payload read goes through visibleVariables
         when(objectMapper.writeValueAsString(any())).thenReturn("{}");
 
         service.enqueueAfterCommit(serviceTaskId);
@@ -759,7 +760,7 @@ class ServiceTaskEnqueueServiceImplTest {
         when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
-        when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
+        when(elementSupport.visibleVariables(processInstanceId, serviceTaskId)).thenReturn(List.of()); // WO-C8-40: payload read goes through visibleVariables
         when(objectMapper.writeValueAsString(any())).thenReturn("{}");
 
         service.enqueueAfterCommit(serviceTaskId);
@@ -833,6 +834,8 @@ class ServiceTaskEnqueueServiceImplTest {
         when(dbService.getActivity(serviceTaskId)).thenReturn(activity);
         when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
+        // WO-C8-40: SUT serviceWithStamping несёт realElementSupport — стабаем DB-чтение,
+        // которое выполняет прод-код visibleVariables (токен фикстуры null → getVariables(pi, id)).
         when(dbService.getVariables(processInstanceId, serviceTaskId)).thenReturn(List.of());
         when(dbService.getServiceTaskPendingListenerIndex(serviceTaskId)).thenReturn(0);
 

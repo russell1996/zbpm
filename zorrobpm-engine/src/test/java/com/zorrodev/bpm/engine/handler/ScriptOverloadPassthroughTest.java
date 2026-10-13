@@ -118,7 +118,10 @@ class ScriptOverloadPassthroughTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void userTaskPriority_overload_propagates_noIncident() {
         ElementSupport elementSupport = mock(ElementSupport.class);
-        when(elementSupport.resolveUserTaskPriorityOrThrow(any(), any())).thenThrow(OVERLOAD);
+        // WO-C8-40: createTaskRow резолвит приоритет в chain-контексте
+        // (resolveUserTaskPriorityInChainScopeOrThrow); старый root-метод
+        // прод больше не зовёт — стаб на нём был бы vacuous (strict-stubs).
+        when(elementSupport.resolveUserTaskPriorityInChainScopeOrThrow(any(), any(), any())).thenThrow(OVERLOAD);
         DBService dbService = mock(DBService.class);
         UserTaskHandler handler = new UserTaskHandler(dbService, elementSupport,
             mock(MultiInstanceExecutor.class), mock(BoundaryScheduler.class),
@@ -143,7 +146,8 @@ class ScriptOverloadPassthroughTest {
         ElementSupport elementSupport = mock(ElementSupport.class);
         com.zorrodev.bpm.contract.exception.EngineException broken =
             new com.zorrodev.bpm.contract.exception.EngineException("broken priorityDefinition");
-        when(elementSupport.resolveUserTaskPriorityOrThrow(any(), any())).thenThrow(broken);
+        // WO-C8-40: chain-контекст (см. выше).
+        when(elementSupport.resolveUserTaskPriorityInChainScopeOrThrow(any(), any(), any())).thenThrow(broken);
         DBService dbService = mock(DBService.class);
         UserTaskHandler handler = new UserTaskHandler(dbService, elementSupport,
             mock(MultiInstanceExecutor.class), mock(BoundaryScheduler.class),
