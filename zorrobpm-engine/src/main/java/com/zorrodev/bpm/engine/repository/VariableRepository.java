@@ -99,6 +99,17 @@ public interface VariableRepository extends JpaRepository<ProcessVariableEntity,
     List<ProcessVariableEntity> findByProcessInstanceIdAndScopeId(UUID processInstanceId, UUID scopeId);
 
     /**
+     * WO-C8-42: pinpoint read of a few rows of ONE scope by name — scope rows
+     * ONLY, no root merge (unlike {@link #findRootAndScopedByNames}). The final
+     * layer of the chain-context merge ({@code root → enclosing scopes →
+     * own-scope-only}): the own scope must shadow the enclosing scopes, but the
+     * root+own merge reader would smuggle stale root rows back over them.
+     * Backed by uk_variables__pi_name_scope (pi, name, scope).
+     */
+    List<ProcessVariableEntity> findByProcessInstanceIdAndScopeIdAndNameIn(
+        UUID processInstanceId, UUID scopeId, java.util.Collection<String> names);
+
+    /**
      * WO-REL-31 CR-4: one query instead of two for the root+scoped read merge.
      * Root rows (scopeId IS NULL) are ordered BEFORE the given scope rows — the
      * caller's "scoped wins for duplicate names" merge depends on that order.
