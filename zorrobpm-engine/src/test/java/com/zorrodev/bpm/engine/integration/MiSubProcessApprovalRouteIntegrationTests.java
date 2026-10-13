@@ -47,7 +47,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
-public class MiSubProcessApprovalRouteIT {
+public class MiSubProcessApprovalRouteIntegrationTests {
 
     @Autowired
     private ProcessDefinitionService processDefinitionService;

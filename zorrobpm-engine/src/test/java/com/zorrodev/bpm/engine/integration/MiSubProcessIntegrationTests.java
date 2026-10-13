@@ -533,6 +533,42 @@ public class MiSubProcessIntegrationTests {
     }
 
     /**
+     * Критерий 8 (отмена): interrupting ESCALATION boundary на MI-подпроцессе — код-близнец
+     * error-пути (throwEscalation, MI-ветка), живого теста на который не было (красная команда
+     * WO-C8-40 r1, находка №4): escalation end внутри одного инстанса гасит ВСЕ инстансы,
+     * поток идёт с границы, нормальный выход контейнера не берётся.
+     */
+    @Transactional
+    @Test
+    void escalationBoundaryOnMiSub_cancelsAllInstancesAndContinues() throws Exception {
+        UUID pdId = deploy("test-c840-mi-sub-escalation-boundary.bpmn");
+        UUID pi = start(pdId, List.of());
+
+        List<ActivityEntity> tasks = activities(pi, "utProbe", ActivityStatus.CREATED);
+        assertThat(tasks).hasSize(2);
+        tasks.forEach(t -> runtimeService.completeUserTask(t.getId(), List.of()));
+
+        List<ActivityEntity> workers = activities(pi, "svcWork", ActivityStatus.CREATED);
+        assertThat(workers).as("one worker per MI instance").hasSize(2);
+
+        // Завершение первого worker доводит инстанс до escalation end —
+        // граница на контейнере гасит оба инстанса.
+        runtimeService.completeServiceTask(workers.get(0).getId(), List.of());
+
+        assertThat(activities(pi, "utProbe", ActivityStatus.CANCELLED)).isEmpty();
+        assertThat(activities(pi, "svcWork", ActivityStatus.CREATED))
+            .as("sibling worker cancelled with the scope").isEmpty();
+        assertThat(activities(pi, "subProbe", ActivityStatus.CANCELLED))
+            .as("both MI container instances cancelled").hasSize(2);
+        assertThat(activities(pi, "endAfter", ActivityStatus.COMPLETED))
+            .as("boundary continuation ran").hasSize(1);
+        assertThat(activities(pi, "endRepro", ActivityStatus.COMPLETED))
+            .as("normal exit not taken").isEmpty();
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+        assertThat(incidents(pi)).isZero();
+    }
+
+    /**
      * Критерий 8 (отмена): terminate end внутри одного инстанса —
      * соседний инстанс снят (cancelActivity; его задача гаснет как часть
      * scope-отмены — CANCELLED или остаётся CREATED-но-мёртвой, если scope-цепочка
