@@ -181,6 +181,9 @@ const navigableElementIds = computed<string[]>(() => {
     if (sp.parentActivityId !== null) childActivityIds.add(sp.parentActivityId)
   }
   const walk = (nodes: BpmnNode[]): void => {
+    // WO-UI-30: children типизирован non-optional (| null), но живые
+    // фикстуры/сторонние структуры несут undefined (поймано живым Chromium
+    // в чужом browser-тесте: nodes is not iterable) — guard по факту.
     for (const n of nodes ?? []) {
       if (n.type === 'callActivity') {
         const ids = activityIdsByElement.get(n.id)
