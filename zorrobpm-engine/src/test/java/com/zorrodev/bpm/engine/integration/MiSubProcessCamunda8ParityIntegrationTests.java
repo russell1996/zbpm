@@ -72,9 +72,14 @@ public class MiSubProcessCamunda8ParityIntegrationTests {
     }
 
     private UUID start(UUID pdId) {
+        return start(pdId, List.of());
+    }
+
+    /** WO-C8-41 HOLD r1 (F-A): start with preseeded variables. */
+    private UUID start(UUID pdId, List<ProcessVariable> variables) {
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(pdId);
-        dto.setVariables(List.of());
+        dto.setVariables(variables);
         return runtimeService.startProcessInstance(dto).getId();
     }
 
@@ -370,6 +375,38 @@ public class MiSubProcessCamunda8ParityIntegrationTests {
         ProcessVariableEntity results = variableRepository
             .findByNameAndProcessInstanceId("results", pi).orElseThrow();
         assertThat(new ObjectMapper().readValue(results.getTextValue(), List.class))
+            .containsExactly(null, null);
+    }
+
+    /**
+     * S10 (WO-C8-41 HOLD r1, F-A; Zeebe 8.5.0, repro scratchpad/s10): при входе
+     * в MI-тело Zeebe ВСЕГДА создаёт outputCollection заново [null×N] —
+     * одноимённая предустановленная переменная перезаписывается, хвост не
+     * протекает. Preseeded results=["stale"×3], MI по 2 элементам (s5-фикстура,
+     * outputElement unset) → в конце [null, null].
+     */
+    @Transactional
+    @Test
+    void s10_preseededOutputCollectionOverwrittenAtEntry() throws Exception {
+        UUID pdId = deploy("test-c841-parity-s5-unset-output.bpmn");
+        UUID pi = start(pdId, List.of(pv("results", ProcessVariableType.JSON,
+            "[\"stale\",\"stale\",\"stale\"]")));
+
+        List<ActivityEntity> w = activities(pi, "w", ActivityStatus.CREATED);
+        assertThat(w).hasSize(2);
+        // F-A: перезапись при входе — fresh [null×2] вместо пропуска из-за
+        // существующей переменной.
+        assertThat(resultsOf(pi)).as("outputCollection re-created fresh at entry (F-A)")
+            .containsExactly(null, null);
+        w.forEach(j -> runtimeService.completeServiceTask(j.getId(), List.of()));
+
+        List<ActivityEntity> dump = activities(pi, "dump", ActivityStatus.CREATED);
+        assertThat(dump).hasSize(1);
+        runtimeService.completeServiceTask(dump.get(0).getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+        assertThat(incidents(pi)).isZero();
+        assertThat(resultsOf(pi)).as("no stale tail leaks into the aggregated collection")
             .containsExactly(null, null);
     }
 

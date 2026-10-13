@@ -224,8 +224,11 @@ public class MultiInstanceExecutor {
         // WO-C8-41 (F2, oracle S1-1/S4): предсоздание outputCollection при входе —
         // [null x N] (S4: N=0 даёт []), в CONTAINING scope (innermost scope токена
         // входа: root сверху, outer-instance scope у вложенного). Zeebe показывает
-        // предсозданный массив уже первой джобе; absent-only (как
-        // writeEmptyOutputCollection): предустановленное пользователем не трогаем.
+        // предсозданный массив уже первой джобе.
+        // WO-C8-41 HOLD r1 (F-A): ПЕРЕЗАПИСЬ, а не absent-only — одноимённая
+        // переменная в containing scope переписывается fresh [null×N] (Zeebe
+        // всегда создаёт коллекцию заново при входе в MI-тело). N=0-путь
+        // (writeEmptyOutputCollection) остаётся absent-only — не в скопе F-A.
         precreateOutputCollection(processInstanceId, token, mi, count);
         String batchUuid = UUID.randomUUID().toString();
         ProcessVariable batchVar = new ProcessVariable();
@@ -387,8 +390,16 @@ public class MultiInstanceExecutor {
 
     /**
      * WO-C8-41 (F2, oracle S1-1/S4): предсоздание outputCollection
-     * {@code [null x count]} в containing scope входа (absent-only). Без
+     * {@code [null x count]} в containing scope входа. Без
      * outputCollection — no-op.
+     * <p>
+     * WO-C8-41 HOLD r1 (F-A, Zeebe-parity): ВСЕГДА перезаписывать, а не
+     * absent-only. Zeebe при входе в MI-тело всегда создаёт outputCollection
+     * заново (repro 8.5.0: preseeded results=["stale"×3], MI по 2 элементам →
+     * ["a","b"], хвост не протекает). Ранний return по «существующей
+     * переменной» оставлял чужие/старые элементы в агрегате (у нас было
+     * [null,null,"stale"]). setVariables — upsert по (pi, name, scope):
+     * перезапись существующей строки, не вставка дубля.
      */
     private void precreateOutputCollection(UUID processInstanceId, UUID token,
             MultiInstanceExtensionModel mi, int count) {
@@ -396,18 +407,6 @@ public class MultiInstanceExecutor {
             return;
         }
         UUID containingScope = innermostScopeOfToken(token);
-        List<ProcessVariable> existing;
-        if (containingScope == null) {
-            if (dbService.getVariableTextValue(processInstanceId, mi.getOutputCollection()).isPresent()) {
-                return;
-            }
-        } else {
-            existing = dbService.getScopedVariablesByNames(processInstanceId, containingScope,
-                Set.of(mi.getOutputCollection()));
-            if (!existing.isEmpty()) {
-                return;
-            }
-        }
         ProcessVariable pre = new ProcessVariable();
         pre.setName(mi.getOutputCollection());
         pre.setType(ProcessVariableType.JSON);
