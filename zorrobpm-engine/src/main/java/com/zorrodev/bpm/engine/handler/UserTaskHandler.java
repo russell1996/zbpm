@@ -55,7 +55,9 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
             if (!createTaskRow(processInstanceId, activityId, bpmnElement)) {
                 return;
             }
-            elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+            // WO-C8-40: chain-контекст, как createTaskRow выше (ioMapping внутри
+            // (MI-)подпроцесса видит внешние скоупы; сверху — ровно applyIoMappings).
+            elementSupport.applyChainedIoInputs(processInstanceId, activityId, bpmnElement);
             postCreation(processInstanceId, token, activityId, bpmnElement);
             // WO-C8-28: a parked assignment (see createTaskRow) opens its own phase
             // AFTER the row and the boundaries exist — statement order above is
@@ -64,7 +66,8 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
                 serviceTaskEnqueueService.enqueueAfterCommit(activityId);
             }
         } else {
-            elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+            // WO-C8-40: chain-контекст (см. выше).
+            elementSupport.applyChainedIoInputs(processInstanceId, activityId, bpmnElement);
             dbService.setPendingCreatingListenerIndex(activityId, 0);
             dbService.setCreatingListenerRetriesRemaining(activityId,
                 elementSupport.listenerBudget(creatingListeners.get(0)));
@@ -88,13 +91,17 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
      * {@code ActivityService} delegation).
      */
     public boolean createTaskRow(UUID processInstanceId, UUID activityId, BpmnElementModel bpmnElement) {
-        String resolvedAssignee = elementSupport.resolveAssignee(processInstanceId, bpmnElement);
-        String resolvedGroups = elementSupport.resolveCandidateGroups(processInstanceId, bpmnElement);
+        // WO-C8-40: резолв полей — в chain-контексте (root + цепочка скоупов + own),
+        // а не в root: задача внутри (MI-)подпроцесса видит цикл-переменные и seed
+        // внешних скоупов. Для задач верхнего уровня цепочка пуста и контекст равен
+        // root — поведение побайтово то же (литералы чтения БД не требуют вовсе).
+        String resolvedAssignee = elementSupport.resolveAssigneeInChainScope(processInstanceId, activityId, bpmnElement);
+        String resolvedGroups = elementSupport.resolveCandidateGroupsInChainScope(processInstanceId, activityId, bpmnElement);
         // WO-IN-3: кандидаты-пользователи резолвятся здесь и уходят в таблицу кандидатов —
         // раньше атрибут парсился и молча терялся (E-IN2-1).
-        String resolvedUsers = elementSupport.resolveCandidateUsers(processInstanceId, bpmnElement);
-        String resolvedDueDate = elementSupport.resolveDueDate(processInstanceId, bpmnElement);
-        String resolvedFollowUpDate = elementSupport.resolveFollowUpDate(processInstanceId, bpmnElement);
+        String resolvedUsers = elementSupport.resolveCandidateUsersInChainScope(processInstanceId, activityId, bpmnElement);
+        String resolvedDueDate = elementSupport.resolveDueDateInChainScope(processInstanceId, activityId, bpmnElement);
+        String resolvedFollowUpDate = elementSupport.resolveFollowUpDateInChainScope(processInstanceId, activityId, bpmnElement);
         String formKey = bpmnElement.getExtensions() != null && bpmnElement.getExtensions().getUserTaskExtension() != null
             ? bpmnElement.getExtensions().getUserTaskExtension().getFormKey() : null;
         // WO-C8-22 (merge resolution): linked-form id rides its own field into the row
@@ -117,7 +124,8 @@ public class UserTaskHandler implements ElementHandler, TypedElementHandler {
         // ERROR, no row) — never a silent default. Absent attribute → docs default 50.
         final int resolvedPriority;
         try {
-            resolvedPriority = elementSupport.resolveUserTaskPriorityOrThrow(processInstanceId, bpmnElement);
+            // WO-C8-40: приоритет — в chain-контексте, как остальные поля выше.
+            resolvedPriority = elementSupport.resolveUserTaskPriorityInChainScopeOrThrow(processInstanceId, activityId, bpmnElement);
         } catch (com.zorrodev.bpm.engine.service.ScriptOverloadException e) {
             // WO-ENG-24: временная перегрузка пула — не битый priority.
             // Проброс до 503-хендлера (как главный путь ActivityService),

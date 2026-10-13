@@ -48,6 +48,12 @@ class ScriptOverloadPassthroughTest {
     private static final ScriptOverloadException OVERLOAD =
         new ScriptOverloadException("Script execution rejected: pool overloaded (test), retry later", 5);
 
+
+    @SuppressWarnings("unchecked")
+    private static org.springframework.beans.factory.ObjectProvider<com.zorrodev.bpm.engine.handler.SubProcessHandler> subHandlerProvider() {
+        return mock(org.springframework.beans.factory.ObjectProvider.class);
+    }
+
     // --- MI cardinality: перегрузка inputCollection/cardinality-eval идёт наружу ---
 
     @Test
@@ -61,7 +67,8 @@ class ScriptOverloadPassthroughTest {
         MultiInstanceExecutor executor = new MultiInstanceExecutor(
             dbService, scriptService, mock(com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService.class),
             new tools.jackson.databind.ObjectMapper(), mock(com.zorrodev.bpm.engine.service.BpmnService.class),
-            mock(ElementSupport.class), mock(BoundaryScheduler.class), mock(FlowNavigator.class));
+            mock(ElementSupport.class), mock(BoundaryScheduler.class), mock(FlowNavigator.class),
+            subHandlerProvider());
 
         BpmnElementModel element = miElement("=input");
 
@@ -82,7 +89,8 @@ class ScriptOverloadPassthroughTest {
         MultiInstanceExecutor executor = new MultiInstanceExecutor(
             dbService, mock(ScriptService.class), mock(com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService.class),
             new tools.jackson.databind.ObjectMapper(), mock(com.zorrodev.bpm.engine.service.BpmnService.class),
-            elementSupport, mock(BoundaryScheduler.class), mock(FlowNavigator.class));
+            elementSupport, mock(BoundaryScheduler.class), mock(FlowNavigator.class),
+            subHandlerProvider());
 
         // userTask-ветка spawn path: priority резолвится на каждый инстанс.
         // Прямой вызов приватного spawn тяжёл — идём через публичный enter
@@ -94,7 +102,8 @@ class ScriptOverloadPassthroughTest {
         MultiInstanceExecutor executor2 = new MultiInstanceExecutor(
             dbService, scriptService, mock(com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService.class),
             new tools.jackson.databind.ObjectMapper(), mock(com.zorrodev.bpm.engine.service.BpmnService.class),
-            elementSupport, mock(BoundaryScheduler.class), mock(FlowNavigator.class));
+            elementSupport, mock(BoundaryScheduler.class), mock(FlowNavigator.class),
+            subHandlerProvider());
 
         BpmnElementModel element = miUserTaskElement("=3", true);
         assertThatThrownBy(() -> executor2.enter(UUID.randomUUID(), UUID.randomUUID(), element, mock(TokenExecutor.class)))

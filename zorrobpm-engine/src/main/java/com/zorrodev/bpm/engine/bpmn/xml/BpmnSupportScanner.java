@@ -40,23 +40,26 @@ public final class BpmnSupportScanner {
     private static final String BPMN_NS = "http://www.omg.org/spec/BPMN/20100524/MODEL";
 
     /**
-     * The element kinds multi-instance is NOT implemented for. MI binds only on serviceTask and
-     * userTask (both call {@code attachMultiInstance}); on a container it parses into an ordinary
-     * single-instance element and runs once — the silent semantic change this WO closes.
+     * The element kinds multi-instance is NOT implemented for. MI binds on serviceTask,
+     * userTask (both call {@code attachMultiInstance}) and — с WO-C8-40 — на embedded
+     * {@code subProcess} (MI-вход/агрегация/join в {@code MultiInstanceExecutor}).
+     * На {@code transaction}/{@code adHocSubProcess}/{@code callActivity} маркер
+     * парсится в обычный одноинстансный элемент и выполняется один раз — тихое
+     * изменение семантики, которое этот WO закрывает отказом при деплое.
      *
-     * <p>Deliberately a positive list, not "everything except serviceTask/userTask": CTO scoped this
-     * WO to containers, and widening it silently would change behaviour for element kinds this WO
-     * never characterised. WO-ENG-34 раунд 10 уточнил формулировку: прежняя версия этого javadoc
-     * обосновывала сужение тем, что multiInstanceLoopCharacteristics встречается на
-     * {@code intermediateThrowEvent}, — но {@code tThrowEvent} по XSD не содержит
-     * {@code loopCharacteristics}, так что такого документа не бывает. Реальное основание: MI не
-     * привязывается ещё на шести видах activity ({@code task}, {@code scriptTask},
-     * {@code manualTask}, {@code businessRuleTask}, {@code sendTask}, {@code receiveTask}), и они
-     * сохраняют сегодняшнее поведение; решение о расширении списка — за CTO (рецензия Н-2,
-     * follow-up WO).
+     * <p>Deliberately a positive list, not "everything except serviceTask/userTask/subProcess":
+     * CTO scoped this WO to containers, and widening it silently would change behaviour for
+     * element kinds this WO never characterised. WO-ENG-34 раунд 10 уточнил формулировку:
+     * прежняя версия этого javadoc обосновывала сужение тем, что
+     * multiInstanceLoopCharacteristics встречается на {@code intermediateThrowEvent}, — но
+     * {@code tThrowEvent} по XSD не содержит {@code loopCharacteristics}, так что такого
+     * документа не бывает. Реальное основание: MI не привязывается ещё на шести видах
+     * activity ({@code task}, {@code scriptTask}, {@code manualTask},
+     * {@code businessRuleTask}, {@code sendTask}, {@code receiveTask}), и они сохраняют
+     * сегодняшнее поведение; решение о расширении списка — за CTO (рецензия Н-2, follow-up WO).
      */
     private static final Set<String> MULTI_INSTANCE_UNSUPPORTED_HOSTS =
-        Set.of("subProcess", "transaction", "adHocSubProcess", "callActivity");
+        Set.of("transaction", "adHocSubProcess", "callActivity");
 
     /**
      * The BPMN 2.0 flow-node kinds — the only elements a {@code sequenceFlow} may legally point at,
@@ -150,18 +153,21 @@ public final class BpmnSupportScanner {
                 UnsupportedBpmnConstructCodes.UNSUPPORTED_STANDARD_LOOP, standardLoops,
                 "Standard loop (standardLoopCharacteristics) is not supported: "
                     + String.join(", ", standardLoops) + " would run once instead of looping. "
-                    + "Use multi-instance (supported on serviceTask/userTask) or model the repetition "
+                    + "Use multi-instance (supported on serviceTask/userTask/subProcess) or model the repetition "
                     + "explicitly."));
         }
 
         // 4. multi-instance on a container: parsed into an ordinary single-instance container.
+        // WO-C8-40: embedded subProcess ИСКЛЮЧЁН — MI на нём выполняется движком
+        // (MultiInstanceExecutor), тишины нет, отказ не нужен. transaction/adHoc/call
+        // по-прежнему выполняются один раз молча — их отказ остаётся.
         List<String> multiInstanceOnContainers = idsOfElementsWithLoopKind(
             document, MULTI_INSTANCE_UNSUPPORTED_HOSTS, LoopKind.MULTI_INSTANCE);
         if (!multiInstanceOnContainers.isEmpty()) {
             findings.add(new UnsupportedBpmnConstruct(
                 UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_CONTAINER,
                 multiInstanceOnContainers,
-                "Multi-instance is supported on serviceTask and userTask only: "
+                "Multi-instance is supported on serviceTask, userTask and embedded subProcess: "
                     + String.join(", ", multiInstanceOnContainers) + " carries "
                     + "multiInstanceLoopCharacteristics on a container and would run once. "
                     + "Move the multi-instance marker onto a task inside the container, or drop it."));

@@ -103,6 +103,9 @@ public class BpmnSubProcessModel implements Documented {
     @XmlElement(name = "adHocSubProcess", namespace = NS)
     private List<BpmnAdHocSubProcessModel> adHocSubProcesses;
 
+    @XmlElement(name = "multiInstanceLoopCharacteristics", namespace = NS)
+    private BpmnMultiInstanceModel multiInstanceLoopCharacteristics;
+
     @XmlElement(name = "boundaryEvent", namespace = NS)
     private List<BpmnBoundaryEventModel> boundaryEvents;
 

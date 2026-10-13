@@ -65,7 +65,10 @@ public class ServiceTaskHandler implements ElementHandler, TypedElementHandler {
             // real job when the last listener completes (see CompletionService).
             dbService.setServiceTaskRetries(activityId, elementSupport.listenerBudget(startListeners.get(0)));
         }
-        elementSupport.applyIoMappings(processInstanceId, activityId, bpmnElement, true);
+        // WO-C8-40: входные маппинги — в chain-контексте (элемент внутри
+        // (MI-)подпроцесса видит внешние скоупы, как UserTaskHandler.createTaskRow;
+        // сверху цепочка пуста и это ровно applyIoMappings).
+        elementSupport.applyChainedIoInputs(processInstanceId, activityId, bpmnElement);
 
         // WO-DIFF-4: serviceTask hosts never armed their boundary events — UserTaskHandler
         // (postCreation) and MultiInstanceExecutor both call this trio, ServiceTaskHandler
