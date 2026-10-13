@@ -122,6 +122,42 @@ class VariableDbOperationsImplTest {
     }
 
     @Test
+    void getScopeOnlyVariablesByNames_returnsOnlyScopeRows() {
+        // WO-C8-42: scope-ONLY чтение — только строки скоупа, без root merge.
+        UUID pi = UUID.randomUUID(); UUID scope = UUID.randomUUID();
+        ProcessVariableEntity scoped = new ProcessVariableEntity(); scoped.setId(UUID.randomUUID()); scoped.setProcessInstanceId(pi); scoped.setScopeId(scope); scoped.setName("activity"); scoped.setType(ProcessVariableType.JSON); scoped.setTextValue("{\"uuid\":\"a1\"}");
+        when(variableRepository.findByProcessInstanceIdAndScopeIdAndNameIn(eq(pi), eq(scope), any())).thenReturn(List.of(scoped));
+        List<ProcessVariable> result = db.getScopeOnlyVariablesByNames(pi, scope, java.util.Set.of("activity"));
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getValue()).contains("a1");
+        verify(variableRepository, never()).findRootAndScopedByNames(any(), any(), any());
+    }
+
+    @Test
+    void getScopeOnlyVariablesByNames_emptyNamesOrNullScope_noQuery() {
+        // WO-C8-42: пустые имена или null scope → пусто без запроса (null scope
+        // обязан читать НИЧЕГО: root кладёт вызывающий отдельным слоем).
+        UUID pi = UUID.randomUUID(); UUID scope = UUID.randomUUID();
+        assertThat(db.getScopeOnlyVariablesByNames(pi, scope, java.util.Set.of())).isEmpty();
+        assertThat(db.getScopeOnlyVariablesByNames(pi, null, java.util.Set.of("activity"))).isEmpty();
+        verify(variableRepository, never()).findByProcessInstanceIdAndScopeIdAndNameIn(any(), any(), any());
+        verify(variableRepository, never()).findRootAndScopedByNames(any(), any(), any());
+    }
+
+    @Test
+    void getScopeVariables_returnsOnlyScopeRows_nullScopeEmpty() {
+        // WO-C8-42: слои visibleVariables — только строки скоупа, null → пусто.
+        UUID pi = UUID.randomUUID(); UUID scope = UUID.randomUUID();
+        ProcessVariableEntity scoped = new ProcessVariableEntity(); scoped.setId(UUID.randomUUID()); scoped.setProcessInstanceId(pi); scoped.setScopeId(scope); scoped.setName("activity"); scoped.setType(ProcessVariableType.JSON); scoped.setTextValue("{\"uuid\":\"a1\"}");
+        when(variableRepository.findByProcessInstanceIdAndScopeId(eq(pi), eq(scope))).thenReturn(List.of(scoped));
+        List<ProcessVariable> result = db.getScopeVariables(pi, scope);
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getValue()).contains("a1");
+        assertThat(db.getScopeVariables(pi, null)).isEmpty();
+        verify(variableRepository, never()).findByProcessInstanceIdAndScopeIdIsNull(any());
+    }
+
+    @Test
     void setVariables_postgres_insert_recordsCreate() throws Exception {
         givenProduct("PostgreSQL");
         UUID pi = UUID.randomUUID(); UUID scope = UUID.randomUUID();
