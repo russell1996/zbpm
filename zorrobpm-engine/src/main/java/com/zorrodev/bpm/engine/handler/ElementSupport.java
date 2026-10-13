@@ -254,6 +254,34 @@ public class ElementSupport {
     }
 
     /**
+     * WO-C8-40: chain-вариант {@link #resolveExpressionInScopeByNames} для элементов
+     * ВНУТРИ подпроцессов: контекст — root + ВСЯ цепочка внешних скоупов +
+     * собственный скоуп (nearest-wins), а не только root+own. Элемент верхнего
+     * уровня (цепочка пуста) получает ровно тот же контекст, что ByNames-версия.
+     * Чтения — pinpoint по именам из выражения (Б-1 IN-4: чужие JSON не трогаем).
+     */
+    public String resolveExpressionInChainScopeByNames(String raw, UUID processInstanceId, UUID activityId) {
+        if (raw == null || raw.isBlank()) return null;
+        if (!raw.startsWith("${") && !raw.startsWith("=")) {
+            return raw;
+        }
+        Set<String> names = FeelVariableNames.extract(raw);
+        Map<String, ProcessVariable> merged = new java.util.LinkedHashMap<>();
+        for (ProcessVariable v : dbService.getVariablesByNames(processInstanceId, names)) {
+            merged.put(v.getName(), v);
+        }
+        for (UUID scopeId : enclosingScopeChain(processInstanceId, activityId)) {
+            for (ProcessVariable v : dbService.getScopedVariablesByNames(processInstanceId, scopeId, names)) {
+                merged.put(v.getName(), v);
+            }
+        }
+        for (ProcessVariable v : dbService.getScopedVariablesByNames(processInstanceId, activityId, names)) {
+            merged.put(v.getName(), v);
+        }
+        return resolveExpressionInScope(raw, processInstanceId, new ArrayList<>(merged.values()));
+    }
+
+    /**
      * WO-IN-4 раунд 2, О-1: scope-версия {@link #resolveDueDate} для MI-инстансов
      * (зеркало {@link #resolveAssigneeInScope}: {@code =inputElement}-даты root
      * раньше не видел и давал null).
@@ -301,6 +329,80 @@ public class ElementSupport {
                 // WO-QW-6 (NEW3-08): та же замена parseInt → BigDecimal.intValueExact,
                 // что в resolveUserTaskPriorityOrThrow (целая гарантия 0–100 ниже
                 // не меняется, "5.50" по-прежнему явная ошибка).
+                value = new java.math.BigDecimal(resolved.trim()).intValueExact();
+            } catch (NumberFormatException | ArithmeticException e) {
+                value = null;
+            }
+        }
+        if (value == null || value < 0 || value > 100) {
+            throw new com.zorrodev.bpm.contract.exception.EngineException(
+                "User task '" + element.getId() + "' has a broken priorityDefinition '" + raw + "'"
+                    + (resolved != null && !resolved.equals(raw) ? " (resolved to '" + resolved + "')" : "")
+                    + " — priority must be an integer between 0 and 100");
+        }
+        return value;
+    }
+
+    /**
+     * WO-C8-40: chain-версии резолва полей user task для {@code UserTaskHandler.createTaskRow}
+     * (единый путь создания строк — обычный, фазовый, внутренний в подпроцессах).
+     * Контекст — {@link #resolveExpressionInChainScopeByNames}; контракт неуспеха —
+     * как у root/InScope-версий (priority бросает EngineException → инцидент).
+     */
+    public String resolveAssigneeInChainScope(UUID processInstanceId, UUID activityId, BpmnElementModel element) {
+        String raw = extractAssignee(element);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpressionInChainScopeByNames(raw, processInstanceId, activityId);
+    }
+
+    public String resolveCandidateGroupsInChainScope(UUID processInstanceId, UUID activityId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getCandidateGroups)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpressionInChainScopeByNames(raw, processInstanceId, activityId);
+    }
+
+    public String resolveCandidateUsersInChainScope(UUID processInstanceId, UUID activityId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getCandidateUsers)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpressionInChainScopeByNames(raw, processInstanceId, activityId);
+    }
+
+    public String resolveDueDateInChainScope(UUID processInstanceId, UUID activityId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getDueDate)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpressionInChainScopeByNames(raw, processInstanceId, activityId);
+    }
+
+    public String resolveFollowUpDateInChainScope(UUID processInstanceId, UUID activityId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getFollowUpDate)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) return null;
+        return resolveExpressionInChainScopeByNames(raw, processInstanceId, activityId);
+    }
+
+    public int resolveUserTaskPriorityInChainScopeOrThrow(UUID processInstanceId, UUID activityId, BpmnElementModel element) {
+        String raw = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getUserTaskExtension)
+            .map(UserTaskExtensionModel::getPriority)
+            .orElse(null);
+        if (raw == null || raw.isBlank()) {
+            return 50;
+        }
+        String resolved = resolveExpressionInChainScopeByNames(raw, processInstanceId, activityId);
+        Integer value = null;
+        if (resolved != null && !resolved.isBlank()) {
+            try {
                 value = new java.math.BigDecimal(resolved.trim()).intValueExact();
             } catch (NumberFormatException | ArithmeticException e) {
                 value = null;
@@ -617,6 +719,111 @@ public class ElementSupport {
     }
 
     // ─── IO mapping ────────────────────────────────────────────────────
+
+    /**
+     * WO-C8-40: chain-bound seed входных маппингов контейнера подпроцесса для
+     * MI-инстанса. Контекст оценки — цепочка внешних скоупов + собственный
+     * (nearest-wins, как {@link #visibleVariables}), поэтому seed видит
+     * и root-переменные, и привязку цикла инстанса; запись — в собственный скоуп.
+     * Отличие от {@link #applyIoMappings}(…, true): та оценивает только
+     * root+own, чей merge НЕ содержит outer-scope биндинги других имён —
+     * для MI-инстанса это та же видимость, что у внутренних элементов
+     * ({@link #visibleVariables}), и seed обязан её повторять.
+     */
+    public void applyChainedIoInputs(UUID processInstanceId, UUID activityId, BpmnElementModel element) {
+        IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getIoMappingExtension)
+            .orElse(null);
+        if (io == null || io.getInputs() == null || io.getInputs().isEmpty()) {
+            return;
+        }
+        List<ProcessVariable> variables = visibleVariables(processInstanceId, activityId);
+        List<ProcessVariable> results = new ArrayList<>();
+        for (IoMappingExtensionModel.Mapping mapping : io.getInputs()) {
+            ProcessVariable result = evaluateMapping(mapping, variables);
+            if (result != null) {
+                results.add(result);
+            }
+        }
+        if (!results.isEmpty()) {
+            dbService.setVariables(processInstanceId, activityId, results);
+            log.info("{}: Applied {} chained input mapping(s) at {} (scope {})",
+                processInstanceId, results.size(), element.getId(), activityId);
+        }
+    }
+
+    /**
+     * WO-C8-40 (D1): запись выходов ioMapping внутреннего элемента. Внутри
+     * MI-подпроцесса выходы пишутся в скоуп инстанса подпроцесса (ближайший
+     * внешний SUB_PROCESS-контейнер с MI-признаком по лексической цепочке
+     * {@code parentContainerElementId} — WO-C8-38), а не в root — иначе
+     * lane-local переменные параллельных инстансов перезаписывают друг друга.
+     * Для НЕ-MI подпроцессов и вне подпроцессов — прежняя запись в root
+     * (нулевой риск регрессии, WO-DIFF-1/seed-инпуты контейнера не тронуты).
+     * Лексический контейнер маппится на runtime scope activity через
+     * {@link #enclosingScopeChain} (совпадение по bpmnElementId — тот же приём,
+     * что {@link #filterActivitiesInScope}).
+     */
+    public void applyScopedOutputs(UUID processInstanceId, UUID activityId,
+            BpmnElementModel element, BpmnProcessDefinitionModel bpmn) {
+        UUID miScope = nearestMiSubProcessScope(processInstanceId, activityId, element, bpmn);
+        if (miScope == null) {
+            applyIoMappings(processInstanceId, activityId, element, false);
+            return;
+        }
+        IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getIoMappingExtension)
+            .orElse(null);
+        if (io == null || io.getOutputs() == null || io.getOutputs().isEmpty()) {
+            return;
+        }
+        List<ProcessVariable> variables = visibleVariables(processInstanceId, activityId);
+        List<ProcessVariable> results = new ArrayList<>();
+        for (IoMappingExtensionModel.Mapping mapping : io.getOutputs()) {
+            ProcessVariable result = evaluateMapping(mapping, variables);
+            if (result != null) {
+                results.add(result);
+            }
+        }
+        if (!results.isEmpty()) {
+            dbService.setVariables(processInstanceId, miScope, results);
+            log.info("{}: Applied {} output mapping(s) at {} (MI scope {})",
+                processInstanceId, results.size(), element.getId(), miScope);
+        }
+    }
+
+    /**
+     * WO-C8-40 (D1): runtime scope activity ближайшего внешнего MI-подпроцесса —
+     * null, если элемент не внутри MI-подпроцесса. Лексика (модель) решает,
+     * КАКОЙ контейнер MI; цепочка скоупов (БД) — КАКАЯ его runtime-строка.
+     */
+    public UUID nearestMiSubProcessScope(UUID processInstanceId, UUID activityId,
+            BpmnElementModel element, BpmnProcessDefinitionModel bpmn) {
+        String containerId = element.getParentContainerElementId();
+        while (containerId != null) {
+            BpmnElementModel container = bpmn.getElement(containerId);
+            if (container == null) {
+                return null;
+            }
+            if (container.getType() == BpmnElementType.SUB_PROCESS
+                && container.getExtensions() != null
+                && container.getExtensions().getMultiInstanceExtension() != null) {
+                break;
+            }
+            containerId = container.getParentContainerElementId();
+        }
+        if (containerId == null) {
+            return null;
+        }
+        final String miContainerId = containerId;
+        for (UUID scopeId : enclosingScopeChain(processInstanceId, activityId)) {
+            Activity scope = dbService.getActivity(scopeId);
+            if (scope != null && miContainerId.equals(scope.getBpmnElementId())) {
+                return scopeId;
+            }
+        }
+        return null;
+    }
 
     public void applyIoMappings(UUID processInstanceId, UUID activityId, BpmnElementModel element, boolean inputs) {
         IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())

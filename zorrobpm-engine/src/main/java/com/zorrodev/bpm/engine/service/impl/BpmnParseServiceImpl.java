@@ -624,6 +624,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
         element.setExtensions(new BpmnElementExtensionModel());
         element.getExtensions().setSubProcessExtension(ext);
+        // WO-C8-40: MI на embedded subProcess выполняется движком (spawn/агрегация/join
+        // в MultiInstanceExecutor) — парсим маркер тем же attachMultiInstance, что задачи.
+        // transaction/adHoc/call остаются без привязки (сканер D3 их отвергает при деплое).
+        attachMultiInstance(element, sub.getMultiInstanceLoopCharacteristics());
         // WO-DIFF-1: the container's own ioMapping is attached by the CALLER
         // (attachSubProcessIoMapping at each toSubProcessElement call site — it holds
         // the raw source there), not here: this method is also reached from nested

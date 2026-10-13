@@ -92,6 +92,11 @@ public class ActivityServiceImplTests {
     @InjectMocks
     private ActivityServiceImpl activityService;
 
+    @SuppressWarnings("unchecked")
+    private static org.springframework.beans.factory.ObjectProvider<com.zorrodev.bpm.engine.handler.MultiInstanceExecutor> miExecutorProvider() {
+        return org.mockito.Mockito.mock(org.springframework.beans.factory.ObjectProvider.class);
+    }
+
     @BeforeEach
     void setUp() {
         // Create real BoundaryScheduler with mocked dependencies
@@ -106,7 +111,8 @@ public class ActivityServiceImplTests {
         }
         // Create real EventTrigger with mocked dependencies and inject it
         var flowNavigator = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService, elementSupport,
-            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class), serviceTaskEnqueueService);
+            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class), serviceTaskEnqueueService,
+            miExecutorProvider());
         var eventTrigger = new com.zorrodev.bpm.engine.handler.EventTrigger(
             dbService, bpmnService, scriptService, flowNavigator, elementSupport,
             org.mockito.Mockito.mock(com.zorrodev.bpm.engine.repository.TimerJobRepository.class),
@@ -221,7 +227,8 @@ public class ActivityServiceImplTests {
         // The real HandlerRegistry auto-discovers @Component handler beans via Spring DI;
         // in this Mockito unit test, we replicate that resolution manually.
         var flowNav = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService, elementSupport,
-            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class), serviceTaskEnqueueService);
+            org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class), serviceTaskEnqueueService,
+            miExecutorProvider());
         registerHandler(BpmnElementType.EXCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNav));
         registerHandler(BpmnElementType.PARALLEL_GATEWAY, new com.zorrodev.bpm.engine.handler.ParallelGatewayHandler(dbService, flowNav));
         registerHandler(BpmnElementType.INCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler(dbService, flowNav, scriptService, elementSupport));
@@ -237,7 +244,7 @@ public class ActivityServiceImplTests {
         registerHandler(BpmnElementType.LINK_THROW_EVENT, new com.zorrodev.bpm.engine.handler.LinkThrowHandler(dbService, activityService));
         registerHandler(BpmnElementType.SEND_TASK, new com.zorrodev.bpm.engine.handler.SendTaskHandler(activityService,
             new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNav, activityService)));
-        registerHandler(BpmnElementType.SUB_PROCESS, new com.zorrodev.bpm.engine.handler.SubProcessHandler(dbService, elementSupport, boundaryScheduler));
+        registerHandler(BpmnElementType.SUB_PROCESS, new com.zorrodev.bpm.engine.handler.SubProcessHandler(dbService, elementSupport, boundaryScheduler, multiInstanceExecutor));
         registerHandler(BpmnElementType.CALL_ACTIVITY, new com.zorrodev.bpm.engine.handler.CallActivityHandler(dbService, activityService, elementSupport, executionContext, boundaryScheduler));
         registerHandler(BpmnElementType.USER_TASK, new com.zorrodev.bpm.engine.handler.UserTaskHandler(dbService, elementSupport, multiInstanceExecutor, boundaryScheduler, serviceTaskEnqueueService));
         registerHandler(BpmnElementType.START_EVENT, new com.zorrodev.bpm.engine.handler.StartThrowEventHandler.StartEvent(dbService, flowNav));
