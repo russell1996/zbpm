@@ -235,8 +235,16 @@ const S = {
       await show('S9 w after one completion (remaining canceled?)', rest);
       for (const j of rest) await complete(j, {});
     }
+    // WO-C8-41 B-1: ожидание 35 с — пережить 30-секундные локи сиблингов
+    // (иначе «0 живых» доказывает только локи, а не терминацию условием).
+    console.log('S9 completed one instance, waiting 35s (outlive 30s sibling locks)...');
+    await sleep(35000);
+    const rest = (await activate('s9w')).filter((j) => String(j.processInstanceKey) === String(pi));
+    await show('S9 w after one completion (S9-1: expect 0)', rest);
+    for (const j of rest) await complete(j, {});
+    await sleep(2000);
     const d = await poll('s9dump', 1, 8, pi);
-    await show('S9 dump (results content?)', d);
+    await show('S9 dump (S9-2: expect partial results)', d);
     for (const j of d) await complete(j, {});
   },
   async cleanup() {
