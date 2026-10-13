@@ -130,4 +130,20 @@ public interface VariableRepository extends JpaRepository<ProcessVariableEntity,
             @Param("scopeId") UUID scopeId, @Param("names") java.util.Collection<String> names);
 
     void deleteByProcessInstanceIdAndScopeId(UUID processInstanceId, UUID scopeId);
+
+    /**
+     * WO-C8-41 (F5): удаление ОДНОЙ переменной по имени в скоупе (null-safe:
+     * scopeId null = root). Отмена MI-тела обязана снести предсозданный
+     * outputCollection, но не весь root (deleteByProcessInstanceIdAndScopeId
+     * для root снёс бы всё).
+     */
+    @Modifying
+    @Query("""
+        delete from ProcessVariableEntity v
+        where v.processInstanceId = :processInstanceId
+          and v.name = :name
+          and ((:scopeId is null and v.scopeId is null) or v.scopeId = :scopeId)
+        """)
+    void deleteByProcessInstanceIdAndNameAndScope(@Param("processInstanceId") UUID processInstanceId,
+        @Param("name") String name, @Param("scopeId") UUID scopeId);
 }

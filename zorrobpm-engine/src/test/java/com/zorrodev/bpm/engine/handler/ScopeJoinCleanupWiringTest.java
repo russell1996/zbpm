@@ -109,7 +109,7 @@ class ScopeJoinCleanupWiringTest {
         TokenExecutor executor = mock(TokenExecutor.class);
 
         ErrorEscalationThrower thrower = new ErrorEscalationThrower(dbService, bpmnService,
-            flowNavigator, eventTrigger, scopeContainment, inclusiveGatewayHandler);
+            flowNavigator, eventTrigger, scopeContainment, inclusiveGatewayHandler, elementSupport);
         assertThat(thrower.throwError(pi, tokenId, errorCode, null, executor)).isTrue();
 
         verify(dbService).clearParallelGatewayArrivalsInJoins(eq(pi), eq(List.of("joinIn")));
@@ -151,7 +151,7 @@ class ScopeJoinCleanupWiringTest {
         TokenExecutor executor = mock(TokenExecutor.class);
 
         ErrorEscalationThrower thrower = new ErrorEscalationThrower(dbService, bpmnService,
-            flowNavigator, eventTrigger, scopeContainment, inclusiveGatewayHandler);
+            flowNavigator, eventTrigger, scopeContainment, inclusiveGatewayHandler, elementSupport);
         assertThat(thrower.throwEscalation(pi, tokenId, escalationCode, executor)).isTrue();
 
         verify(dbService).clearParallelGatewayArrivalsInJoins(eq(pi), eq(List.of("joinIn")));

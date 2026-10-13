@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-41 parity S7: oracle s7 used a timer boundary (PT3S); here an
+     interrupting MESSAGE boundary drives the SAME cancel path deterministically
+     (correlateMessage instead of wall-clock wait).
+     Mirror otherwise: parallel MI sub ["a","b"], w -> subEnd, outputElement == item.
+     Zeebe facts: instance jobs canceled; results NOT propagated to the parent
+     (dumpCancel sees no results, only its own path marker). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-c841-s7" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="cancelMsg" name="c841-cancel" />
+  <bpmn:process id="c841s7" name="S7 interrupting boundary" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="miSub" />
+    <bpmn:subProcess id="miSub" name="mi">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=[&quot;a&quot;, &quot;b&quot;]" inputElement="item"
+                                     outputCollection="results" outputElement="=item" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart"><bpmn:outgoing>sf1</bpmn:outgoing></bpmn:startEvent>
+      <bpmn:sequenceFlow id="sf1" sourceRef="subStart" targetRef="w" />
+      <bpmn:serviceTask id="w" name="w">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="c841s7w" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>sf1</bpmn:incoming>
+        <bpmn:outgoing>sf2</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="sf2" sourceRef="w" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd"><bpmn:incoming>sf2</bpmn:incoming></bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="msgBnd" attachedToRef="miSub" cancelActivity="true">
+      <bpmn:outgoing>fCancel</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="med1" messageRef="cancelMsg" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="miSub" targetRef="dumpOk" />
+    <bpmn:sequenceFlow id="fCancel" sourceRef="msgBnd" targetRef="dumpCancel" />
+    <bpmn:serviceTask id="dumpOk" name="dumpOk">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c841s7dump" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=&#34;ok&#34;" target="path" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="dumpOk" targetRef="end" />
+    <bpmn:serviceTask id="dumpCancel" name="dumpCancel">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c841s7dump" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=&#34;cancel&#34;" target="path" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>fCancel</bpmn:incoming>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f4" sourceRef="dumpCancel" targetRef="end" />
+    <bpmn:endEvent id="end">
+      <bpmn:incoming>f3</bpmn:incoming>
+      <bpmn:incoming>f4</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

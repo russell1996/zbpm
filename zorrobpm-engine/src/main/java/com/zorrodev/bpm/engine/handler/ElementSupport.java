@@ -10,6 +10,7 @@ import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
 import com.zorrodev.bpm.engine.bpmn.model.IoMappingExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.bpmn.model.MessageEventExtensionModel;
+import com.zorrodev.bpm.engine.bpmn.model.MultiInstanceExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.model.ServiceTaskExtensionModel;
 import com.zorrodev.bpm.engine.bpmn.xml.extension.UserTaskExtensionModel;
 import com.zorrodev.bpm.engine.dto.Activity;
@@ -823,6 +824,149 @@ public class ElementSupport {
             }
         }
         return null;
+    }
+
+    /**
+     * WO-C8-41 (F1, oracle S1/S2b): скоуп записи completion-переменных элемента.
+     * Внутри MI-подпроцесса — скоуп его инстанса (тот же, что D1 для выходов):
+     * Zeebe держит completion-переменные инстанс-локально (S1: соседняя ветка
+     * видит СВОЙ tu; S1-4: за телом их нет), root-write давал гонку
+     * «последний завершивший перезаписывает всех». Вне MI-подпроцесса — null
+     * (историческая запись в root, S0-контроль: без MI переменные видны
+     * downstream). Для НЕ-MI подпроцессов тоже null — их паритет не прозондирован,
+     * поведение не меняем.
+     */
+    public UUID miCompletionScopeOrNull(UUID processInstanceId, UUID activityId,
+            BpmnElementModel element, BpmnProcessDefinitionModel bpmn) {
+        return nearestMiSubProcessScope(processInstanceId, activityId, element, bpmn);
+    }
+
+    /**
+     * WO-C8-41 (F1, oracle S2b): есть ли у элемента output mappings. С маппингами
+     * сырые completion-переменные НЕ persist'ятся (маппинг — проекция: S2b
+     * показывает tuLocal без сырого tu); без маппингов сырьё сливается в скоуп
+     * инстанса (S1: w2 видит tu своей ветки).
+     */
+    public boolean hasOutputMappings(BpmnElementModel element) {
+        IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getIoMappingExtension)
+            .orElse(null);
+        return io != null && io.getOutputs() != null && !io.getOutputs().isEmpty();
+    }
+
+    /**
+     * WO-C8-41 (F3/D1-уточнение): pinpoint chain-контекст для агрегации
+     * outputElement — root + ВСЯ цепочка внешних скоупов + собственный
+     * (nearest-wins), только имена из выражения. Замена root+own merge в
+     * агрегации: outputElement MI-задачи внутри MI-подпроцесса ссылается на
+     * completion-переменную, которая после F1 живёт в скоупе КОНТЕЙНЕРА
+     * (own scope задачи её не содержит) — root+own давал бы null вместо значения.
+     */
+    public List<ProcessVariable> chainVariablesForNames(UUID processInstanceId, UUID activityId,
+            java.util.Collection<String> names) {
+        if (names == null || names.isEmpty()) {
+            return List.of();
+        }
+        Map<String, ProcessVariable> merged = new java.util.LinkedHashMap<>();
+        for (ProcessVariable v : dbService.getVariablesByNames(processInstanceId, names)) {
+            merged.put(v.getName(), v);
+        }
+        for (UUID scopeId : enclosingScopeChain(processInstanceId, activityId)) {
+            for (ProcessVariable v : dbService.getScopedVariablesByNames(processInstanceId, scopeId, names)) {
+                merged.put(v.getName(), v);
+            }
+        }
+        for (ProcessVariable v : dbService.getScopedVariablesByNames(processInstanceId, activityId, names)) {
+            merged.put(v.getName(), v);
+        }
+        return new ArrayList<>(merged.values());
+    }
+
+    /**
+     * WO-C8-41 (F5, oracle S7-2): снос состояния MI-тела при его ОТМЕНЕ.
+     * Zeebe не передаёт предсозданный outputCollection в родителя, когда тело
+     * прервано (на cancel-ветке нет results), и при повторном входе массив
+     * создаётся заново — значит, отмена удаляет и предсозданную коллекцию, и
+     * batch-маркер входа (оба — в containing scope тела: innermost scope
+     * токена входа, null = root). Удаляются ТОЛЬКО собственные переменные тела
+     * (outputCollection + batch), остальной скоуп не трогаем. NO-OP без
+     * outputCollection (удаляется только batch-маркер) и без MI-признака.
+     * Вызывается из ВСЕХ путей отмены MI-тела: boundary (EventTrigger),
+     * error/escalation-walk (ErrorEscalationThrower), terminate-in-scope
+     * и cancel-end (EndEventHandler/CancelEndHandler). Раннее срабатывание
+     * completionCondition — НЕ отмена (частичная агрегация сохраняется, S9-2),
+     * здесь не вызывается.
+     */
+    public void deleteMiBodyState(UUID processInstanceId, UUID entryTokenId, BpmnElementModel miElement) {
+        MultiInstanceExtensionModel mi = Optional.ofNullable(miElement.getExtensions())
+            .map(BpmnElementExtensionModel::getMultiInstanceExtension)
+            .orElse(null);
+        if (mi == null) {
+            return;
+        }
+        UUID containingScope = null;
+        try {
+            containingScope = dbService.findToken(entryTokenId)
+                .map(com.zorrodev.bpm.engine.dto.Token::getScopeActivityId).orElse(null);
+        } catch (RuntimeException e) {
+            containingScope = null;
+        }
+        if (mi.getOutputCollection() != null && !mi.getOutputCollection().isBlank()) {
+            dbService.deleteVariable(processInstanceId, containingScope, mi.getOutputCollection());
+        }
+        dbService.deleteVariable(processInstanceId, containingScope, "_mi_batch_" + miElement.getId());
+        log.info("{}/{}: MI body {} cancelled — dropped its output state in scope {}",
+            processInstanceId, entryTokenId, miElement.getId(),
+            containingScope == null ? "root" : containingScope);
+    }
+
+    /**
+     * WO-C8-41 (F1, oracle S2a/S2b): вариант {@link #applyScopedOutputs} с явным
+     * overlay completion-переменных в контекст оценки. Сырые completion-переменные
+     * при ЕСТЬ маппингах НЕ persist'ятся (маппинг — проекция: S2b не показывает
+     * сырой tu), но маппинг обязан их видеть (=tu читает tu-c завершения).
+     * Контекст = visibleVariables + extra (extra побеждает — свежее значение
+     * завершения). Запись — туда же, куда applyScopedOutputs (скоуп MI-инстанса
+     * внутри MI-подпроцесса, иначе root). Без маппингов не вызывается
+     * (сырьё идёт persist'ом в скоуп напрямую, S1).
+     */
+    public void applyScopedOutputsWithExtra(UUID processInstanceId, UUID activityId,
+            BpmnElementModel element, BpmnProcessDefinitionModel bpmn, List<ProcessVariable> extra) {
+        UUID miScope = nearestMiSubProcessScope(processInstanceId, activityId, element, bpmn);
+        IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getIoMappingExtension)
+            .orElse(null);
+        if (io == null || io.getOutputs() == null || io.getOutputs().isEmpty()) {
+            return;
+        }
+        List<ProcessVariable> variables = visibleVariables(processInstanceId, activityId);
+        if (extra != null && !extra.isEmpty()) {
+            Map<String, ProcessVariable> merged = new java.util.LinkedHashMap<>();
+            for (ProcessVariable v : variables) {
+                merged.put(v.getName(), v);
+            }
+            for (ProcessVariable v : extra) {
+                merged.put(v.getName(), v);
+            }
+            variables = new ArrayList<>(merged.values());
+        }
+        List<ProcessVariable> results = new ArrayList<>();
+        for (IoMappingExtensionModel.Mapping mapping : io.getOutputs()) {
+            ProcessVariable result = evaluateMapping(mapping, variables);
+            if (result != null) {
+                results.add(result);
+            }
+        }
+        if (!results.isEmpty()) {
+            if (miScope == null) {
+                dbService.setVariables(processInstanceId, results);
+            } else {
+                dbService.setVariables(processInstanceId, miScope, results);
+            }
+            log.info("{}: Applied {} output mapping(s) at {} (MI scope {}, overlay {})",
+                processInstanceId, results.size(), element.getId(),
+                miScope == null ? "root" : miScope, extra == null ? 0 : extra.size());
+        }
     }
 
     public void applyIoMappings(UUID processInstanceId, UUID activityId, BpmnElementModel element, boolean inputs) {

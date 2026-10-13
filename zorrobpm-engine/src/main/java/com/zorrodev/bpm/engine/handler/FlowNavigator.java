@@ -538,6 +538,11 @@ public class FlowNavigator {
         // Токен MI-инстансов — входящий токен контейнера (спaун шёл на нём):
         // join bookkeeping идёт на нём же, complete строки — ниже у вызывающего.
         UUID miToken = scope.getToken();
+        // WO-C8-41 (F4): ранняя добивка сиблингов при completionCondition —
+        // ВНУТРИ multiInstanceContinue (там видны arrived/expected и отличие
+        // раннего done от полного; безусловная добивка здесь убивала бы
+        // соседние outer-инстансы при каждом нормальном join — поймано
+        // паритетным S8a: y-инстансы гасли на join'е x).
         return !mi.multiInstanceContinue(processInstanceId, miToken, subProcessElement,
             subProcessActivityId, executor);
     }

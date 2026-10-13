@@ -203,9 +203,12 @@ public class ActivityServiceImplTests {
         // припаркованных join'ов на путях гашения хоста error/escalation-границей.
         // WO-C8-38 (C38-2): добавлен ScopeContainment — чистка arrived-строк join'ов
         // отменённого scope в той же транзакции (stateless, new без моков).
+        // WO-C8-41 (F5): добавлен ElementSupport — снос состояния отменённого MI-тела
+        // (мок уже есть в этом классе).
         var errorEscalationThrower = new com.zorrodev.bpm.engine.handler.ErrorEscalationThrower(dbService, bpmnService, flowNavigator, eventTrigger,
             new ScopeContainment(),
-            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler.class));
+            org.mockito.Mockito.mock(com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler.class),
+            elementSupport);
         try {
             var eetField = ActivityServiceImpl.class.getDeclaredField("errorEscalationThrower");
             eetField.setAccessible(true);

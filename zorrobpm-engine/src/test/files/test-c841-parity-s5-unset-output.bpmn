@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-41 parity S5: mirror of oracle s5 (outputElement == neverSet, unset).
+     Zeebe facts: neverSet pre-declared null; dump sees results=[null,null]. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-c841-s5" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c841s5" name="S5 unset outputElement" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="miSub" />
+    <bpmn:subProcess id="miSub" name="mi">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=[&quot;a&quot;, &quot;b&quot;]" inputElement="item"
+                                     outputCollection="results" outputElement="=neverSet" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart"><bpmn:outgoing>sf1</bpmn:outgoing></bpmn:startEvent>
+      <bpmn:sequenceFlow id="sf1" sourceRef="subStart" targetRef="w" />
+      <bpmn:serviceTask id="w" name="w">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="c841s5w" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>sf1</bpmn:incoming>
+        <bpmn:outgoing>sf2</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="sf2" sourceRef="w" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd"><bpmn:incoming>sf2</bpmn:incoming></bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" sourceRef="miSub" targetRef="dump" />
+    <bpmn:serviceTask id="dump" name="dump">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c841s5dump" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="dump" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

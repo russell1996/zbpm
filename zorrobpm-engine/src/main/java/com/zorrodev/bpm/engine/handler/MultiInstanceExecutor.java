@@ -221,6 +221,12 @@ public class MultiInstanceExecutor {
         // WO-C8-40: batch пишется в scope токена входа (вложенный MI — в scope
         // внешнего инстанса, верхний — в root): два внешних инстанса делят miId,
         // но НЕ scope — их join-ключи не коллидируют. Resolve — там же.
+        // WO-C8-41 (F2, oracle S1-1/S4): предсоздание outputCollection при входе —
+        // [null x N] (S4: N=0 даёт []), в CONTAINING scope (innermost scope токена
+        // входа: root сверху, outer-instance scope у вложенного). Zeebe показывает
+        // предсозданный массив уже первой джобе; absent-only (как
+        // writeEmptyOutputCollection): предустановленное пользователем не трогаем.
+        precreateOutputCollection(processInstanceId, token, mi, count);
         String batchUuid = UUID.randomUUID().toString();
         ProcessVariable batchVar = new ProcessVariable();
         batchVar.setName("_mi_batch_" + miId);
@@ -267,6 +273,17 @@ public class MultiInstanceExecutor {
 
         boolean done = (expected != null && arrived >= expected) || completionConditionMet(processInstanceId, arrived, expected, mi);
         if (done) {
+            // WO-C8-41 (F4, oracle S9): done РАНЬШЕ всех приходов (arrived <
+            // expected) — сработало completionCondition: оставшиеся сиблинги
+            // терминируются (Zeebe: 0 живых после 1 завершения из 3), их
+            // внутренности гаснут scope-обходом. Только SUB_PROCESS: MI-задачи
+            // с условием сохраняют историческое поведение (без добивки —
+            // отдельный вопрос, не этот WO). При полном done (arrived >=
+            // expected) живых сиблингов нет по определению — no-op по построению.
+            if (element.getType() == BpmnElementType.SUB_PROCESS
+                && expected != null && arrived < expected) {
+                cancelRemainingMiSubInstances(processInstanceId, element, completedActivityId);
+            }
             dbService.clearParallelGatewayArrivals(processInstanceId, gatewayKey);
             return true;
         }
@@ -280,6 +297,38 @@ public class MultiInstanceExecutor {
             log.info("{}: Multi-instance {} not ready: {} of {} instances done batch={}", processInstanceId, miId, arrived, expected, batchUuid);
         }
         return false;
+    }
+
+    /**
+     * WO-C8-41 (F4): гашение живых сиблингов MI-подпроцесса после раннего
+     * срабатывания completionCondition. Только SUB_PROCESS-строки того же
+     * элемента (вложенные контейнеры — другой id, не трогаем); внутренности
+     * каждого — по его scope-цепочке (зеркало
+     * {@code EventTrigger.cancelMiSubProcessInScope}). Частичная агрегация уже
+     * записана позиционно (слоты терминированных — null) и НЕ удаляется (S9-2).
+     */
+    private void cancelRemainingMiSubInstances(UUID processInstanceId, BpmnElementModel subProcessElement,
+            UUID completedInstanceId) {
+        List<com.zorrodev.bpm.engine.dto.Activity> live = dbService.getActiveActivities(processInstanceId);
+        List<com.zorrodev.bpm.engine.dto.Activity> siblings = live.stream()
+            .filter(a -> a != null && a.getId() != null
+                && !a.getId().equals(completedInstanceId)
+                && subProcessElement.getId().equals(a.getBpmnElementId())
+                && (a.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED
+                    || a.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS))
+            .toList();
+        if (siblings.isEmpty()) {
+            return;
+        }
+        for (com.zorrodev.bpm.engine.dto.Activity sibling : siblings) {
+            for (com.zorrodev.bpm.engine.dto.Activity inner : elementSupport.filterActivitiesInScope(
+                processInstanceId, live, sibling.getId())) {
+                dbService.cancelActivity(inner.getId());
+            }
+            dbService.cancelActivity(sibling.getId());
+        }
+        log.info("{}/{}: completionCondition terminated {} remaining MI-subprocess instance(s)",
+            processInstanceId, subProcessElement.getId(), siblings.size());
     }
 
     /**
@@ -299,13 +348,84 @@ public class MultiInstanceExecutor {
             || mi.getOutputElement() == null || mi.getOutputElement().isBlank()) {
             return;
         }
-        // WO-PERF-9 (B-8, full-scan): the outputElement expression only needs
-        // its own referenced names from the instance scope — one indexed
-        // SELECT, not the root+scope merge over the whole scope.
+        // WO-C8-41 (F1-уточнение): outputElement резолвится в chain-контексте
+        // (root + внешние скоупы + own, pinpoint по именам — PERF-9 инвариант
+        // сохранён): completion-переменная после F1 живёт в скоупе КОНТЕЙНЕРА
+        // MI-подпроцесса, root+own merge её не видит (регресс S8b-класса).
+        // WO-PERF-9 (B-8, full-scan): only the referenced names, not the merge
+        // over the whole scope.
         Object value = scriptService.evaluateExpression(mi.getOutputElement(),
-            scopedVariablesFor(processInstanceId, scopeId, mi.getOutputElement()));
-        dbService.setJsonElementAt(processInstanceId, mi.getOutputCollection(), miSlot(processInstanceId, scopeId) - 1,
+            elementSupport.chainVariablesForNames(processInstanceId, scopeId,
+                FeelVariableNames.extract(mi.getOutputElement())));
+        // WO-C8-41 (F3, oracle S8a/S8b): агрегация — в CONTAINING scope тела
+        // (parent scope инстанса: root сверху, outer-instance scope у вложенного),
+        // а не всегда в root. Иначе внутренняя агрегация утекает в корень
+        // (S8a: innerResults в dump; S8b: tresults в dump), а Zeebe её дропает
+        // со скоупом тела.
+        UUID containingScope = containingScopeOfInstance(processInstanceId, scopeId);
+        dbService.setJsonElementAt(processInstanceId, containingScope, mi.getOutputCollection(),
+            miSlot(processInstanceId, scopeId) - 1,
             objectMapper.writeValueAsString(elementSupport.toJavaStructure(value)));
+    }
+
+    /**
+     * WO-C8-41 (F3): containing scope MI-тела — parent scope его инстанса
+     * (scopeActivityId токена строки инстанса); null = корень (верхний уровень).
+     * Null-safe к мокам (нет activity/токена → корень, как раньше).
+     */
+    UUID containingScopeOfInstance(UUID processInstanceId, UUID instanceActivityId) {
+        try {
+            com.zorrodev.bpm.engine.dto.Activity activity = dbService.getActivity(instanceActivityId);
+            if (activity == null || activity.getToken() == null) {
+                return null;
+            }
+            return dbService.findToken(activity.getToken()).map(t -> t.getScopeActivityId()).orElse(null);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * WO-C8-41 (F2, oracle S1-1/S4): предсоздание outputCollection
+     * {@code [null x count]} в containing scope входа (absent-only). Без
+     * outputCollection — no-op.
+     */
+    private void precreateOutputCollection(UUID processInstanceId, UUID token,
+            MultiInstanceExtensionModel mi, int count) {
+        if (mi.getOutputCollection() == null || mi.getOutputCollection().isBlank()) {
+            return;
+        }
+        UUID containingScope = innermostScopeOfToken(token);
+        List<ProcessVariable> existing;
+        if (containingScope == null) {
+            if (dbService.getVariableTextValue(processInstanceId, mi.getOutputCollection()).isPresent()) {
+                return;
+            }
+        } else {
+            existing = dbService.getScopedVariablesByNames(processInstanceId, containingScope,
+                Set.of(mi.getOutputCollection()));
+            if (!existing.isEmpty()) {
+                return;
+            }
+        }
+        ProcessVariable pre = new ProcessVariable();
+        pre.setName(mi.getOutputCollection());
+        pre.setType(ProcessVariableType.JSON);
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < count; i++) {
+            if (i > 0) sb.append(",");
+            sb.append("null");
+        }
+        sb.append("]");
+        pre.setValue(sb.toString());
+        if (containingScope == null) {
+            dbService.setVariables(processInstanceId, List.of(pre));
+        } else {
+            dbService.setVariables(processInstanceId, containingScope, List.of(pre));
+        }
+        log.info("{}/{}: Multi-instance pre-created {} as {} nulls in scope {}",
+            processInstanceId, token, mi.getOutputCollection(), count,
+            containingScope == null ? "root" : containingScope);
     }
 
     // ─── Private MI-only helpers ───────────────────────────────────────────
@@ -488,6 +608,12 @@ public class MultiInstanceExecutor {
         loopCounter.setType(ProcessVariableType.LONG);
         loopCounter.setValue(Long.toString(index + 1L));
         locals.add(loopCounter);
+        // WO-C8-41 (F2-бис): скалярные null-предобъявления (tu:null в oracle
+        // S1-1/S5-1) строкой НЕ persist'ятся: оба upsert-пути (PG+H2) коэрсят
+        // null→"" и =neverSet давал бы "" вместо null (S5 ["",""] вместо
+        // [null,null]). «Не задано» = отсутствие строки; lenient-missing
+        // оценка (ENG-30 дефолт) даёт null идентично. Предсоздаётся только
+        // outputCollection (JSON "[null×N]" — настоящие null внутри текста).
         dbService.setVariables(processInstanceId, scopeId, locals);
     }
 
@@ -623,6 +749,10 @@ public class MultiInstanceExecutor {
         long total = expected != null ? expected : 0;
         long active = expected != null ? Math.max(0, expected - arrived) : 0;
         addLocalLong(variables, "completedInstances", arrived);
+        // WO-C8-41 (F4, oracle S9): документированное Camunda-8 имя счётчика —
+        // numberOfCompletedInstances (его не было, условие с ним никогда не
+        // срабатывало). Алиасы ZBPM ниже — для совместимости.
+        addLocalLong(variables, "numberOfCompletedInstances", arrived);
         addLocalLong(variables, "totalInstances", total);
         addLocalLong(variables, "numberOfInstances", total);
         addLocalLong(variables, "numberOfCompleteInstances", arrived);

@@ -52,6 +52,12 @@ public class ErrorEscalationThrower {
      * ни про {@code EventTrigger}, который уже Depends on него.
      */
     private final InclusiveGatewayHandler inclusiveGatewayHandler;
+    /**
+     * WO-C8-41 (F5): снос состояния отменённого MI-тела (deleteMiBodyState).
+     * ПОРЯДОК ПОЛЕЙ: последним — ручные new в ScopeJoinCleanupWiringTest
+     * дописаны тем же коммитом.
+     */
+    private final ElementSupport elementSupport;
 
     /**
      * Propagates a BPMN error from {@code tokenId} outward through the scope hierarchy, looking for
@@ -128,6 +134,11 @@ public class ErrorEscalationThrower {
                     for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {
                         dbService.cancelActivity(innerId);
                     }
+                    // WO-C8-41 (F5, oracle S7-2): как в boundary-отмене —
+                    // предсозданный outputCollection прерванного тела не живёт
+                    // дальше (entry token = токен строки scope-инстанса).
+                    elementSupport.deleteMiBodyState(processInstanceId, scope.getToken(),
+                        bpmn.getElement(scope.getBpmnElementId()));
                     dbService.cancelActivity(scope.getId());
                 } else {
                     dbService.cancelActiveActivitiesForToken(tok.getId());
@@ -357,6 +368,9 @@ public class ErrorEscalationThrower {
                         for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {
                             dbService.cancelActivity(innerId);
                         }
+                        // WO-C8-41 (F5, oracle S7-2): как в error-пути выше.
+                        elementSupport.deleteMiBodyState(processInstanceId, scope.getToken(),
+                            bpmn.getElement(scope.getBpmnElementId()));
                         dbService.cancelActivity(scope.getId());
                     } else {
                         dbService.cancelActiveActivitiesForToken(tok.getId());

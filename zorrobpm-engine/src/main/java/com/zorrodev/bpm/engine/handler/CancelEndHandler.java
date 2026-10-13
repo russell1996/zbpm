@@ -100,6 +100,13 @@ public class CancelEndHandler implements ElementHandler, TypedElementHandler {
             dbService.cancelActivity(active.getId());
         }
         dbService.cancelActivity(scopeActivityId);
+        // WO-C8-41 (F5, oracle S7-2): отменённая транзакция могла быть MI-телом
+        // (комбо transaction+MI экзотично, но helper no-op без MI-признака —
+        // дешевле покрыть, чем разбирать): предсозданный outputCollection
+        // не выходит наружу.
+        if (scope != null && scope.getToken() != null) {
+            elementSupport.deleteMiBodyState(processInstanceId, scope.getToken(), transaction);
+        }
         // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемой транзакции.
         dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
             scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, transaction.getId()));

@@ -1,0 +1,176 @@
+CONNECTED brokers=1 gw=8.5.0
+
+===== S1 =====
+DEPLOY s1-mi-sub-race.bpmn -> s1MiSub v2 key=2251799813685339
+START s1MiSub -> piKey=2251799813685341
+--- S1 w (expect 3: item? loopCounter? pre-created results/tu?): 3 job(s) ---
+key=2251799813685369 type=s1w elementId=w piKey=2251799813685341 vars={"tu":null,"item":"a","loopCounter":1,"results":[null,null,null]}
+key=2251799813685370 type=s1w elementId=w piKey=2251799813685341 vars={"tu":null,"item":"b","loopCounter":2,"results":[null,null,null]}
+key=2251799813685371 type=s1w elementId=w piKey=2251799813685341 vars={"tu":null,"item":"c","loopCounter":3,"results":[null,null,null]}
+S1 completion order: c,b,a
+COMPLETE key=2251799813685371 type=s1w vars={"tu":"tu-c"}
+COMPLETE key=2251799813685370 type=s1w vars={"tu":"tu-b"}
+COMPLETE key=2251799813685369 type=s1w vars={"tu":"tu-a"}
+--- S1 w2 (what tu does each branch see?): 3 job(s) ---
+key=2251799813685376 type=s1w2 elementId=w2 piKey=2251799813685341 vars={"tu":"tu-c","item":"c","loopCounter":3,"results":[null,null,null]}
+key=2251799813685380 type=s1w2 elementId=w2 piKey=2251799813685341 vars={"tu":"tu-b","item":"b","loopCounter":2,"results":[null,null,null]}
+key=2251799813685384 type=s1w2 elementId=w2 piKey=2251799813685341 vars={"tu":"tu-a","item":"a","loopCounter":1,"results":[null,null,null]}
+COMPLETE key=2251799813685376 type=s1w2 vars={}
+COMPLETE key=2251799813685380 type=s1w2 vars={}
+COMPLETE key=2251799813685384 type=s1w2 vars={}
+--- S1 dump (results? tu? where?): 1 job(s) ---
+key=2251799813685398 type=s1dump elementId=dump piKey=2251799813685341 vars={"results":["tu-a","tu-b","tu-c"]}
+COMPLETE key=2251799813685398 type=s1dump vars={}
+
+===== S2A =====
+DEPLOY s2a-mi-sub-outputmap.bpmn -> s2aMiSub v1 key=2251799813685403
+START s2aMiSub -> piKey=2251799813685405
+--- S2a w: 3 job(s) ---
+key=2251799813685433 type=s2aw elementId=w piKey=2251799813685405 vars={"tu":null,"item":"a","loopCounter":1,"results":[null,null,null]}
+key=2251799813685434 type=s2aw elementId=w piKey=2251799813685405 vars={"tu":null,"item":"b","loopCounter":2,"results":[null,null,null]}
+key=2251799813685435 type=s2aw elementId=w piKey=2251799813685405 vars={"tu":null,"item":"c","loopCounter":3,"results":[null,null,null]}
+COMPLETE key=2251799813685435 type=s2aw vars={"tu":"tu-c"}
+COMPLETE key=2251799813685434 type=s2aw vars={"tu":"tu-b"}
+COMPLETE key=2251799813685433 type=s2aw vars={"tu":"tu-a"}
+--- S2a w2 (tu via output mapping tu->tu?): 3 job(s) ---
+key=2251799813685441 type=s2aw2 elementId=w2 piKey=2251799813685405 vars={"tu":"tu-c","item":"c","loopCounter":3,"results":[null,null,null]}
+key=2251799813685446 type=s2aw2 elementId=w2 piKey=2251799813685405 vars={"tu":"tu-b","item":"b","loopCounter":2,"results":[null,null,null]}
+key=2251799813685451 type=s2aw2 elementId=w2 piKey=2251799813685405 vars={"tu":"tu-a","item":"a","loopCounter":1,"results":[null,null,null]}
+COMPLETE key=2251799813685441 type=s2aw2 vars={}
+COMPLETE key=2251799813685446 type=s2aw2 vars={}
+COMPLETE key=2251799813685451 type=s2aw2 vars={}
+--- S2a dump: 1 job(s) ---
+key=2251799813685465 type=s2adump elementId=dump piKey=2251799813685405 vars={"results":["tu-a","tu-b","tu-c"]}
+COMPLETE key=2251799813685465 type=s2adump vars={}
+
+===== S2B =====
+DEPLOY s2b-mi-sub-outputmap-renamed.bpmn -> s2bMiSub v1 key=2251799813685470
+START s2bMiSub -> piKey=2251799813685472
+--- S2b w: 3 job(s) ---
+key=2251799813685500 type=s2bw elementId=w piKey=2251799813685472 vars={"item":"a","tuLocal":null,"loopCounter":1,"results":[null,null,null]}
+key=2251799813685501 type=s2bw elementId=w piKey=2251799813685472 vars={"item":"b","tuLocal":null,"loopCounter":2,"results":[null,null,null]}
+key=2251799813685502 type=s2bw elementId=w piKey=2251799813685472 vars={"item":"c","tuLocal":null,"loopCounter":3,"results":[null,null,null]}
+COMPLETE key=2251799813685502 type=s2bw vars={"tu":"tu-c"}
+COMPLETE key=2251799813685501 type=s2bw vars={"tu":"tu-b"}
+COMPLETE key=2251799813685500 type=s2bw vars={"tu":"tu-a"}
+--- S2b w2 (tuLocal via output mapping?): 3 job(s) ---
+key=2251799813685508 type=s2bw2 elementId=w2 piKey=2251799813685472 vars={"item":"c","tuLocal":"tu-c","loopCounter":3,"results":[null,null,null]}
+key=2251799813685513 type=s2bw2 elementId=w2 piKey=2251799813685472 vars={"item":"b","tuLocal":"tu-b","loopCounter":2,"results":[null,null,null]}
+key=2251799813685518 type=s2bw2 elementId=w2 piKey=2251799813685472 vars={"item":"a","tuLocal":"tu-a","loopCounter":1,"results":[null,null,null]}
+COMPLETE key=2251799813685508 type=s2bw2 vars={}
+COMPLETE key=2251799813685513 type=s2bw2 vars={}
+COMPLETE key=2251799813685518 type=s2bw2 vars={}
+--- S2b dump: 1 job(s) ---
+key=2251799813685532 type=s2bdump elementId=dump piKey=2251799813685472 vars={"results":["tu-a","tu-b","tu-c"]}
+COMPLETE key=2251799813685532 type=s2bdump vars={}
+
+===== S3 =====
+DEPLOY s3-mi-sub-inputmap.bpmn -> s3MiSub v1 key=2251799813685537
+START s3MiSub -> piKey=2251799813685539
+--- S3 w (x from =item input? item? loopCounter?): 2 job(s) ---
+key=2251799813685561 type=s3w elementId=w piKey=2251799813685539 vars={"x":"a","item":"a","loopCounter":1,"results":[null,null]}
+key=2251799813685563 type=s3w elementId=w piKey=2251799813685539 vars={"x":"b","item":"b","loopCounter":2,"results":[null,null]}
+COMPLETE key=2251799813685561 type=s3w vars={}
+COMPLETE key=2251799813685563 type=s3w vars={}
+--- S3 w2 (sees x? lc from =loopCounter input?): 2 job(s) ---
+key=2251799813685569 type=s3w2 elementId=w2 piKey=2251799813685539 vars={"lc":1,"x":null,"item":"a","loopCounter":1,"results":[null,null]}
+key=2251799813685574 type=s3w2 elementId=w2 piKey=2251799813685539 vars={"lc":2,"x":null,"item":"b","loopCounter":2,"results":[null,null]}
+COMPLETE key=2251799813685569 type=s3w2 vars={}
+COMPLETE key=2251799813685574 type=s3w2 vars={}
+--- S3 dump (results + x/lc leakage?): 1 job(s) ---
+key=2251799813685585 type=s3dump elementId=dump piKey=2251799813685539 vars={"results":[null,null]}
+COMPLETE key=2251799813685585 type=s3dump vars={}
+
+===== S4 =====
+DEPLOY s4-mi-sub-empty.bpmn -> s4MiSub v1 key=2251799813685590
+START s4MiSub -> piKey=2251799813685592
+--- S4 w (expect 0 jobs): 0 job(s) ---
+--- S4 dump (results == []?): 1 job(s) ---
+key=2251799813685601 type=s4dump elementId=dump piKey=2251799813685592 vars={"results":[]}
+COMPLETE key=2251799813685601 type=s4dump vars={}
+
+===== S5 =====
+DEPLOY s5-mi-sub-unset-output.bpmn -> s5MiSub v1 key=2251799813685607
+START s5MiSub -> piKey=2251799813685609
+--- S5 w: 2 job(s) ---
+key=2251799813685630 type=s5w elementId=w piKey=2251799813685609 vars={"item":"a","neverSet":null,"loopCounter":1,"results":[null,null]}
+key=2251799813685631 type=s5w elementId=w piKey=2251799813685609 vars={"item":"b","neverSet":null,"loopCounter":2,"results":[null,null]}
+COMPLETE key=2251799813685630 type=s5w vars={}
+COMPLETE key=2251799813685631 type=s5w vars={}
+--- S5 dump (results == [null,null]?): 1 job(s) ---
+key=2251799813685642 type=s5dump elementId=dump piKey=2251799813685609 vars={"results":[null,null]}
+COMPLETE key=2251799813685642 type=s5dump vars={}
+
+===== S6 =====
+DEPLOY s6-mi-sub-sequential.bpmn -> s6MiSub v1 key=2251799813685647
+START s6MiSub -> piKey=2251799813685649
+--- S6 first activation (expect exactly 1): 1 job(s) ---
+key=2251799813685661 type=s6w elementId=w piKey=2251799813685649 vars={"item":"a","loopCounter":1,"results":[null,null,null]}
+COMPLETE key=2251799813685661 type=s6w vars={}
+--- S6 second activation (expect exactly 1, next item): 1 job(s) ---
+key=2251799813685672 type=s6w elementId=w piKey=2251799813685649 vars={"item":"b","loopCounter":2,"results":["a",null,null]}
+COMPLETE key=2251799813685672 type=s6w vars={}
+--- S6 third activation (expect exactly 1): 1 job(s) ---
+key=2251799813685683 type=s6w elementId=w piKey=2251799813685649 vars={"item":"c","loopCounter":3,"results":["a","b",null]}
+COMPLETE key=2251799813685683 type=s6w vars={}
+--- S6 dump (results order?): 1 job(s) ---
+key=2251799813685691 type=s6dump elementId=dump piKey=2251799813685649 vars={"results":["a","b","c"]}
+COMPLETE key=2251799813685691 type=s6dump vars={}
+
+===== S7 =====
+DEPLOY s7-mi-sub-boundary.bpmn -> s7MiSub v1 key=2251799813685696
+START s7MiSub -> piKey=2251799813685698
+--- S7 w before timer (expect 2, NOT completed): 2 job(s) ---
+key=2251799813685718 type=s7w elementId=w piKey=2251799813685698 vars={"item":"a","loopCounter":1,"results":[null,null]}
+key=2251799813685719 type=s7w elementId=w piKey=2251799813685698 vars={"item":"b","loopCounter":2,"results":[null,null]}
+S7 waiting 6s for PT3S boundary to fire...
+--- S7 w after timer (expect 0 — canceled?): 0 job(s) ---
+--- S7 dump (path? results present?): 1 job(s) ---
+key=2251799813685729 type=s7dump elementId=dumpCancel piKey=2251799813685698 vars={"path":"cancel"}
+COMPLETE key=2251799813685729 type=s7dump vars={}
+
+===== S8A =====
+DEPLOY s8a-mi-sub-nested.bpmn -> s8aNested v1 key=2251799813685735
+START s8aNested -> piKey=2251799813685737
+--- S8a w (expect 4: oitem visible? iitem? loopCounter?): 4 job(s) ---
+key=2251799813685786 type=s8aw elementId=w piKey=2251799813685737 vars={"iitem":"1","loopCounter":1,"innerResults":[null,null],"oitem":"x","outerResults":[null,null]}
+key=2251799813685787 type=s8aw elementId=w piKey=2251799813685737 vars={"iitem":"2","loopCounter":2,"innerResults":[null,null],"oitem":"x","outerResults":[null,null]}
+key=2251799813685788 type=s8aw elementId=w piKey=2251799813685737 vars={"iitem":"1","loopCounter":1,"innerResults":[null,null],"oitem":"y","outerResults":[null,null]}
+key=2251799813685789 type=s8aw elementId=w piKey=2251799813685737 vars={"iitem":"2","loopCounter":2,"innerResults":[null,null],"oitem":"y","outerResults":[null,null]}
+COMPLETE key=2251799813685786 type=s8aw vars={}
+COMPLETE key=2251799813685787 type=s8aw vars={}
+COMPLETE key=2251799813685788 type=s8aw vars={}
+COMPLETE key=2251799813685789 type=s8aw vars={}
+--- S8a dump (outerResults/innerResults?): 1 job(s) ---
+key=2251799813685810 type=s8adump elementId=dump piKey=2251799813685737 vars={"outerResults":[["1","2"],["1","2"]]}
+COMPLETE key=2251799813685810 type=s8adump vars={}
+
+===== S8B =====
+DEPLOY s8b-mi-task-in-mi-sub.bpmn -> s8bMiTaskInSub v1 key=2251799813685815
+START s8bMiTaskInSub -> piKey=2251799813685817
+--- S8b MI task jobs (expect 4: item visible? pitem?): 4 job(s) ---
+key=2251799813685848 type=s8bw elementId=mtask piKey=2251799813685817 vars={"pitem":"p","loopCounter":1,"tresults":[null,null],"item":"a","results":[null,null]}
+key=2251799813685851 type=s8bw elementId=mtask piKey=2251799813685817 vars={"pitem":"q","loopCounter":2,"tresults":[null,null],"item":"a","results":[null,null]}
+key=2251799813685854 type=s8bw elementId=mtask piKey=2251799813685817 vars={"pitem":"p","loopCounter":1,"tresults":[null,null],"item":"b","results":[null,null]}
+key=2251799813685857 type=s8bw elementId=mtask piKey=2251799813685817 vars={"pitem":"q","loopCounter":2,"tresults":[null,null],"item":"b","results":[null,null]}
+COMPLETE key=2251799813685848 type=s8bw vars={}
+COMPLETE key=2251799813685851 type=s8bw vars={}
+COMPLETE key=2251799813685854 type=s8bw vars={}
+COMPLETE key=2251799813685857 type=s8bw vars={}
+--- S8b dump (results/tresults?): 1 job(s) ---
+key=2251799813685870 type=s8bdump elementId=dump piKey=2251799813685817 vars={"results":[["p","q"],["p","q"]]}
+COMPLETE key=2251799813685870 type=s8bdump vars={}
+
+===== S9 =====
+DEPLOY s9-mi-sub-completion-cond.bpmn -> s9MiSub v1 key=2251799813685875
+START s9MiSub -> piKey=2251799813685877
+--- S9 w initial (expect 3): 3 job(s) ---
+key=2251799813685902 type=s9w elementId=w piKey=2251799813685877 vars={"item":"a","loopCounter":1,"results":[null,null,null]}
+key=2251799813685903 type=s9w elementId=w piKey=2251799813685877 vars={"item":"b","loopCounter":2,"results":[null,null,null]}
+key=2251799813685904 type=s9w elementId=w piKey=2251799813685877 vars={"item":"c","loopCounter":3,"results":[null,null,null]}
+COMPLETE key=2251799813685902 type=s9w vars={}
+S9 completed one instance, waiting 3s...
+--- S9 w after one completion (remaining canceled?): 0 job(s) ---
+--- S9 dump (results content?): 0 job(s) ---
+
+ORACLE DONE

@@ -125,6 +125,29 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
         "ELSE (" + FRESH_PADDED_LIST + ")::text END) " +
         "RETURNING (xmax = 0)";
 
+    /**
+     * WO-C8-41 (F3): scoped-вариант SET_AT_PG — тот же стейтмент, scope_id
+     * параметром вместо литерального NULL (констрейнт UK тот же, ON CONFLICT
+     * без изменений). Параметры: id, pi, scope + те же 15 после.
+     */
+    private static final String SET_AT_PG_SCOPED =
+        "INSERT INTO variables (id, process_instance_id, scope_id, name, type, text_value) " +
+        "VALUES (?, ?, ?, ?, 'JSON', " + FRESH_PADDED_LIST + "::text) " +
+        "ON CONFLICT (process_instance_id, name, scope_id) DO UPDATE " +
+        "SET type = 'JSON', " +
+        "    text_value = (CASE WHEN variables.type = 'JSON' AND variables.text_value ~ '^\\s*\\[' " +
+        "THEN (CASE WHEN jsonb_array_length(variables.text_value::jsonb) > ? " +
+        "  THEN jsonb_set(variables.text_value::jsonb, ARRAY[?::text], ?::jsonb, true)::text " +
+        "  ELSE (variables.text_value::jsonb || (SELECT jsonb_agg(CASE WHEN g.i < (? - jsonb_array_length(variables.text_value::jsonb)) THEN 'null'::jsonb ELSE ?::jsonb END) " +
+        "    FROM generate_series(0, (? - jsonb_array_length(variables.text_value::jsonb))) AS g(i)))::text END) " +
+        "ELSE (" + FRESH_PADDED_LIST + ")::text END) " +
+        "RETURNING (xmax = 0)";
+
+    /** WO-C8-41 (F3), H2 scoped: те же UPDATE/SELECT, scope_id равенством. */
+    private static final String SET_AT_H2_UPDATE_SCOPED =
+        "UPDATE variables SET type = 'JSON', text_value = ? " +
+        "WHERE process_instance_id = ? AND name = ? AND scope_id = ?";
+
     /** WO-DIFF-3 (#4), H2: перезапись целиком (текст собран в {@link #mergeAtIndex}). */
     private static final String SET_AT_H2_UPDATE =
         "UPDATE variables SET type = 'JSON', text_value = ? " +
@@ -443,6 +466,83 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
         snapshot.setValue(getVariableTextValue(processInstanceId, name).orElse("[" + jsonElement + "]"));
         historyWriter.record(processInstanceId, null, snapshot, VariableHistoryWriter.SOURCE_APPEND);
         executionContext.recordVariableChange(name, kind);
+    }
+
+    @Override
+    public void setJsonElementAt(@NonNull UUID processInstanceId, UUID scopeId, String name, int index,
+            String jsonElement) {
+        if (scopeId == null) {
+            setJsonElementAt(processInstanceId, name, index, jsonElement);
+            return;
+        }
+        if (index < 0) {
+            throw new IllegalArgumentException("JSON-list index must be non-negative: " + index);
+        }
+        boolean postgres = "PostgreSQL".equals(getDatabaseProduct());
+        String kind = postgres
+            ? setJsonElementAtPostgresScoped(processInstanceId, scopeId, name, index, jsonElement)
+            : setJsonElementAtGuardedScoped(processInstanceId, scopeId, name, index, jsonElement);
+        if ("update".equals(kind)) {
+            evictVariable(processInstanceId, scopeId, name);
+        }
+        ProcessVariable snapshot = new ProcessVariable();
+        snapshot.setName(name);
+        snapshot.setType(com.zorrodev.bpm.contract.model.ProcessVariableType.JSON);
+        snapshot.setValue(scopedTextValue(processInstanceId, scopeId, name)
+            .orElse("[" + jsonElement + "]"));
+        historyWriter.record(processInstanceId, scopeId, snapshot, VariableHistoryWriter.SOURCE_APPEND);
+        executionContext.recordVariableChange(name, kind);
+    }
+
+    /** WO-C8-41 (F3): scoped PG-путь — те же 15 плейсхолдеров после id/pi/scope/name. */
+    private String setJsonElementAtPostgresScoped(UUID processInstanceId, UUID scopeId, String name,
+            int index, String jsonElement) {
+        Boolean inserted = jdbcTemplate.queryForObject(SET_AT_PG_SCOPED, Boolean.class,
+            UUID.randomUUID(), processInstanceId, scopeId, name,
+            index, jsonElement, index,
+            index, index, jsonElement,
+            index, jsonElement, index,
+            index, jsonElement, index);
+        return Boolean.TRUE.equals(inserted) ? "create" : "update";
+    }
+
+    /** WO-C8-41 (F3): scoped H2-путь — та же слот-семантика mergeAtIndex, scope равенством. */
+    private String setJsonElementAtGuardedScoped(UUID processInstanceId, UUID scopeId, String name,
+            int index, String jsonElement) {
+        String current = null;
+        try {
+            current = jdbcTemplate.queryForObject(
+                "SELECT text_value FROM variables WHERE process_instance_id = ? AND name = ? AND scope_id = ?",
+                String.class, processInstanceId, name, scopeId);
+        } catch (org.springframework.dao.EmptyResultDataAccessException absent) {
+            current = null;
+        }
+        String merged = mergeAtIndex(current, index, jsonElement);
+        if (current != null
+            && jdbcTemplate.update(SET_AT_H2_UPDATE_SCOPED, merged, processInstanceId, name, scopeId) == 1) {
+            return "update";
+        }
+        try {
+            jdbcTemplate.update(INSERT_H2, UUID.randomUUID(), processInstanceId, scopeId,
+                name, "JSON", merged);
+            return "create";
+        } catch (DuplicateKeyException insertRaceLost) {
+            jdbcTemplate.update(SET_AT_H2_UPDATE_SCOPED, merged, processInstanceId, name, scopeId);
+            return "update";
+        }
+    }
+
+    /** WO-C8-41 (F3): текстовое значение именованной строки скоупа (снапшот истории). */
+    private java.util.Optional<String> scopedTextValue(UUID processInstanceId, UUID scopeId, String name) {
+        return variableRepository.findByProcessInstanceIdAndScopeId(processInstanceId, scopeId).stream()
+            .filter(e -> name.equals(e.getName()))
+            .map(com.zorrodev.bpm.engine.entity.ProcessVariableEntity::getTextValue)
+            .findFirst();
+    }
+
+    @Override
+    public void deleteVariable(@NonNull UUID processInstanceId, UUID scopeId, String name) {
+        variableRepository.deleteByProcessInstanceIdAndNameAndScope(processInstanceId, name, scopeId);
     }
 
     /**

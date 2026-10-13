@@ -273,6 +273,18 @@ public interface DBService {
      */
     void setJsonElementAt(@NonNull UUID processInstanceId, String name, int index, String jsonElement);
 
+    /**
+     * WO-C8-41 (F3): scoped-вариант позиционной записи JSON-слота.
+     * See {@link com.zorrodev.bpm.engine.service.db.VariableDbOperations#setJsonElementAt}.
+     */
+    void setJsonElementAt(@NonNull UUID processInstanceId, UUID scopeId, String name, int index,
+        String jsonElement);
+
+    /**
+     * WO-C8-41 (F5): удаление одной переменной по имени в скоупе (scopeId null = root).
+     */
+    void deleteVariable(@NonNull UUID processInstanceId, UUID scopeId, String name);
+
     /** Drops all variables of a local scope (e.g. an activity's IO-mapping inputs after it completes). */
     void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId);
 
