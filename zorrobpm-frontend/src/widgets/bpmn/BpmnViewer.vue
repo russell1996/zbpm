@@ -220,15 +220,17 @@ function applyCountOverlays() {
 // Позиция — низ/право, чтобы не пересекаться с token-count (верх/право).
 // pointer-events:none: оверлей не перехватывает element.click; title —
 // подсказка (действие — в панели элемента, клавиатура/aria там же).
+// Тултип ОБЩИЙ (goToSubprocess): оверлей не знает тип элемента (только id),
+// точная подпись — на кнопке в панели (goTo/openSubprocess).
 function applyNavOverlays() {
   if (!viewer) return
   const overlays = viewer.get('overlays') as {
     add: (id: string, type: string, opts: { position: object; html: string }) => void
     remove: (filter: { type: string }) => void
   }
+  const title = t('goToSubprocess')
   overlays.remove({ type: 'subprocess-nav' })
   if (!props.navigableElementIds) return
-  const title = t('goToSubprocess')
   for (const id of props.navigableElementIds) {
     try {
       overlays.add(id, 'subprocess-nav', {
