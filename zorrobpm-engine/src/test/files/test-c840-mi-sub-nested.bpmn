@@ -65,20 +65,22 @@
       <bpmn:userTask id="miTaskA" name="inner-mi-a">
         <bpmn:extensionElements>
           <zeebe:userTask />
-          <zeebe:assignmentDefinition assignee="=memberA" />
+          <zeebe:assignmentDefinition assignee="=member" />
         </bpmn:extensionElements>
         <!-- WO-C8-40: внутренний MI БЕЗ outputCollection/outputElement: агрегация
              пишет только root (setJsonElementAt — NULL-скоуп в SQL), и два внешних
              инстанса перезаписали бы общий membersDone (тот же класс гонки, что D1).
              Скоупированная агрегация внутреннего MI — отдельный follow-up WO (V7),
              здесь проверяются скоупы привязки (критерий 8), а не сборка.
-             Имена инстансов/переменных — уникальные на внешний слот (miTaskA/memberA
-             только в этом инстансе): batch/join-ключи и outputCollection
-             НЕ делятся между внешними инстансами (иначе join-ключи "miTask::batch"
-             коллидируют — тот же класс, что WO-ENG-7). -->
+             inputCollection — ИЗ ВНЕШНЕГО scope (=activity.members цикл-переменной
+             внешнего инстанса): без chain-контекста входа (старый rootVariablesFor)
+             коллекция не резолвится и спавнится 0 инстансов. Batch/join-ключи
+             внешнего и внутреннего MI разделены скоупом batch-переменной
+             (innermost scope токена входа), иначе join-ключи "miTaskA::batch"
+             двух внешних инстансов коллидировали бы (класс WO-ENG-7). -->
         <bpmn:multiInstanceLoopCharacteristics isSequential="false">
           <bpmn:extensionElements>
-            <zeebe:loopCharacteristics inputCollection="=[&quot;a1&quot;, &quot;a2&quot;]" inputElement="memberA" />
+            <zeebe:loopCharacteristics inputCollection="=activity.members" inputElement="member" />
           </bpmn:extensionElements>
         </bpmn:multiInstanceLoopCharacteristics>
         <bpmn:incoming>flowToMi</bpmn:incoming>

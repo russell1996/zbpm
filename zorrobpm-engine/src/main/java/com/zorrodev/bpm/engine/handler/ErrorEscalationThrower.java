@@ -116,10 +116,23 @@ public class ErrorEscalationThrower {
             BpmnElementModel boundary = findErrorBoundary(bpmn, scope.getBpmnElementId(), errorCode);
             if (boundary != null) {
                 // WO-C8-40: MI-подпроцесс — scope с N строками инстансов на одном
-                // токене: гасим ВСЕ инстансы и их внутренности (каждый инстанс —
-                // свой scope для filterActivitiesInScope), иначе выжившие инстансы
-                // и их задачи остаются висеть без scope. Обычный scope — как раньше.
-                cancelMiOrSingleScope(processInstanceId, tok, scope, bpmn);
+                // токене: гасим ВСЕ инстансы и их внутренности ПРЯМЫМИ вызовами
+                // в ветке (helper — только чистое вычисление id; см.
+                // miSubProcessInstanceIds/miSubProcessInnerIds). Обычный scope —
+                // исторический путь без изменений.
+                if (isMiSubProcessScope(scope, bpmn)) {
+                    java.util.Set<UUID> instanceIds = miSubProcessInstanceIds(processInstanceId, scope);
+                    for (UUID instanceId : instanceIds) {
+                        dbService.cancelActivity(instanceId);
+                    }
+                    for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {
+                        dbService.cancelActivity(innerId);
+                    }
+                    dbService.cancelActivity(scope.getId());
+                } else {
+                    dbService.cancelActiveActivitiesForToken(tok.getId());
+                    dbService.cancelActivity(scope.getId());
+                }
                 // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемого scope —
                 // та же транзакция, без резюма (см. поле scopeContainment).
                 dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
@@ -234,30 +247,16 @@ public class ErrorEscalationThrower {
     }
 
     /**
-     * WO-C8-40: гашение scope при error/escalation-границе. Обычный scope —
-     * исторический путь (активности токена + строка scope). MI-подпроцесс —
-     * N строк инстансов на том же токене плюс их внутренности: каждый инстанс
-     * гасится как свой scope через {@code elementSupport.filterActivitiesInScope}
-     * (внутренности лежат в ЕГО цепочке), затем сами строки инстансов и scope.
-     * Без этого выжившие инстансы висят без scope: их задачи CREATED, токены
-     * живы, process RUNNING — тихая утечка (критерий 8).
+     * WO-C8-40: id инстансов MI-подпроцесса для гашения при error/escalation-границе
+     * (чистое вычисление — НЕ деактивация: сами cancel-вызовы стоят ПРЯМО в ветках
+     * throwError/throwEscalation, потому что охранный тест DeactivationWakeupCoverageTest
+     * считает сайты по месту вызова, и вынос гашения в helper прятал бы их за одной
+     * записью; прецедент C8-39 — замена вызов-на-вызов в той же ветке).
+     * Строки ищутся по ИНСТАСУ, а не по токену бросания: токен бросания — scope-токен
+     * ОДНОГО инстанса, а инстансы делят входящий токен контейнера. Инстанс бросания
+     * (scope из walk) — тоже инстанс: его id берём из scope.getId().
      */
-    private void cancelMiOrSingleScope(UUID processInstanceId, Token tok, Activity scope,
-            BpmnProcessDefinitionModel bpmn) {
-        BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
-        boolean miScope = scopeElement != null
-            && scopeElement.getType() == BpmnElementType.SUB_PROCESS
-            && scopeElement.getExtensions() != null
-            && scopeElement.getExtensions().getMultiInstanceExtension() != null;
-        if (!miScope) {
-            dbService.cancelActiveActivitiesForToken(tok.getId());
-            dbService.cancelActivity(scope.getId());
-            return;
-        }
-        // MI-подпроцесс: строки инстансов гасятся напрямую. Строки ищутся по
-        // ИНСТАСУ, а не по токену бросания: токен бросания — scope-токен ОДНОГО
-        // инстанса, а инстансы делят входящий токен контейнера. Инстанс бросания
-        // (scope из walk) — тоже инстанс: его id берём из scope.getId().
+    private java.util.Set<UUID> miSubProcessInstanceIds(UUID processInstanceId, Activity scope) {
         java.util.Set<UUID> instanceIds = new java.util.HashSet<>();
         instanceIds.add(scope.getId());
         for (Activity sibling : dbService.getActiveActivities(processInstanceId)) {
@@ -270,19 +269,36 @@ public class ErrorEscalationThrower {
                 instanceIds.add(sibling.getId());
             }
         }
-        java.util.Set<UUID> cancelled = new java.util.HashSet<>();
+        return instanceIds;
+    }
+
+    /**
+     * WO-C8-40: внутренности инстансов MI-подпроцесса (activity, чья scope-цепочка
+     * содержит один из инстансов) — чистое вычисление для прямых cancel-циклов
+     * в ветках throwError/throwEscalation (см. выше, почему не helper с cancel).
+     */
+    private java.util.List<UUID> miSubProcessInnerIds(UUID processInstanceId, java.util.Set<UUID> instanceIds) {
+        java.util.List<UUID> inner = new java.util.ArrayList<>();
         for (Activity live : dbService.getActiveActivities(processInstanceId)) {
-            if (live == null || live.getId() == null || cancelled.contains(live.getId())) {
+            if (live == null || live.getId() == null || instanceIds.contains(live.getId())) {
                 continue;
             }
-            if (instanceIds.contains(live.getId()) || chainContains(processInstanceId, live, instanceIds)) {
-                dbService.cancelActivity(live.getId());
-                cancelled.add(live.getId());
+            if (chainContains(processInstanceId, live, instanceIds)) {
+                inner.add(live.getId());
             }
         }
-        dbService.cancelActivity(scope.getId());
-        log.info("{}: error/escalation boundary on MI subprocess {} — cancelled {} activities in {} instances",
-            processInstanceId, scope.getBpmnElementId(), cancelled.size(), instanceIds.size());
+        return inner;
+    }
+
+    /**
+     * WO-C8-40: isMultiInstance-контейнер ли scope (лексика модели, не runtime).
+     */
+    private boolean isMiSubProcessScope(Activity scope, BpmnProcessDefinitionModel bpmn) {
+        BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
+        return scopeElement != null
+            && scopeElement.getType() == BpmnElementType.SUB_PROCESS
+            && scopeElement.getExtensions() != null
+            && scopeElement.getExtensions().getMultiInstanceExtension() != null;
     }
 
     /**
@@ -331,8 +347,21 @@ public class ErrorEscalationThrower {
             BpmnElementModel boundary = findEscalationBoundary(bpmn, scope.getBpmnElementId(), escalationCode);
             if (boundary != null) {
                 if (isInterrupting(boundary)) {
-                    // WO-C8-40: та же MI-отмена, что в error-пути выше.
-                    cancelMiOrSingleScope(processInstanceId, tok, scope, bpmn);
+                    // WO-C8-40: та же MI-отмена, что в error-пути выше (прямые
+                    // вызовы в ветке, helper — только вычисление id).
+                    if (isMiSubProcessScope(scope, bpmn)) {
+                        java.util.Set<UUID> instanceIds = miSubProcessInstanceIds(processInstanceId, scope);
+                        for (UUID instanceId : instanceIds) {
+                            dbService.cancelActivity(instanceId);
+                        }
+                        for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {
+                            dbService.cancelActivity(innerId);
+                        }
+                        dbService.cancelActivity(scope.getId());
+                    } else {
+                        dbService.cancelActiveActivitiesForToken(tok.getId());
+                        dbService.cancelActivity(scope.getId());
+                    }
                     // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемого scope —
                     // та же транзакция, без резюма (см. поле scopeContainment).
                     dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,

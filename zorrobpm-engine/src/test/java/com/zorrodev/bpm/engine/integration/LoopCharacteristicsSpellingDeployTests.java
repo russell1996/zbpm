@@ -69,7 +69,15 @@ class LoopCharacteristicsSpellingDeployTests {
 
     /** The kind of activity a multi-instance marker is refused on (see MULTI_INSTANCE_UNSUPPORTED_HOSTS). */
     private static final List<String> CONTAINER_KINDS =
-        List.of("subProcess", "transaction", "callActivity", "adHocSubProcess");
+        List.of("transaction", "callActivity", "adHocSubProcess");
+
+    /**
+     * WO-C8-40 (D3): the activity kinds a direct multi-instance marker is refused on
+     * (see MULTI_INSTANCE_UNSUPPORTED_TASKS) — the engine drops the marker there and the
+     * activity would run once. {@code subProcess} is NOT here: MI on it executes (WO-C8-40).
+     */
+    private static final List<String> UNSUPPORTED_TASK_KINDS =
+        List.of("task", "scriptTask", "manualTask", "businessRuleTask", "sendTask", "receiveTask");
 
     // ─── the bypass: head element + xsi:type, standard loop (criterion 1) ─────────────
 
@@ -134,13 +142,15 @@ class LoopCharacteristicsSpellingDeployTests {
     }
 
     /**
-     * Multi-instance written directly: refused on the container kinds (unchanged), and on the
-     * activity kinds it keeps today's behaviour — an unrefused deploy — because widening that list
-     * is maintainer's scope decision, not this fix's (report §6). Pinned here so the day someone widens
-     * it, this test says so instead of the change arriving unnoticed.
+     * Multi-instance written directly: refused on the container kinds (unchanged) and —
+     * WO-C8-40 (D3) — on the activity kinds that do not implement it (new
+     * UNSUPPORTED_MULTI_INSTANCE_TASK); on serviceTask/userTask it keeps today's behaviour —
+     * an unrefused deploy — and on subProcess it now EXECUTES (WO-C8-40), so no refusal either.
+     * Pinned here so the day someone changes any cell of that matrix, this test says so instead
+     * of the change arriving unnoticed.
      */
     @Test
-    void multiInstanceWrittenDirectly_refusedOnContainersAndAcceptedOnActivityKinds() {
+    void multiInstanceWrittenDirectly_refusedOnContainersAndTasks_acceptedOnSupportedKinds() {
         for (String host : CONTAINER_KINDS) {
             ApiException refusal = catchThrowableOfDeploy(bpmnWith(host, directMultiInstance()));
 
@@ -149,10 +159,17 @@ class LoopCharacteristicsSpellingDeployTests {
                 .isEqualTo("UNSUPPORTED_MULTI_INSTANCE_CONTAINER");
         }
 
-        for (String host : HOST_KINDS) {
-            if (CONTAINER_KINDS.contains(host)) {
-                continue;
-            }
+        for (String host : UNSUPPORTED_TASK_KINDS) {
+            ApiException refusal = catchThrowableOfDeploy(bpmnWith(host, directMultiInstance()));
+
+            assertThat(refusal).as("%s does not implement MI and must be refused", host).isNotNull();
+            assertThat(refusal.getCode()).as("%s code", host)
+                .isEqualTo("UNSUPPORTED_MULTI_INSTANCE_TASK");
+            assertThat(refusal.getParams().get("elementIds")).as("%s elementIds", host)
+                .asList().containsExactly("loopTask");
+        }
+
+        for (String host : List.of("serviceTask", "userTask")) {
             String key = "eng34-mi-direct-" + UUID.randomUUID().toString().substring(0, 8);
             ProcessDefinition deployed = processDefinitionService.addProcessDefinition(
                 bpmnWith(host, directMultiInstance(), key));
@@ -160,6 +177,23 @@ class LoopCharacteristicsSpellingDeployTests {
             assertThat(deployed).as("%s keeps today's behaviour: direct MI is not refused here", host)
                 .isNotNull();
         }
+    }
+
+    /**
+     * WO-C8-40: a direct multi-instance marker on an embedded subProcess is a SUPPORTED
+     * construct now — the scanner records no finding and the parser binds the extension
+     * (live execution is proven by the MiSubProcess ITs, not here).
+     */
+    @Test
+    void multiInstanceWrittenDirectlyOnSubProcess_supportedAndBound() {
+        BpmnProcessDefinitionModel model = bpmnParseService.parse(bpmnWith("subProcess", directMultiInstance()));
+
+        assertThat(model.getUnsupportedConstructs())
+            .as("direct MI on an embedded subProcess is supported (WO-C8-40)")
+            .isEmpty();
+        assertThat(multiInstanceBound(model, "loopTask"))
+            .as("subProcess + <multiInstanceLoopCharacteristics> binds the MI extension")
+            .isTrue();
     }
 
     // ─── xsi:type is resolved through the NAMESPACE, not by the prefix text ────────────────
@@ -302,7 +336,7 @@ class LoopCharacteristicsSpellingDeployTests {
      */
     @Test
     void theTwoMultiInstanceRefusals_carryDifferentCodes() {
-        ApiException onContainer = catchThrowableOfDeploy(bpmnWith("subProcess", headElementMultiInstance()));
+        ApiException onContainer = catchThrowableOfDeploy(bpmnWith("transaction", headElementMultiInstance()));
         ApiException onTask = catchThrowableOfDeploy(bpmnWith("userTask", headElementMultiInstance()));
 
         assertThat(onContainer).isNotNull();
@@ -373,7 +407,7 @@ class LoopCharacteristicsSpellingDeployTests {
      */
     @Test
     void theDirectSpellingBindsMultiInstance_andTheHeadSpellingDoesNot() {
-        for (String host : List.of("serviceTask", "userTask")) {
+        for (String host : List.of("serviceTask", "userTask", "subProcess")) {
             BpmnProcessDefinitionModel direct = bpmnParseService.parse(bpmnWith(host, directMultiInstance()));
             BpmnProcessDefinitionModel head = bpmnParseService.parse(bpmnWith(host, headElementMultiInstance()));
 

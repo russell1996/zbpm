@@ -132,6 +132,9 @@ public class MiSubProcessIntegrationTests {
     private com.zorrodev.bpm.engine.repository.UserTaskRepository userTaskRepository;
 
     @Autowired
+    private com.zorrodev.bpm.engine.repository.ProcessInstanceRepository processInstanceRepository;
+
+    @Autowired
     private com.zorrodev.bpm.engine.service.DBService dbService;
 
     private String userTaskAssignee(UUID activityId) {
@@ -257,6 +260,81 @@ public class MiSubProcessIntegrationTests {
     }
 
     /**
+     * D1: lane-local переменная branchTag пишется выходом ioMapping первого
+     * элемента ветки и читается следующим элементом ТОЙ ЖЕ ветки без перекрёста.
+     * Без скоупа в инстанс соседняя ветка перезаписала бы branchTag в root.
+     */
+    @Transactional
+    @Test
+    void laneLocalOutputMapping_staysInsideItsOwnInstance() throws Exception {
+        UUID pdId = deploy("test-c840-mi-sub-lane-local.bpmn");
+        UUID pi = start(pdId, List.of());
+
+        List<ActivityEntity> creates = activities(pi, "svcCreate", ActivityStatus.CREATED);
+        assertThat(creates).as("one create job per MI-subprocess instance").hasSize(2);
+        creates.forEach(c -> runtimeService.completeServiceTask(c.getId(), List.of()));
+
+        List<ActivityEntity> tasks = activities(pi, "utProbe", ActivityStatus.CREATED);
+        assertThat(tasks).as("one probe task per branch").hasSize(2);
+        assertThat(tasks.stream().map(a -> userTaskAssignee(a.getId())).toList())
+            .as("each probe carries its own branchTag (loopCounter), no cross-talk")
+            .containsExactlyInAnyOrder("1", "2");
+        tasks.forEach(t -> runtimeService.completeUserTask(t.getId(), List.of()));
+
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+        assertThat(incidents(pi)).as("no incidents").isZero();
+    }
+
+    /**
+     * Критерий 8 (вложенность): callActivity внутри MI-подпроцесса — каждый
+     * инстанс зовёт дочерний процесс, дочерняя задача резолвит assignee из
+     * inputMapping scope инстанса; по завершении дочерних задач outputCollection
+     * в порядке, процесс завершён.
+     */
+    @Transactional
+    @Test
+    void callActivityInsideMiSub_eachInstanceCallsChildWithItsScope() throws Exception {
+        processDefinitionService.addProcessDefinition(
+            Files.readString(Paths.get("src/test/files/test-c840-call-child.bpmn")));
+        UUID pdId = deploy("test-c840-mi-sub-call-inner.bpmn");
+        UUID pi = start(pdId, List.of());
+
+        List<ActivityEntity> calls = activities(pi, "callWork", ActivityStatus.CREATED);
+        assertThat(calls).as("one call activity per MI-subprocess instance").hasSize(2);
+
+        List<com.zorrodev.bpm.engine.entity.ProcessInstanceEntity> children =
+            processInstanceRepository.findAll(
+                com.zorrodev.bpm.engine.repository.ProcessInstanceRepository.byParentProcessInstanceId(pi));
+        assertThat(children).as("one child instance per MI-subprocess instance").hasSize(2);
+
+        List<String> childAssignees = children.stream()
+            .flatMap(c -> activityRepository.findAll().stream()
+                .filter(a -> a.getProcessInstanceId().equals(c.getId()))
+                .filter(a -> "childWork".equals(a.getBpmnElementId())
+                    && a.getStatus() == ActivityStatus.CREATED)
+                .map(a -> userTaskAssignee(a.getId())))
+            .toList();
+        assertThat(childAssignees)
+            .as("each child task carries its own instance scope (item a/b), no cross-talk")
+            .containsExactlyInAnyOrder("a", "b");
+
+        children.stream()
+            .flatMap(c -> activityRepository.findAll().stream()
+                .filter(a -> a.getProcessInstanceId().equals(c.getId()))
+                .filter(a -> "childWork".equals(a.getBpmnElementId())
+                    && a.getStatus() == ActivityStatus.CREATED))
+            .forEach(a -> runtimeService.completeUserTask(a.getId(), List.of()));
+
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+        assertThat(incidents(pi)).as("no incidents").isZero();
+        ProcessVariableEntity results = variableRepository
+            .findByNameAndProcessInstanceId("results", pi).orElseThrow();
+        List<String> values = new ObjectMapper().readValue(results.getTextValue(),
+            new tools.jackson.core.type.TypeReference<List<String>>() {});
+        assertThat(values).containsExactly("a", "b");
+    }
+
+    /**
      * Критерий 8 (вложенность): обычный вложенный subProcess видит
      * цикл-переменную внешнего инстанса через цепочку скоупов (прямой путь
      * обоих инстансов); внутренний MI за шлюзом по root-флагу routeToMi
@@ -282,10 +360,13 @@ public class MiSubProcessIntegrationTests {
         inner.forEach(a -> runtimeService.completeUserTask(a.getId(), List.of()));
 
         // Внутренний MI за шлюзом (routeToMi=true оба инстанса идут в MI-ветку).
+        // inputCollection — из внешнего scope (=activity.members): инстанс "a"
+        // даёт [a1,a2], инстанс "b" — [b1]. Без chain-контекста входа коллекция
+        // не резолвится (в root её нет) — было бы 0 инстансов вместо 2+1.
         List<ActivityEntity> miTasks = activities(pi, "miTaskA", ActivityStatus.CREATED);
-        assertThat(miTasks).as("2 members per outer instance").hasSize(4);
+        assertThat(miTasks).as("a1+a2 from outer instance a, b1 from outer instance b").hasSize(3);
         assertThat(miTasks.stream().map(a -> userTaskAssignee(a.getId())).toList())
-            .containsOnly("a1", "a2");
+            .containsExactlyInAnyOrder("a1", "a2", "b1");
         miTasks.forEach(a -> runtimeService.completeUserTask(a.getId(), List.of()));
 
         // Оба внешних инстанса прошли внутренний MI и собрались позиционно.
@@ -298,6 +379,79 @@ public class MiSubProcessIntegrationTests {
         List<String> values = new ObjectMapper().readValue(results.getTextValue(),
             new tools.jackson.core.type.TypeReference<List<String>>() {});
         assertThat(values).containsExactly("a", "b");
+    }
+
+    /**
+     * Критерий 8 (отмена): операторская отмена процесса с живым MI-подпроцессом —
+     * те же четыре вызова DBService, что делает операторский путь
+     * {@code ProcessInstanceRuntimeOperationsImpl.cancelProcessInstance} (authz/canceling-фаза
+     * там не меняются этим WO): все инстансы и их внутренние задачи сняты,
+     * таймеры/подписки удалены, инстанс помечен отменённым, живых активностей 0.
+     */
+    @Transactional
+    @Test
+    void operatorCancel_cancelsAllMiInstancesJobsAndSubscriptions() throws Exception {
+        UUID pdId = deploy("test-c840-mi-sub-minimal.bpmn");
+        UUID pi = start(pdId, List.of());
+
+        assertThat(activities(pi, "utProbe", ActivityStatus.CREATED))
+            .as("3 live inner tasks before cancel").hasSize(3);
+        assertThat(activities(pi, "subProbe", ActivityStatus.CREATED))
+            .as("3 live MI container instances before cancel").hasSize(3);
+
+        // Тот же порядок, что операторский путь (без authz/canceling-фазы — они не меняются).
+        dbService.cancelActiveActivities(pi);
+        dbService.deleteTimerJobsByProcessInstanceId(pi);
+        dbService.deleteMessageSubscriptionsByProcessInstanceId(pi);
+        dbService.cancelProcessInstance(pi);
+
+        assertThat(activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(pi))
+            .filter(a -> a.getStatus() == ActivityStatus.CREATED
+                || a.getStatus() == ActivityStatus.IN_PROGRESS)
+            .toList()).as("no live activities left (instances + inner tasks)").isEmpty();
+        assertThat(activities(pi, "subProbe", ActivityStatus.CANCELLED))
+            .as("all 3 MI container instances cancelled").hasSize(3);
+        assertThat(activities(pi, "utProbe", ActivityStatus.CANCELLED))
+            .as("all 3 inner tasks cancelled").hasSize(3);
+        // cancelled читаем с entity: toDTO маппер flag cancelled не копирует
+        // (pre-existing DTO-gap, V7 — операторский путь возвращает IdDTO и на него
+        // не влияет; здесь важен факт строки, а не DTO).
+        com.zorrodev.bpm.engine.entity.ProcessInstanceEntity piEntity =
+            processInstanceRepository.findById(pi).orElseThrow();
+        assertThat(piEntity.isCancelled()).as("instance marked cancelled").isTrue();
+        assertThat(piEntity.getCompletedAt()).as("cancel completes the instance").isNotNull();
+    }
+
+    /**
+     * Критерий 8 (отмена): interrupting message boundary на MI-подпроцессе —
+     * корреляция гасит ВСЕ инстансы и их внутренности (cancelMiSubProcess через
+     * fireBoundary message-пути), поток идёт с границы. Без чистки инстансов
+     * выжившие задачи остались бы CREATED без scope (тихая утечка токенов).
+     */
+    @Transactional
+    @Test
+    void messageBoundaryOnMiSub_cancelsAllInstancesAndContinues() throws Exception {
+        UUID pdId = deploy("test-c840-mi-sub-message-boundary.bpmn");
+        UUID pi = start(pdId, List.of());
+
+        assertThat(activities(pi, "utProbe", ActivityStatus.CREATED))
+            .as("one parked task per MI-subprocess instance").hasSize(2);
+        assertThat(activities(pi, "subProbe", ActivityStatus.CREATED))
+            .as("both MI container instances live").hasSize(2);
+
+        activityService.correlateMessage("cancel-order", pi, List.of());
+
+        assertThat(activities(pi, "utProbe", ActivityStatus.CREATED))
+            .as("no live inner tasks left hanging").isEmpty();
+        assertThat(activities(pi, "subProbe", ActivityStatus.CANCELLED))
+            .as("both MI container instances cancelled").hasSize(2);
+        assertThat(activities(pi, "endAfter", ActivityStatus.COMPLETED))
+            .as("boundary continuation ran").hasSize(1);
+        assertThat(activities(pi, "endRepro", ActivityStatus.COMPLETED))
+            .as("normal exit not taken").isEmpty();
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+        assertThat(incidents(pi)).as("no incidents").isZero();
     }
 
     /**
