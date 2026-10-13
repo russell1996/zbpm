@@ -1,25 +1,22 @@
 /**
- * WO-UI-26 критерий 7 — окно запуска процесса: проблемы владельца
- * воспроизведены и исправлены (либо доказано, что исправлены VT-3).
+ * WO-UI-30 часть A — стартовое окно: фиксированная ширина min(94vw,1100px).
  *
- * Жалоба WO (п.6): «узкое окно, прилипающие табы». VT-3 переделал диалог;
- * WO-UI-27 (смержен, `76a4eb7fc`) перевёл стартовую модалку на shadcn-Dialog
- * и расширил контракт: ширина по умолчанию `w-[min(94vw,1280px)]`, тумблер
- * Уже/Шире (`w-[min(94vw,640px)]`, память в localStorage `zbpm-start-dialog-wide`),
- * футер с кнопкой запуска внизу. Таб-переключателя в стартовом окне нет
- * (режим «Таблица|Сырой» живёт внутри VariablesEditor — не предмет гейта).
+ * Контекст: UI-27 ввёл тумблер Уже/Шире (`w-[min(94vw,1280px)]` /
+ * `w-[min(94vw,640px)]`, память `zbpm-start-dialog-wide`), но на десктопе он
+ * ничего не менял, а потолок не применялся: базовый shadcn
+ * DialogScrollContent несёт `md:w-full`, который в Tailwind-каскаде
+ * перебивает обычный `w-[...]` на ≥768px (twMerge их не конфликтует),
+ * и диалог растягивался до max-w=95vw (~2430px на окне ~2530).
+ * Владелец: «кнопку вообще убрать», ширина — min(94vw,1100px).
  *
- * Регресс-гейт на контракт UI-27 (реальный Chromium, страница определения):
- * - модалка рендерится порталом в document (`[role="dialog"]` — НЕ внутри
- *   wrapper: shadcn Dialog идёт через Teleport; стаб teleport глушит reka-
- *   Presence целиком — доказано пробой: со стабом html = 356 симв. коммента,
- *   без стаба диалог в document);
- * - ширина по умолчанию — класс `min(94vw,1280px)`, замер на вьюпорте 960:
- *   94vw ≈ 902, в пределах [560, 960];
- * - тумблер «Уже» сужает до `min(94vw,640px)` и запоминает (`localStorage`);
- * - кнопка запуска видна без прокрутки страницы;
- * - на 360px диалог не шире вьюпорта (нет горизонтального переполнения).
- * Мутация: вернуть width 400px / убрать футер → красный.
+ * Регресс-гейт (реальный Chromium, страница определения):
+ * - модалка в портале (`[role="dialog"]`), класс ровно min(94vw,1100px)
+ *   в обычном И md-варианте (иначе md:w-full базы снова перебьёт);
+ * - замер getBoundingClientRect().width на 2560/1920/1280/360:
+ *   ≈1100 / ≈1100 / ≈1100 / ≈94vw, диалог отцентрован;
+ * - тумблера Уже/Шире нет, localStorage-ключ не пишется.
+ * Мутация: вернуть w-[min(94vw,1280px)] без md: → красный на 2560
+ * (95vw=2432 вместо 1100); вернуть кнопку → красный (текст найден).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
@@ -39,7 +36,7 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
 
-// Ключи как есть (как в UI-27-тесте): тумблер ищем по ключу, не по переводу.
+// Ключи как есть: тумблер ищем по ключу, не по переводу.
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),
 }))
@@ -98,16 +95,16 @@ vi.mock('@/composables/useToast', () => ({
 let mounted: VueWrapper[] = []
 let hosts: HTMLElement[] = []
 
-function mountPage(hostWidth = 1280) {
+function mountPage() {
   const host = document.createElement('div')
   host.style.position = 'absolute'
   host.style.top = '0'
   host.style.left = '0'
-  host.style.width = `${hostWidth}px`
+  host.style.width = '1280px'
   host.style.height = '720px'
   document.body.appendChild(host)
   hosts.push(host)
-  // Без stubs.teleport (см. шапку): портал — в document.body.
+  // Без stubs.teleport (см. UI-26): портал — в document.body.
   const wrapper = mount(ProcessDefinitionDetail, {
     attachTo: host,
     global: { plugins: [createPinia()] },
@@ -126,9 +123,25 @@ async function settle() {
   await flushPromises()
 }
 
+async function openDialogAndMeasure(viewportWidth: number): Promise<{ width: number; left: number; right: number }> {
+  const page = (await import('vitest/browser')).page
+  await page.viewport(viewportWidth, 800)
+  const wrapper = mountPage()
+  await settle()
+  const vm = wrapper.vm as unknown as { showStartModal: boolean }
+  vm.showStartModal = true
+  await settle()
+  const dlg = dialog()
+  expect(dlg, `start dialog renders in portal @${viewportWidth}`).not.toBeNull()
+  const rect = dlg!.getBoundingClientRect()
+  wrapper.unmount()
+  mounted = mounted.filter((w) => w !== wrapper)
+  return { width: rect.width, left: rect.left, right: rect.right }
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
-  localStorage.removeItem('zbpm-start-dialog-wide')
+  localStorage.clear()
 })
 
 afterEach(() => {
@@ -139,10 +152,31 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-describe('WO-UI-26 criterion 7: start dialog geometry (browser)', () => {
-  it('стартовое окно широкое по умолчанию, тумблер сужает, запуск виден без скролла', async () => {
+describe('WO-UI-30 part A: start dialog fixed width (browser)', () => {
+  it.each([
+    { viewport: 2560, expected: 1100 },
+    { viewport: 1920, expected: 1100 },
+    { viewport: 1280, expected: 1100 },
+    { viewport: 360, expected: 0.94 * 360 },
+  ])('ширина ≈ min(94vw,1100px) на вьюпорте $viewport', async ({ viewport, expected }) => {
     const page = (await import('vitest/browser')).page
-    await page.viewport(960, 720)
+    try {
+      const m = await openDialogAndMeasure(viewport)
+      // ±4px: субпиксели, скроллбар оверлея, округления Chromium.
+      expect(m.width).toBeGreaterThanOrEqual(expected - 4)
+      expect(m.width).toBeLessThanOrEqual(expected + 4)
+      // Диалог отцентрован: поля слева/справа симметричны (±8px).
+      const leftGap = m.left
+      const rightGap = viewport - m.right
+      expect(Math.abs(leftGap - rightGap)).toBeLessThanOrEqual(8)
+    } finally {
+      await page.viewport(1280, 800)
+    }
+  }, 60000)
+
+  it('тумблера Уже/Шире нет, localStorage-ключ не пишется', async () => {
+    const page = (await import('vitest/browser')).page
+    await page.viewport(1280, 800)
     try {
       const wrapper = mountPage()
       await settle()
@@ -151,61 +185,18 @@ describe('WO-UI-26 criterion 7: start dialog geometry (browser)', () => {
       await settle()
       const dlg = dialog()
       expect(dlg, 'start dialog renders in portal').not.toBeNull()
-      // Контракт UI-27: дефолт — широко.
-      expect(dlg!.className).toContain('w-[min(94vw,1280px)]')
-      const rect = dlg!.getBoundingClientRect()
-      // 94vw от 960 ≈ 902: в пределах [560, 960].
-      expect(rect.width).toBeGreaterThanOrEqual(560)
-      expect(rect.width).toBeLessThanOrEqual(960)
-      // Кнопка запуска видна без прокрутки страницы.
-      const start = [...document.querySelectorAll('button')].find((b) =>
-        (b.textContent ?? '').includes('startProcess'))
-      expect(start, 'start button exists').toBeDefined()
-      const startRect = start!.getBoundingClientRect()
-      expect(startRect.height).toBeGreaterThan(0)
-      expect(startRect.top).toBeGreaterThanOrEqual(0)
-      expect(startRect.bottom).toBeLessThanOrEqual(720)
-      // Тумблер «Уже» — сужает и запоминает.
-      const narrower = [...document.querySelectorAll('button')].find((b) =>
-        (b.textContent ?? '').includes('presetDialogNarrower')) as HTMLElement | undefined
-      expect(narrower, 'narrower toggle exists').toBeDefined()
-      narrower!.click()
-      await settle()
-      expect(dialog()!.className).toContain('w-[min(94vw,640px)]')
-      expect(localStorage.getItem('zbpm-start-dialog-wide')).toBe('0')
+      // Класс — ровно новый контракт, включая md-вариант.
+      expect(dlg!.className).toContain('w-[min(94vw,1100px)]')
+      expect(dlg!.className).toContain('md:w-[min(94vw,1100px)]')
+      expect(dlg!.className).not.toContain('1280px')
+      expect(dlg!.className).not.toContain('640px')
+      const texts = [...document.querySelectorAll('button')].map((b) => b.textContent ?? '')
+      expect(texts.some((x) => x.includes('presetDialogNarrower') || x.includes('presetDialogWider'))).toBe(false)
+      expect(localStorage.getItem('zbpm-start-dialog-wide')).toBeNull()
       wrapper.unmount()
       mounted = []
     } finally {
-      await page.viewport(1280, 720)
-    }
-  }, 60000)
-
-  it('на 360px стартовое окно не шире вьюпорта (нет горизонтального переполнения)', async () => {
-    // vw считается от ОКНА браузера, а не от host-div: сужаем окно.
-    const page = (await import('vitest/browser')).page
-    await page.viewport(360, 720)
-    try {
-      const wrapper = mountPage(360)
-      await settle()
-      const vm = wrapper.vm as unknown as { showStartModal: boolean }
-      vm.showStartModal = true
-      await settle()
-      const dlg = dialog()
-      expect(dlg, 'start dialog renders in portal').not.toBeNull()
-      const rect = dlg!.getBoundingClientRect()
-      // 94vw от 360 = ~338: диалог уже вьюпорта И внутри него (страницу не рвёт).
-      // (NB: scrollWidth всей страницы здесь НЕ ассертим: сама страница
-      // определения за модалкой имеет непереносимый ряд кнопок шапки/табов —
-      // живой зонд: 7 кнопок right>362 и БЕЗ модалки; это не стартовое окно,
-      // не критерий 7 — зафиксировано как V7-находка в отчёте WO-UI-26.)
-      expect(rect.width).toBeLessThanOrEqual(360)
-      expect(rect.width).toBeGreaterThan(200)
-      expect(rect.left).toBeGreaterThanOrEqual(-1)
-      expect(rect.right).toBeLessThanOrEqual(361)
-      wrapper.unmount()
-      mounted = []
-    } finally {
-      await page.viewport(1280, 720)
+      await page.viewport(1280, 800)
     }
   }, 60000)
 })

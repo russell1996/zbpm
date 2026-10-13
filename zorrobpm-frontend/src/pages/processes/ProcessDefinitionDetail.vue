@@ -148,16 +148,9 @@ const activeTab = ref('model')
 const showStartModal = ref(false)
 // WO-UI-25 (критерий 1): двойной клик по «Start» не создаёт два инстанса.
 const startInFlight = ref(false)
-// WO-UI-27 п.3: ширина стартового диалога (стандарт/широко), память в localStorage.
-// Дефолт — ШИРОКО min(94vw,1280px) (владелец: «диалог можно сделать шире»);
-// хранимое '0' — явный выбор «Уже».
-const startWide = ref(localStorage.getItem('zbpm-start-dialog-wide') !== '0')
-function toggleStartWide() {
-  startWide.value = !startWide.value
-  try {
-    localStorage.setItem('zbpm-start-dialog-wide', startWide.value ? '1' : '0')
-  } catch { /* приватный режим — просто не запоминаем */ }
-}
+// WO-UI-30 часть A: кнопка «Шире/Уже» удалена (не работала — перебивалась
+// md:w-full базового DialogScrollContent; владелец: «кнопку вообще убрать»).
+// Ширина стартового диалога — фиксированная min(94vw,1100px), см. класс ниже.
 // WO-VT-1: старт из шаблона — переменные отдаёт PresetPicker в модалке.
 const startPickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
 const askMissing = ref<string[]>([])
@@ -762,22 +755,18 @@ async function downloadBpmn() {
 
     </template>
 
-      <!-- WO-UI-27 п.3 + доп.3: shadcn-Dialog, min(94vw,1280px), кнопка Шире/Уже. -->
+      <!-- WO-UI-30 часть A: фиксированная ширина min(94vw,1100px).
+           md:-квалификаторы обязательны: базовый DialogScrollContent несёт
+           md:w-full, который в Tailwind-каскаде перебивает обычный w-[...]
+           на ≥768px (twMerge считает их неконфликтующими) — именно поэтому
+           потолок «не применялся», а тумблер Шире/Уже ничего не менял.
+           Кнопки Шире/Уже больше нет (решение владельца). -->
       <Dialog :open="showStartModal" @update:open="(v) => { if (!v) showStartModal = false }">
         <DialogScrollContent
-          class="flex flex-col gap-4 p-6"
-          :class="startWide ? 'w-[min(94vw,1280px)] max-w-[95vw]' : 'w-[min(94vw,640px)] max-w-[95vw]'"
-          :aria-label="t('startProcessInstance')"
+          class="flex flex-col gap-4 p-6 w-[min(94vw,1100px)] max-w-[min(94vw,1100px)] md:w-[min(94vw,1100px)] md:max-w-[min(94vw,1100px)]"
         >
-          <DialogHeader class="flex-row items-center justify-between gap-2 space-y-0">
+          <DialogHeader>
             <DialogTitle class="text-lg font-bold">{{ t('startProcessInstance') }}</DialogTitle>
-            <Button
-              type="button" variant="outline" size="sm" class="text-xs"
-              :title="t('presetDialogWiderHint')"
-              @click="toggleStartWide"
-            >
-              {{ startWide ? t('presetDialogNarrower') : t('presetDialogWider') }}
-            </Button>
           </DialogHeader>
           <!-- WO-VT-1: запуск из шаблона — тот же PresetPicker, что в StartForm -->
           <PresetPicker

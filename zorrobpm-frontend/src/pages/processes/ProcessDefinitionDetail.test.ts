@@ -97,7 +97,7 @@ describe('ProcessDefinitionDetail render', () => {
     throw new Error('VariablesEditor not found')
   }
 
-  it('WO-UI-27 п.3: стартовый диалог по умолчанию ШИРОКИЙ min(94vw,1280px), тумблер Уже/Шире с памятью', async () => {
+  it('WO-UI-30 часть A: стартовый диалог фиксированный min(94vw,1100px), кнопки Шире/Уже нет', async () => {
     localStorage.removeItem('zbpm-start-dialog-wide')
     const wrapper = mountPage()
     await wrapper.vm.$nextTick()
@@ -106,13 +106,13 @@ describe('ProcessDefinitionDetail render', () => {
     await settlePortal()
     const dlg = document.querySelector('[role="dialog"]') as HTMLElement | null
     expect(dlg, 'start dialog renders in portal').not.toBeNull()
-    // Дефолт — широко (владелец: «диалог можно сделать шире»).
-    expect(dlg!.className).toContain('w-[min(94vw,1280px)]')
-    // Тумблер сужает и запоминает выбор.
-    ;([...document.querySelectorAll('button')].find((b) => (b.textContent ?? '').includes('presetDialogNarrower')) as HTMLElement).click()
-    await settlePortal()
-    expect((document.querySelector('[role="dialog"]') as HTMLElement).className).toContain('w-[min(94vw,640px)]')
-    expect(localStorage.getItem('zbpm-start-dialog-wide')).toBe('0')
+    // Фиксированная ширина: обычный и md-классы совпадают.
+    expect(dlg!.className).toContain('w-[min(94vw,1100px)]')
+    expect(dlg!.className).toContain('md:w-[min(94vw,1100px)]')
+    // Тумблера нет: ни кнопки, ни памяти в localStorage.
+    const texts = [...document.querySelectorAll('button')].map((b) => b.textContent ?? '')
+    expect(texts.some((x) => x.includes('presetDialogNarrower') || x.includes('presetDialogWider'))).toBe(false)
+    expect(localStorage.getItem('zbpm-start-dialog-wide')).toBeNull()
   })
 
   it('mounts without ReferenceError (dead ref removed in MT-9)', async () => {
