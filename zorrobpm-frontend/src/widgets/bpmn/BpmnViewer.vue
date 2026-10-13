@@ -14,6 +14,14 @@ const props = defineProps<{
   /** Camunda Operate-style token counts shown as a badge on top of each element. */
   elementCounts?: Record<string, number>
   /**
+   * WO-UI-30 часть B: элементы с ДОСТУПНЫМ переходом к подпроцессу
+   * (call activity с дочерним инстансом, embedded subProcess). Маркер ⤵ —
+   * чистый индикатор (aria-hidden, pointer-events:none): раскладку не
+   * сдвигает (оверлей diagram-js абсолютно позиционирован), клики идут в
+   * canvas как раньше, действие живёт в панели элемента страницы.
+   */
+  navigableElementIds?: string[]
+  /**
    * WO-UI-25 (критерий 8): плоскость drill-down как id ФИГУРЫ подпроцесса
    * (не plane-id с суффиксом — та же форма, что в ?plane= и в elementClick).
    * null/undefined = корневая плоскость. Реставрация — тем же вызовом, что
@@ -179,6 +187,11 @@ async function render() {
   } catch (err) {
     console.error('Failed to apply BPMN overlays:', err)
   }
+  try {
+    applyNavOverlays()
+  } catch (err) {
+    console.error('Failed to apply BPMN nav overlays:', err)
+  }
 }
 
 // Camunda Operate-style token-count badges on top of elements that hold active tokens
@@ -196,6 +209,31 @@ function applyCountOverlays() {
       overlays.add(id, 'token-count', {
         position: { top: -14, right: 14 },
         html: `<div class="bpmn-token-count" title="${count} active">${count}</div>`,
+      })
+    } catch {
+      // element id not present in this diagram — ignore
+    }
+  }
+}
+
+// WO-UI-30 часть B: маркер ⤵ на элементах с доступным переходом.
+// Позиция — низ/право, чтобы не пересекаться с token-count (верх/право).
+// pointer-events:none: оверлей не перехватывает element.click; title —
+// подсказка (действие — в панели элемента, клавиатура/aria там же).
+function applyNavOverlays() {
+  if (!viewer) return
+  const overlays = viewer.get('overlays') as {
+    add: (id: string, type: string, opts: { position: object; html: string }) => void
+    remove: (filter: { type: string }) => void
+  }
+  overlays.remove({ type: 'subprocess-nav' })
+  if (!props.navigableElementIds) return
+  const title = t('goToSubprocess')
+  for (const id of props.navigableElementIds) {
+    try {
+      overlays.add(id, 'subprocess-nav', {
+        position: { bottom: -10, right: 10 },
+        html: `<div class="bpmn-subprocess-nav" aria-hidden="true" title="${title}">⤵</div>`,
       })
     } catch {
       // element id not present in this diagram — ignore
@@ -297,6 +335,7 @@ watch(() => props.activeElementIds, () => { applyHighlights() }, { deep: true })
 watch(() => props.incidentElementIds, () => { applyHighlights() }, { deep: true })
 watch(() => props.completedElementIds, () => { applyHighlights() }, { deep: true })
 watch(() => props.elementCounts, () => { applyCountOverlays() }, { deep: true })
+watch(() => props.navigableElementIds, () => { applyNavOverlays() }, { deep: true })
 // WO-UI-25: внешняя простановка плоскости (back/forward, deep link, сброс
 // в корень) — без пересоздания viewer, только setRootElement.
 watch(() => props.planeElementId, () => { applyPlane() })
@@ -406,5 +445,24 @@ onUnmounted(() => {
   line-height: 1;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
   border: 2px solid #fff;
+}
+/* WO-UI-30 часть B: маркер доступного перехода к подпроцессу.
+   pointer-events:none — клики проходят в canvas (element.click цел);
+   оверлей diagram-js позиционирует абсолютно — раскладка SVG не едет. */
+.bpmn-subprocess-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: #0f766e;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  border: 2px solid #fff;
+  pointer-events: none;
 }
 </style>

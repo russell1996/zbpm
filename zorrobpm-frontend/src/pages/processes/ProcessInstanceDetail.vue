@@ -141,6 +141,69 @@ const selectedNode = computed<BpmnNode | null>(() => {
   return findNode(processStore.currentStructure.nodes, selectedElement.value)
 })
 
+// WO-UI-30 часть B: переход к подпроцессу с диаграммы.
+// - callActivity: дочерние инстансы = currentSubprocesses, чей parentActivityId
+//   (UUID строки активности родителя — см. CallActivityHandler:127) совпадает
+//   с id одной из активностей этого элемента;
+// - embedded subProcess (любой узел с children — type subProcess/transaction):
+//   переход = drill-down в плоскость элемента через ?plane= (механизм UI-25).
+const selectedChildInstances = computed(() => {
+  if (!selectedElement.value || selectedNode.value?.type !== 'callActivity') return []
+  const activityIds = new Set(
+    processStore.currentActivities
+      .filter((a) => a.bpmnElementId === selectedElement.value)
+      .map((a) => a.id),
+  )
+  if (!activityIds.size) return []
+  return processStore.currentSubprocesses.filter(
+    (sp) => sp.parentActivityId !== null && activityIds.has(sp.parentActivityId),
+  )
+})
+const selectedIsEmbeddedSubprocess = computed(() =>
+  selectedNode.value !== null
+  && selectedNode.value.type !== 'callActivity'
+  && selectedNode.value.children !== null,
+)
+// Элементы с ДОСТУПНЫМ переходом (маркер ⤵ на диаграмме): call activity с
+// хотя бы одним дочерним инстансом + любой embedded-подпроцесс.
+const navigableElementIds = computed<string[]>(() => {
+  const out: string[] = []
+  const struct = processStore.currentStructure
+  if (!struct) return out
+  const activityIdsByElement = new Map<string, Set<string>>()
+  for (const a of processStore.currentActivities) {
+    let s = activityIdsByElement.get(a.bpmnElementId)
+    if (!s) activityIdsByElement.set(a.bpmnElementId, (s = new Set()))
+    s.add(a.id)
+  }
+  const childActivityIds = new Set<string>()
+  for (const sp of processStore.currentSubprocesses) {
+    if (sp.parentActivityId !== null) childActivityIds.add(sp.parentActivityId)
+  }
+  const walk = (nodes: BpmnNode[]): void => {
+    for (const n of nodes ?? []) {
+      if (n.type === 'callActivity') {
+        const ids = activityIdsByElement.get(n.id)
+        if (ids && [...ids].some((id) => childActivityIds.has(id))) out.push(n.id)
+      } else if (n.children !== null && n.children !== undefined) {
+        out.push(n.id)
+      }
+      if (n.children?.nodes) walk(n.children.nodes)
+    }
+  }
+  walk(struct.nodes ?? [])
+  return out
+})
+// Узел текущей плоскости drill-down (для шапки «где я» + кнопки «назад»).
+const planeNode = computed<BpmnNode | null>(() => {
+  if (!viewPlane.value || !processStore.currentStructure) return null
+  return findNode(processStore.currentStructure.nodes, viewPlane.value)
+})
+/** Открыть дочерний инстанс — тот же путь, что строка вкладки «Подпроцессы». */
+function goToChildInstance(id: string): void {
+  router.push(`/processes/instances/${id}`)
+}
+
 const selectedNodeProps = computed(() =>
   selectedNode.value
     ? Object.entries(selectedNode.value.properties || {})
@@ -953,6 +1016,23 @@ watch(activeTab, onTabChange)
 
       <template v-if="!tabLoading">
         <div v-if="activeTab === 'bpmn'" class="flex-1 min-h-0 flex flex-col">
+          <!-- WO-UI-30 часть B: шапка плоскости drill-down — «где я» + назад.
+               shadcn-Button (G24); вид живёт в ?plane= (UI-25), F5 держится. -->
+          <div
+            v-if="viewPlane"
+            class="mb-2 flex items-center gap-2 rounded-lg border border-border bg-muted/30 px-3 py-1.5 text-sm"
+            data-testid="subprocess-plane-bar"
+          >
+            <span class="text-muted-foreground">⤵ {{ t('inSubprocessPlane') }}:</span>
+            <span class="font-mono truncate">{{ planeNode?.name || viewPlane }}</span>
+            <Button
+              type="button" variant="outline" size="sm" class="ml-auto h-7 text-xs"
+              data-testid="back-to-parent"
+              @click="viewPlane = null"
+            >
+              {{ t('backToParent') }}
+            </Button>
+          </div>
           <div v-if="bpmnXml" class="border border-border rounded-lg bg-card flex flex-1 min-h-0">
             <div class="flex-1 min-h-0">
               <BpmnViewer
@@ -962,6 +1042,7 @@ watch(activeTab, onTabChange)
                 :completed-element-ids="completedElementIds"
                 :element-counts="elementCounts"
                 :plane-element-id="viewPlane"
+                :navigable-element-ids="navigableElementIds"
                 @element-click="onElementClick"
                 @plane-change="viewPlane = $event"
               />
@@ -995,6 +1076,72 @@ watch(activeTab, onTabChange)
                 <button v-if="selectedHasIncident" class="flex items-center gap-1.5 w-full text-left text-sm text-red-600 hover:underline" @click="openElementDialog(selectedElement!)">
                   <ArrowRight class="h-3.5 w-3.5" /> {{ t('openIncident') }}
                 </button>
+              </div>
+
+              <!-- WO-UI-30 часть B: переход к подпроцессу с диаграммы.
+                   Только shadcn-Button (G24); навигация — тот же router.push,
+                   что строка вкладки «Подпроцессы»; вид/адрес держит UI-25. -->
+              <div
+                v-if="selectedNode?.type === 'callActivity' || selectedIsEmbeddedSubprocess"
+                class="space-y-2 pt-2 border-t border-border"
+                data-testid="subprocess-nav"
+              >
+                <template v-if="selectedNode?.type === 'callActivity'">
+                  <Button
+                    v-if="selectedChildInstances.length === 1"
+                    type="button" variant="outline" size="sm" class="h-8 text-xs"
+                    data-testid="goto-subprocess"
+                    :aria-label="t('goToSubprocess')"
+                    @click="goToChildInstance(selectedChildInstances[0].id)"
+                  >
+                    ⤵ {{ t('goToSubprocess') }}
+                  </Button>
+                  <div v-else-if="selectedChildInstances.length > 1" class="space-y-1">
+                    <p class="text-xs font-semibold text-muted-foreground uppercase">{{ t('goToSubprocess') }}</p>
+                    <Button
+                      v-for="sp in selectedChildInstances"
+                      :key="sp.id"
+                      type="button" variant="ghost" size="sm"
+                      class="flex h-auto w-full items-center justify-start gap-2 px-2 py-1.5 text-left text-xs"
+                      data-testid="goto-subprocess-item"
+                      :aria-label="`${t('goToSubprocess')}: ${sp.processName || sp.processKey || sp.id}`"
+                      @click="goToChildInstance(sp.id)"
+                    >
+                      <StatusBadge :status="processInstanceStatus(sp)" />
+                      <span class="font-mono truncate">{{ sp.processName || sp.processKey || sp.id }}</span>
+                    </Button>
+                  </div>
+                  <Button
+                    v-else
+                    type="button" variant="outline" size="sm" class="h-8 text-xs"
+                    disabled
+                    data-testid="goto-subprocess-disabled"
+                    :title="t('noChildInstanceYet')"
+                    :aria-label="t('noChildInstanceYet')"
+                  >
+                    ⤵ {{ t('goToSubprocess') }}
+                  </Button>
+                </template>
+                <template v-else>
+                  <Button
+                    v-if="viewPlane !== selectedElement"
+                    type="button" variant="outline" size="sm" class="h-8 text-xs"
+                    data-testid="open-subprocess-plane"
+                    :aria-label="t('openSubprocess')"
+                    @click="viewPlane = selectedElement"
+                  >
+                    ⤵ {{ t('openSubprocess') }}
+                  </Button>
+                  <Button
+                    v-else
+                    type="button" variant="outline" size="sm" class="h-8 text-xs"
+                    data-testid="back-to-parent-panel"
+                    :aria-label="t('backToParent')"
+                    @click="viewPlane = null"
+                  >
+                    {{ t('backToParent') }}
+                  </Button>
+                </template>
               </div>
 
               <!-- element configuration breakdown (BPMN settings) -->
