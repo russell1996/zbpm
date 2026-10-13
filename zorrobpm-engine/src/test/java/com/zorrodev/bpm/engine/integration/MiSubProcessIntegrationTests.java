@@ -105,21 +105,28 @@ public class MiSubProcessIntegrationTests {
     /**
      * Слот MI-инстанса подпроцесса для внутренней задачи: {@code loopCounter}
      * привязан на скоупе КОНТЕЙНЕРА-инстанса, не задачи — контейнер находим
-     * через scope-токен задачи (scopeActivityId её токена).
+     * через scope-токен задачи (scopeActivityId её токена). Для строк САМОГО
+     * контейнера (create-джобы спавнятся на входящем токене без scope) —
+     * собственный id: loopCounter привязан bindMiInstanceVariables прямо на него.
      */
     private int miSubSlotOf(UUID pi, UUID innerTaskActivityId) {
         com.zorrodev.bpm.engine.dto.Activity live = dbService.getActivity(innerTaskActivityId);
         com.zorrodev.bpm.engine.dto.Token token = dbService.findToken(live.getToken()).orElseThrow();
         UUID containerInstanceId = token.getScopeActivityId();
-        assertThat(containerInstanceId).as("inner task runs on a subprocess scope token").isNotNull();
+        if (containerInstanceId == null) {
+            // Строка САМОГО контейнера (спaун идёт на входящем токене без scope):
+            // loopCounter привязан bindMiInstanceVariables прямо на неё.
+            containerInstanceId = innerTaskActivityId;
+        }
         // Тот же merge-read, что движок (getVariables(pi, scopeId): root+scope,
         // scoped wins) — вместо сырого JPA-ридера, слепого к JDBC-апсертам той же
         // транзакции (WO-REL-31 CR-1: upsert идёт мимо persistence-контекста).
-        return dbService.getVariables(pi, containerInstanceId).stream()
+        final UUID scopeId = containerInstanceId;
+        return dbService.getVariables(pi, scopeId).stream()
             .filter(v -> "loopCounter".equals(v.getName()))
             .findFirst()
             .map(v -> Integer.parseInt(v.getValue().trim()))
-            .orElseThrow(() -> new AssertionError("No scoped loopCounter on " + containerInstanceId));
+            .orElseThrow(() -> new AssertionError("No scoped loopCounter on " + scopeId));
     }
 
     private List<String> assigneesOf(UUID pi, String bpmnElementId) {
@@ -136,6 +143,9 @@ public class MiSubProcessIntegrationTests {
 
     @Autowired
     private com.zorrodev.bpm.engine.service.DBService dbService;
+
+    @Autowired
+    private com.zorrodev.bpm.engine.handler.ElementSupport elementSupport;
 
     private String userTaskAssignee(UUID activityId) {
         // Строку user_tasks читаем напрямую репозиторием (без refresh/entityManager:
@@ -260,9 +270,12 @@ public class MiSubProcessIntegrationTests {
     }
 
     /**
-     * D1: lane-local переменная branchTag пишется выходом ioMapping первого
-     * элемента ветки и читается следующим элементом ТОЙ ЖЕ ветки без перекрёста.
-     * Без скоупа в инстанс соседняя ветка перезаписала бы branchTag в root.
+     * D1: lane-local переменная branchTag пишется выходом ioMapping (=item) и читается
+     * следующим элементом ТОЙ ЖЕ ветки (utProbe: assignee =branchTag). Перекрёст
+     * гарантируется КОНСТРУКЦИЕЙ: завершаем ОБА svcCreate (A затем B — в root-версии
+     * B перезаписывает branchTag), и только потом завершаем utWaitA → utProbeA
+     * создаётся и резолвит assignee. Без скоупа в инстанс A прочитал бы "B";
+     * со скоупом — своё "A". Детерминировано, без везения.
      */
     @Transactional
     @Test
@@ -272,14 +285,46 @@ public class MiSubProcessIntegrationTests {
 
         List<ActivityEntity> creates = activities(pi, "svcCreate", ActivityStatus.CREATED);
         assertThat(creates).as("one create job per MI-subprocess instance").hasSize(2);
-        creates.forEach(c -> runtimeService.completeServiceTask(c.getId(), List.of()));
+        // A = инстанс со слотом 1 (item "A"), B — со слотом 2 (item "B").
+        // Различаем по item из видимых переменных строки (chain-merge, как видит
+        // сам движок): fork внутри инстанса ведёт задачи на дочерних токенах,
+        // непосредственный scope токена там не контейнер — идём полной цепочкой.
+        java.util.function.Function<UUID, String> itemOf = activityId ->
+            elementSupport.visibleVariables(pi, activityId).stream()
+                .filter(v -> "item".equals(v.getName()))
+                .findFirst()
+                .map(v -> v.getValue().replace("\"", "").trim())
+                .orElseThrow(() -> new AssertionError("No visible item on " + activityId));
+        ActivityEntity createA = creates.stream()
+            .filter(c -> "A".equals(itemOf.apply(c.getId()))).findFirst().orElseThrow();
+        ActivityEntity createB = creates.stream()
+            .filter(c -> "B".equals(itemOf.apply(c.getId()))).findFirst().orElseThrow();
+        // A пишет branchTag="A", затем B пишет branchTag="B" (в root — перезапись).
+        runtimeService.completeServiceTask(createA.getId(), List.of());
+        runtimeService.completeServiceTask(createB.getId(), List.of());
 
-        List<ActivityEntity> tasks = activities(pi, "utProbe", ActivityStatus.CREATED);
-        assertThat(tasks).as("one probe task per branch").hasSize(2);
-        assertThat(tasks.stream().map(a -> userTaskAssignee(a.getId())).toList())
-            .as("each probe carries its own branchTag (loopCounter), no cross-talk")
-            .containsExactlyInAnyOrder("1", "2");
-        tasks.forEach(t -> runtimeService.completeUserTask(t.getId(), List.of()));
+        // Обе ветки припаркованы на utWait; utProbe ещё не созданы (чтение впереди).
+        List<ActivityEntity> waits = activities(pi, "utWait", ActivityStatus.CREATED);
+        assertThat(waits).as("both branches parked").hasSize(2);
+        ActivityEntity waitA = waits.stream()
+            .filter(p -> "A".equals(itemOf.apply(p.getId()))).findFirst().orElseThrow();
+        ActivityEntity waitB = waits.stream()
+            .filter(p -> "B".equals(itemOf.apply(p.getId()))).findFirst().orElseThrow();
+
+        // A читает branchTag ПОСЛЕ записи B: без скоупа — "B" (перекрёст), со скоупом — "A".
+        runtimeService.completeUserTask(waitA.getId(), List.of());
+        List<ActivityEntity> probes = activities(pi, "utProbe", ActivityStatus.CREATED);
+        assertThat(probes).as("A's probe created after B's write").hasSize(1);
+        assertThat(userTaskAssignee(probes.get(0).getId()))
+            .as("instance A reads its own branchTag, not B's overwrite").isEqualTo("A");
+
+        runtimeService.completeUserTask(probes.get(0).getId(), List.of());
+        runtimeService.completeUserTask(waitB.getId(), List.of());
+        List<ActivityEntity> probesB = activities(pi, "utProbe", ActivityStatus.CREATED);
+        assertThat(probesB).hasSize(1);
+        assertThat(userTaskAssignee(probesB.get(0).getId()))
+            .as("instance B reads its own branchTag").isEqualTo("B");
+        runtimeService.completeUserTask(probesB.get(0).getId(), List.of());
 
         assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
         assertThat(incidents(pi)).as("no incidents").isZero();
