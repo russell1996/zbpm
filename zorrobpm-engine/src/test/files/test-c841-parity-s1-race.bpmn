@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-41 parity S1: mirror of oracle s1 (parallel MI sub ["a","b","c"],
+     w -> w2, outputElement == tu, NO output mapping on w).
+     Zeebe facts: w2 sees its OWN tu (no race); dump sees results=[tu-a,tu-b,tu-c]
+     and NO tu/item/loopCounter. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-c841-s1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c841s1race" name="S1 MI race" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="miSub" />
+    <bpmn:subProcess id="miSub" name="mi">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=[&quot;a&quot;, &quot;b&quot;, &quot;c&quot;]" inputElement="item"
+                                     outputCollection="results" outputElement="=tu" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart"><bpmn:outgoing>sf1</bpmn:outgoing></bpmn:startEvent>
+      <bpmn:sequenceFlow id="sf1" sourceRef="subStart" targetRef="w" />
+      <bpmn:serviceTask id="w" name="w">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="c841s1w" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>sf1</bpmn:incoming>
+        <bpmn:outgoing>sf2</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="sf2" sourceRef="w" targetRef="w2" />
+      <bpmn:serviceTask id="w2" name="w2">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="c841s1w2" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>sf2</bpmn:incoming>
+        <bpmn:outgoing>sf3</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="sf3" sourceRef="w2" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd"><bpmn:incoming>sf3</bpmn:incoming></bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" sourceRef="miSub" targetRef="dump" />
+    <bpmn:serviceTask id="dump" name="dump">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c841s1dump" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="dump" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

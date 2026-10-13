@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -184,8 +185,11 @@ class MultiInstanceExecutorPinpointTest {
         BpmnElementModel element = miElement("=2", null, null, null);
         element.getExtensions().getMultiInstanceExtension().setOutputCollection("doubled");
         element.getExtensions().getMultiInstanceExtension().setOutputElement("=item * 2");
-        when(dbService.getScopedVariablesByNames(eq(pi), eq(scope),
-            argThat(names -> names != null && names.equals(Set.of("item")))))
+        // WO-C8-41 (F1-уточнение): агрегация читает chain-контекст
+        // (root + внешние скоупы + own, pinpoint по именам) — outputElement
+        // MI-задачи внутри MI-подпроцесса ссылается на completion-переменную
+        // скоупа контейнера, root+own её не видит (S8b-регресс).
+        when(elementSupport.chainVariablesForNames(eq(pi), eq(scope), eq(Set.of("item"))))
             .thenReturn(List.of());
         when(dbService.getScopedVariablesByNames(eq(pi), eq(scope), eq(Set.of("loopCounter"))))
             .thenReturn(List.of(pv("loopCounter", "1")));
@@ -195,11 +199,44 @@ class MultiInstanceExecutorPinpointTest {
 
         executor.aggregateMultiInstanceOutput(pi, scope, element);
 
-        verify(dbService).getScopedVariablesByNames(eq(pi), eq(scope),
-            argThat(names -> names != null && names.equals(Set.of("item"))));
+        verify(elementSupport).chainVariablesForNames(eq(pi), eq(scope), eq(Set.of("item")));
         verify(dbService).getScopedVariablesByNames(eq(pi), eq(scope), eq(Set.of("loopCounter")));
         verify(dbService, never()).getVariables(any(UUID.class), any(UUID.class));
-        verify(dbService).setJsonElementAt(eq(pi), eq("doubled"), eq(0), eq("4"));
+        // WO-C8-41 (F3): containing scope — parent scope инстанса; у мока нет
+        // activity/токена (getActivity → null) → корень = исторический вызов.
+        verify(dbService).setJsonElementAt(eq(pi), isNull(), eq("doubled"), eq(0), eq("4"));
+    }
+
+    @Test
+    void aggregate_nestedBody_aggregatesIntoContainingScope() {
+        UUID pi = UUID.randomUUID();
+        UUID outerScope = UUID.randomUUID();
+        UUID innerScope = UUID.randomUUID();
+        UUID innerToken = UUID.randomUUID();
+        BpmnElementModel element = miElement("=2", null, null, null);
+        element.getExtensions().getMultiInstanceExtension().setOutputCollection("innerResults");
+        element.getExtensions().getMultiInstanceExtension().setOutputElement("=iitem");
+        when(elementSupport.chainVariablesForNames(eq(pi), eq(innerScope), eq(Set.of("iitem"))))
+            .thenReturn(List.of(pv("iitem", "1")));
+        when(dbService.getScopedVariablesByNames(eq(pi), eq(innerScope), eq(Set.of("loopCounter"))))
+            .thenReturn(List.of(pv("loopCounter", "1")));
+        com.zorrodev.bpm.engine.dto.Activity innerActivity =
+            mock(com.zorrodev.bpm.engine.dto.Activity.class);
+        when(innerActivity.getToken()).thenReturn(innerToken);
+        when(dbService.getActivity(innerScope)).thenReturn(innerActivity);
+        com.zorrodev.bpm.engine.dto.Token token = mock(com.zorrodev.bpm.engine.dto.Token.class);
+        when(token.getScopeActivityId()).thenReturn(outerScope);
+        when(dbService.findToken(innerToken)).thenReturn(Optional.of(token));
+        when(scriptService.evaluateExpression(eq("=iitem"), any())).thenReturn("1");
+        when(elementSupport.toJavaStructure("1")).thenReturn("1");
+        when(objectMapper.writeValueAsString("1")).thenReturn("\"1\"");
+
+        executor.aggregateMultiInstanceOutput(pi, innerScope, element);
+
+        // WO-C8-41 (F3, oracle S8a/S8b): агрегация вложенного MI-тела — в
+        // containing scope (outerScope), а не в root: иначе внутренняя
+        // агрегация утекает в корень (innerResults в dump).
+        verify(dbService).setJsonElementAt(eq(pi), eq(outerScope), eq("innerResults"), eq(0), eq("\"1\""));
     }
 
     // ─── sequential continue (miInputCollection) ─────────────────────

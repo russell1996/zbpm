@@ -175,6 +175,12 @@ public class EventTrigger {
                 for (Activity instance : miInstances) {
                     dbService.cancelActivity(instance.getId());
                 }
+                // WO-C8-41 (F5, oracle S7-2): предсозданный outputCollection
+                // прерванного тела в родителя не передаётся — сносим его и
+                // batch-маркер (только собственные переменные тела).
+                if (hostElement != null) {
+                    elementSupport.deleteMiBodyState(processInstanceId, tokenId, hostElement);
+                }
                 dbService.cancelActivity(hostActivityId);
                 log.info("{}/{}: Boundary interrupting MI subprocess {} — cancelled {} in-scope activities in {} instances",
                     processInstanceId, tokenId, host.getBpmnElementId(), miInScope.size(), miInstances.size());

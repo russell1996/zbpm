@@ -84,6 +84,22 @@ public interface VariableDbOperations {
     void setJsonElementAt(@NonNull UUID processInstanceId, String name, int index, String jsonElement);
 
     /**
+     * WO-C8-41 (F3): scoped-вариант позиционной записи — агрегация вложенного
+     * MI-тела в containing scope (scopeId null = корень = исторический метод
+     * выше). Та же слот-семантика и тот же post-write контракт (evict/history/
+     * tracking — со скоупом), PG и H2.
+     */
+    void setJsonElementAt(@NonNull UUID processInstanceId, UUID scopeId, String name, int index,
+        String jsonElement);
+
+    /**
+     * WO-C8-41 (F5): удаление одной переменной по имени в скоупе
+     * (scopeId null = root). История не пишется (lifecycle-мусор отмены,
+     * как deleteVariables).
+     */
+    void deleteVariable(@NonNull UUID processInstanceId, UUID scopeId, String name);
+
+    /**
      * WO-ENG-16 (WB-003): минимальный способ прочитать историю — хронология
      * всех изменений переменных инстанса (старые первые). REST-эндпоинт
      * сознательно НЕ добавлен (стоп-список G-C, WO допускает service/SQL

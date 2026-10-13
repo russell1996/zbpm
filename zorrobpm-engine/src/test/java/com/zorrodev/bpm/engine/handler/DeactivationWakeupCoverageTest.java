@@ -108,7 +108,9 @@ class DeactivationWakeupCoverageTest {
      * та же ветка R08 — старая запись удалена, новая внесена). Итого: 115 − 5
      * старых (4 Thrower + 1 EndEvent) + 14 новых = 124.
      */
-    private static final int EXPECTED_SITE_COUNT = 124;
+    // WO-C8-41 (F4): 124 → 126 — два новых cancel-сайта добивки сиблингов
+    // при раннем completionCondition (cancelRemainingMiSubInstances, R18 выше).
+    private static final int EXPECTED_SITE_COUNT = 126;
 
     /** site key -> причина, почему перепроверка здесь не нужна. Непустая — проверяется тестом. */
     private static final Map<String, String> WHITELIST = new LinkedHashMap<>();
@@ -189,6 +191,16 @@ class DeactivationWakeupCoverageTest {
         "событийный шлюз: отменяются ПРОИГРАВШИЕ catch-братья, победитель идёт дальше в том "
         + "же signal(), где перепроверка припаркованных join-ов уже стоит "
         + "(CompletionService.signal, после proceedToOutgoing) ";
+    private static final String R18 =
+        "WO-C8-41 (F4): раннее срабатывание completionCondition MI-подпроцесса: "
+        + "гасятся СИБЛИНГИ того же MI-тела (их scope-цепочки целиком). Завершившийся "
+        + "инстанс в ТОЙ ЖЕ ветке продолжает исходящий поток МИ-ТЕЛА (join собран — "
+        + "multiInstanceContinue вернул done=true, вызывающий FlowNavigator "
+        + "продолжает), то есть доставщик ветви НЕ умирает — он и есть продолжение. "
+        + "Припаркованные join-ы ВНЕ тела этим путём не задеты (их доставщики живы); "
+        + "а join-ы ВНУТРИ терминированных сиблингов умирают вместе со scope "
+        + "(тот же класс, что R08 — воскрешать их значило бы выполнить хвост "
+        + "отменённого потока) ";
     private static final String R14 =
         "шлюз-«проход» (ровно один вход, ни сплит ни join): activity этого шлюза закрывается, и "
         + "тот же токен идёт дальше по исходящему потоку. Доставщик не умирает — ветвь остаётся "
@@ -311,6 +323,10 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[if (isMiSubProcessScope(scope, bpmn)) {]|dbService.cancelActivity(scope.getId())", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[} else {]|dbService.cancelActiveActivitiesForToken(tok.getId())", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[} else {]|dbService.cancelActivity(scope.getId())", R08);
+        // ── WO-C8-41 (F4): ранняя добивка сиблингов при completionCondition ──
+        // (ключи — дословно из вывода сканера, см. его сообщение при падении).
+        WHITELIST.put("MultiInstanceExecutor.java#cancelRemainingMiSubInstances[for (com.zorrodev.bpm.engine.dto.Activity sibling : siblings) {]|dbService.cancelActivity(sibling.getId())", R18);
+        WHITELIST.put("MultiInstanceExecutor.java#cancelRemainingMiSubInstances[processInstanceId, live, sibling.getId())) {]|dbService.cancelActivity(inner.getId())", R18);
         // ── ветка ПРЕРЫВАЮЩЕЙ границы в EventTrigger.fireBoundary: хост (или его MI-…
         WHITELIST.put("EventTrigger.java#fireBoundary[for (Activity instance : ownInstances) {]|dbService.cancelActivity(instance.getId())", R12);
         WHITELIST.put("EventTrigger.java#fireBoundary[} else if (!miHost && isPlainHostOnSharedToken(processInstanceId, tokenId, host)) {]|dbService.cancelActivity(hostActivityId)", R12);

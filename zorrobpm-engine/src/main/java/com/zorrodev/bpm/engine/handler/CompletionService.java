@@ -392,7 +392,23 @@ public class CompletionService {
     private void finishUserTaskCompletion(UUID processInstanceId, UUID token, UUID userTaskId,
             List<ProcessVariable> variables, BpmnProcessDefinitionModel bpmn, BpmnElementModel bpmnElement,
             TokenExecutor executor) {
-        dbService.setVariables(processInstanceId, variables);
+        // WO-C8-41 (F1, oracle S1/S2b): completion-переменные внутри
+        // MI-подпроцесса — в скоуп инстанса (без гонки соседей); с output
+        // mappings сырьё не persist'ится, но маппинг видит его через overlay
+        // (проекция: S2b не показывает сырой tu, =tu читает tu-c); вне MI —
+        // root как раньше (S0-контроль).
+        UUID completionScope = elementSupport.miCompletionScopeOrNull(
+            processInstanceId, userTaskId, bpmnElement, bpmn);
+        boolean outputsAppliedWithOverlay = false;
+        if (completionScope != null && elementSupport.hasOutputMappings(bpmnElement)) {
+            elementSupport.applyScopedOutputsWithExtra(processInstanceId, userTaskId,
+                bpmnElement, bpmn, variables);
+            outputsAppliedWithOverlay = true;
+        } else if (completionScope != null) {
+            dbService.setVariables(processInstanceId, completionScope, variables);
+        } else {
+            dbService.setVariables(processInstanceId, variables);
+        }
         dbService.completeActivity(userTaskId);
         dbService.completeUserTask(userTaskId);
 
@@ -400,7 +416,11 @@ public class CompletionService {
 
         // WO-C8-40 (D1): выходы внутренних элементов MI-подпроцесса — в скоуп
         // инстанса (lane-local без перекрёста); вне MI — прежняя запись в root.
-        elementSupport.applyScopedOutputs(processInstanceId, userTaskId, bpmnElement, bpmn);
+        // WO-C8-41 (F1): overlay-ветка выше уже применила выходы с контекстом
+        // завершения — повтор без overlay затёр бы их missing-оценкой.
+        if (!outputsAppliedWithOverlay) {
+            elementSupport.applyScopedOutputs(processInstanceId, userTaskId, bpmnElement, bpmn);
+        }
         // multi-instance: append this instance's outputElement to the outputCollection before its scoped
         // variables (inputElement/loopCounter) are dropped
         multiInstanceExecutor.aggregateMultiInstanceOutput(processInstanceId, userTaskId, bpmnElement);
@@ -1305,7 +1325,21 @@ public class CompletionService {
     private void finishServiceTaskCompletion(UUID serviceTaskId, List<ProcessVariable> variables,
             UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
             BpmnElementModel bpmnElement, Activity activity, TokenExecutor executor) {
-        dbService.setVariables(processInstanceId, variables);
+        // WO-C8-41 (F1, oracle S1/S2b): как в user-task хвосте выше — скоуп
+        // инстанса внутри MI-подпроцесса, проекция при маппингах (overlay),
+        // root вне MI.
+        UUID completionScope = elementSupport.miCompletionScopeOrNull(
+            processInstanceId, serviceTaskId, bpmnElement, bpmn);
+        boolean outputsAppliedWithOverlay = false;
+        if (completionScope != null && elementSupport.hasOutputMappings(bpmnElement)) {
+            elementSupport.applyScopedOutputsWithExtra(processInstanceId, serviceTaskId,
+                bpmnElement, bpmn, variables);
+            outputsAppliedWithOverlay = true;
+        } else if (completionScope != null) {
+            dbService.setVariables(processInstanceId, completionScope, variables);
+        } else {
+            dbService.setVariables(processInstanceId, variables);
+        }
         dbService.completeActivity(serviceTaskId);
         dbService.completeServiceTask(serviceTaskId);
 
@@ -1330,7 +1364,11 @@ public class CompletionService {
         try {
             // WO-C8-40 (D1): как в user-task хвосте — выходы внутри MI-подпроцесса
             // в скоуп инстанса, вне — в root без изменений.
-            elementSupport.applyScopedOutputs(processInstanceId, serviceTaskId, bpmnElement, bpmn);
+            // WO-C8-41 (F1): overlay-ветка выше уже применила выходы — повтор
+            // без overlay затёр бы их missing-оценкой.
+            if (!outputsAppliedWithOverlay) {
+                elementSupport.applyScopedOutputs(processInstanceId, serviceTaskId, bpmnElement, bpmn);
+            }
         } catch (com.zorrodev.bpm.engine.service.FeelEvaluationException e) {
             incidentService.raiseIncident(processInstanceId, tokenId, bpmnElement, e);
             return;

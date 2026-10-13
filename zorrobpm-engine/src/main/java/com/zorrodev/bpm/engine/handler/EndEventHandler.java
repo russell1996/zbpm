@@ -153,6 +153,15 @@ public class EndEventHandler {
             for (Activity active : inScope) {
                 dbService.cancelActivity(active.getId());
             }
+            // WO-C8-41 (F5, oracle S7-2): terminate гасит MI-тело целиком —
+            // предсозданный outputCollection не выходит наружу (entry token =
+            // токен scope-строки; только собственные переменные тела).
+            if (scopeElement != null && scopeElement.getExtensions() != null
+                && scopeElement.getExtensions().getMultiInstanceExtension() != null
+                && scope != null && scope.getToken() != null) {
+                elementSupport.deleteMiBodyState(ctx.processInstanceId(), scope.getToken(),
+                    scopeElement);
+            }
             // WO-C8-37 (C37-4): terminate closes the scope like a normal exit —
             // the container's output mappings are promoted to root and the scope
             // locals are dropped, exactly as FlowNavigator.finishBranch does
