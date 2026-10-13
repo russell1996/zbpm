@@ -2,11 +2,14 @@
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
                   xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
                   id="defs-c840-d1" targetNamespace="http://bpmn.io/schema/bpmn">
-  <!-- WO-C8-40, D1: lane-local переменная branchTag пишется выходом ioMapping
-       первого элемента ветки (svcCreate: =loopCounter → branchTag) и читается
-       следующим элементом ТОЙ ЖЕ ветки (utProbe: assignee =branchTag).
-       Без скоупа в инстанс (старая запись в root) соседняя ветка перезаписывала
-       бы branchTag — задачи получали бы чужой assignee. -->
+  <!-- WO-C8-40, D1: lane-local переменная branchTag. svcCreate пишет branchTag (=item)
+       выходом ioMapping; utWait ПАРКУЕТ ветку; utProbe читает branchTag (assignee).
+       Перекрёст гарантируется КОНСТРУКЦИЕЙ: завершаем ОБА svcCreate (A затем B —
+       в root-версии B перезаписывает branchTag="B"), и только потом завершаем
+       utWaitA → utProbeA создаётся и резолвит assignee. Без скоупа в инстанс A
+       прочитал бы "B"; со скоупом — своё "A". Детерминировано, без везения.
+       Без fork/gateway внутри инстанса: parallel-join делит bookkeeping-ключ
+       между инстансами (класс WO-ENG-7, V7-находка — см. отчёт), здесь он не нужен. -->
   <bpmn:process id="miSubProcessLaneLocal" name="MI subprocess lane-local" isExecutable="true">
     <bpmn:startEvent id="startRepro">
       <bpmn:outgoing>flowStart</bpmn:outgoing>
@@ -15,7 +18,7 @@
     <bpmn:subProcess id="subProbe" name="probe">
       <bpmn:multiInstanceLoopCharacteristics isSequential="false">
         <bpmn:extensionElements>
-          <zeebe:loopCharacteristics inputCollection="=[&quot;a&quot;, &quot;b&quot;]" inputElement="item"
+          <zeebe:loopCharacteristics inputCollection="=[&quot;A&quot;, &quot;B&quot;]" inputElement="item"
                                      outputCollection="results" outputElement="=item" />
         </bpmn:extensionElements>
       </bpmn:multiInstanceLoopCharacteristics>
@@ -28,22 +31,31 @@
         <bpmn:extensionElements>
           <zeebe:taskDefinition type="svcCreate" />
           <zeebe:ioMapping>
-            <zeebe:output source="=loopCounter" target="branchTag" />
+            <zeebe:output source="=item" target="branchTag" />
           </zeebe:ioMapping>
         </bpmn:extensionElements>
         <bpmn:incoming>flowProbeStart</bpmn:incoming>
         <bpmn:outgoing>flowCreateDone</bpmn:outgoing>
       </bpmn:serviceTask>
+      <bpmn:userTask id="utWait" name="wait">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=item" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowCreateDone</bpmn:incoming>
+        <bpmn:outgoing>flowWaitDone</bpmn:outgoing>
+      </bpmn:userTask>
       <bpmn:userTask id="utProbe" name="probe">
         <bpmn:extensionElements>
           <zeebe:userTask />
           <zeebe:assignmentDefinition assignee="=branchTag" />
         </bpmn:extensionElements>
-        <bpmn:incoming>flowCreateDone</bpmn:incoming>
+        <bpmn:incoming>flowWaitDone</bpmn:incoming>
         <bpmn:outgoing>flowProbeDone</bpmn:outgoing>
       </bpmn:userTask>
       <bpmn:sequenceFlow id="flowProbeStart" sourceRef="startProbe" targetRef="svcCreate" />
-      <bpmn:sequenceFlow id="flowCreateDone" sourceRef="svcCreate" targetRef="utProbe" />
+      <bpmn:sequenceFlow id="flowCreateDone" sourceRef="svcCreate" targetRef="utWait" />
+      <bpmn:sequenceFlow id="flowWaitDone" sourceRef="utWait" targetRef="utProbe" />
       <bpmn:sequenceFlow id="flowProbeDone" sourceRef="utProbe" targetRef="endProbe" />
       <bpmn:endEvent id="endProbe">
         <bpmn:incoming>flowProbeDone</bpmn:incoming>
