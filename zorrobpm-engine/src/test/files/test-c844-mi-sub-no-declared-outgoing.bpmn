@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="defs-mi-sub-cc-v5" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-C8-44: ТОЧНЫЙ XML консьюмера (miSubProcessCC v5, снят read-only из
+       прод-БД). Рукописная схема: потоки заданы ТОЛЬКО sequenceFlow
+       sourceRef/targetRef, дочерних <bpmn:incoming>/<bpmn:outgoing> у subProbe
+       (и у startRepro/endProbe/endRepro) НЕТ. Ранний выход по completionCondition
+       на таком XML замораживал инстанс (completedAt=null, flowSubDone не создан);
+       та же схема С объявленными incoming/outgoing завершается. -->
+  <bpmn:process id="miSubProcessCC" name="MI subprocess CC probe v5 element+FEEL" isExecutable="true">
+    <bpmn:startEvent id="startRepro">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowStart" sourceRef="startRepro" targetRef="subProbe" />
+    <bpmn:subProcess id="subProbe" name="probe">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=[&#34;a&#34;, &#34;b&#34;, &#34;c&#34;]" inputElement="item"
+                                     outputCollection="results" outputElement="=item" />
+        </bpmn:extensionElements>
+        <bpmn:completionCondition xsi:type="bpmn:tFormalExpression">some r in results satisfies r = "b"</bpmn:completionCondition>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:startEvent id="startProbe">
+        <bpmn:outgoing>flowProbeStart</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:userTask id="utProbe" name="probe">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=item" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowProbeStart</bpmn:incoming>
+        <bpmn:outgoing>flowProbeDone</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="flowProbeStart" sourceRef="startProbe" targetRef="utProbe" />
+      <bpmn:sequenceFlow id="flowProbeDone" sourceRef="utProbe" targetRef="endProbe" />
+      <bpmn:endEvent id="endProbe">
+        <bpmn:incoming>flowProbeDone</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="flowSubDone" sourceRef="subProbe" targetRef="endRepro" />
+    <bpmn:endEvent id="endRepro">
+      <bpmn:incoming>flowSubDone</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
