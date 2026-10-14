@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="defs-c845-e" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-C8-45 (е/ж): conditional-события внутри обычного подпроцесса видят
+       скоуп-локальную переменную контейнера (input mapping localFlag=true).
+       (е): conditional-CATCH внутри sub1 с `=localFlag = true` — проход на входе
+       (на root-чтении условие ложно → токен паркуется, utAfter нет);
+       (ж): не прерывающая conditional-BOUNDARY на utSecond — срабатывает при
+       перепроверке после завершения utFirst (на root-чтении ветки utBranch нет).
+       В root localFlag НЕТ ни в один момент (input mapping пишет в скоуп). -->
+  <bpmn:process id="c845-conditional-subscope" name="C845 conditional in subscope" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=true" target="localFlag" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subF1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subF1" sourceRef="subStart" targetRef="utFirst" />
+      <bpmn:userTask id="utFirst" name="first">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+        </bpmn:extensionElements>
+        <bpmn:incoming>subF1</bpmn:incoming>
+        <bpmn:outgoing>subF2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="subF2" sourceRef="utFirst" targetRef="condCatch" />
+      <bpmn:intermediateCatchEvent id="condCatch" name="catch">
+        <bpmn:conditionalEventDefinition id="condCatchDef">
+          <bpmn:condition xsi:type="bpmn:tFormalExpression">=localFlag = true</bpmn:condition>
+        </bpmn:conditionalEventDefinition>
+        <bpmn:incoming>subF2</bpmn:incoming>
+        <bpmn:outgoing>subF3</bpmn:outgoing>
+      </bpmn:intermediateCatchEvent>
+      <bpmn:sequenceFlow id="subF3" sourceRef="condCatch" targetRef="utSecond" />
+      <bpmn:userTask id="utSecond" name="second">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+        </bpmn:extensionElements>
+        <bpmn:incoming>subF3</bpmn:incoming>
+        <bpmn:outgoing>subF4</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:boundaryEvent id="bndCond" name="condBoundary" attachedToRef="utSecond" cancelActivity="false">
+        <bpmn:conditionalEventDefinition id="bndCondDef">
+          <bpmn:condition xsi:type="bpmn:tFormalExpression">=localFlag = true</bpmn:condition>
+        </bpmn:conditionalEventDefinition>
+        <bpmn:outgoing>bndFlow</bpmn:outgoing>
+      </bpmn:boundaryEvent>
+      <bpmn:sequenceFlow id="bndFlow" sourceRef="bndCond" targetRef="utBranch" />
+      <bpmn:userTask id="utBranch" name="branch">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+        </bpmn:extensionElements>
+        <bpmn:incoming>bndFlow</bpmn:incoming>
+        <bpmn:outgoing>subF5</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="subF4" sourceRef="utSecond" targetRef="subEnd" />
+      <bpmn:sequenceFlow id="subF5" sourceRef="utBranch" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd" name="subEnd">
+        <bpmn:incoming>subF4</bpmn:incoming>
+        <bpmn:incoming>subF5</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="sub1" targetRef="utAfter" />
+    <bpmn:userTask id="utAfter" name="after">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="utAfter" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

@@ -479,7 +479,13 @@ public class FlowNavigator {
                 return null;
             }
             {
-                List<ProcessVariable> variables = cachedVariables != null ? cachedVariables : dbService.getVariables(processInstanceId);
+                // WO-C8-45: без кэша — тот же chain-контекст по токену, что кэш
+                // gateway-хендлеров (activity-цепочка gateway и токен-цепочка
+                // совпадают: gateway создан на этом токене). Внешние вызывающие
+                // без кэша (белый ящик, операторские пути) видят скоуп тоже.
+                List<ProcessVariable> variables = cachedVariables != null ? cachedVariables
+                    : elementSupport.chainVariablesForTokenNames(processInstanceId, tokenId,
+                        FeelVariableNames.extract(expression));
                 Boolean test = (Boolean) scriptService.evaluateScript(expression, variables);
                 if (Boolean.TRUE.equals(test)) {
                     flowActivityId = dbService.createActivity(processInstanceId, tokenId, flow);
@@ -562,6 +568,23 @@ public class FlowNavigator {
         // паритетным S8a: y-инстансы гасли на join'е x).
         return !mi.multiInstanceContinue(processInstanceId, miToken, subProcessElement,
             subProcessActivityId, executor);
+    }
+
+    /**
+     * WO-C8-45 (б, tail): первый токен вверх от {@code endToken}, не несущий
+     * скоуп {@code deadScopeActivityId}. Null-safe: оборванная цепочка даёт
+     * null (как прежний прямой {@code getParentId()}).
+     */
+    private UUID tokenAboveScope(Token endToken, UUID deadScopeActivityId) {
+        UUID current = endToken == null ? null : endToken.getParentId();
+        while (current != null) {
+            Token token = dbService.findToken(current).orElse(null);
+            if (token == null || !deadScopeActivityId.equals(token.getScopeActivityId())) {
+                break;
+            }
+            current = token.getParentId();
+        }
+        return current;
     }
 
     /**
@@ -651,7 +674,16 @@ public class FlowNavigator {
                 dbService.deleteVariables(processInstanceId, subProcessActivityId);
             }
             dbService.completeActivity(subProcessActivityId);
-            UUID parentTokenId = endToken.getParentId();
+            // WO-C8-45 (б, tail): продолжать МИМО мёртвого скоупа контейнера.
+            // End мог прийти на форк-токене inclusive-сплита (scope — строка
+            // контейнера): его parent — scope-токен с ТЕМ ЖЕ мёртвым scope.
+            // Нисходящий end на таком токене ре-enterит этот же SUB-path,
+            // глотается (контейнер уже COMPLETED, «swallowed by cancel») и
+            // выходит ДО счётчика ветвей — инстанс молча RUNNING без живых
+            // и без инцидентов. Подъём до первого токена вне скоупа чинит:
+            // plain-кейс (end прямо на scope-токене → его parent) подъём не
+            // меняет, MI-форк/вложенные форки — выводит на живой токен.
+            UUID parentTokenId = tokenAboveScope(endToken, subProcessActivityId);
             log.info("{}/{}: Completing {}: {}/{}", processInstanceId, parentTokenId, subProcessElement.getType(), subProcessActivityId, subProcessElement.getId());
             proceedToOutgoing(processInstanceId, parentTokenId, bpmn, subProcessElement, executor);
             return;

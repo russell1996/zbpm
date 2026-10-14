@@ -2104,7 +2104,11 @@ public class CompletionService {
                 return;
             }
             BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
-            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+            // WO-C8-45: БЕЗ единого root-снапшота на весь обход: каждое
+            // conditional-событие оценивается в chain-контексте СВОЕЙ activity
+            // (root + скоупы, nearest-wins) — событие внутри (MI-)подпроцесса
+            // видит скоуп-локальные переменные. Pinpoint по именам условия
+            // (чужие JSON не парсятся).
             Map<String, String> changes = executionContext.consumeVariableChanges();
             for (Activity activity : dbService.getActiveActivities(processInstanceId)) {
                 BpmnElementModel element = bpmn.getElement(activity.getBpmnElementId());
@@ -2115,7 +2119,9 @@ public class CompletionService {
                     if (!conditionalFilterMatches(element, changes)) {
                         continue;
                     }
-                    if (eventTrigger.conditionHolds(element, variables)) {
+                    if (eventTrigger.conditionHolds(element,
+                        elementSupport.chainVariablesForNames(processInstanceId, activity.getId(),
+                            elementSupport.conditionalVariableNames(element)))) {
                         log.info("{}: Conditional catch {} satisfied, firing", processInstanceId, element.getId());
                         signal(activity.getId(), List.of(), executor);
                     }
@@ -2124,7 +2130,9 @@ public class CompletionService {
                         if (!conditionalFilterMatches(boundary, changes)) {
                             continue;
                         }
-                        if (eventTrigger.conditionHolds(boundary, variables)) {
+                        if (eventTrigger.conditionHolds(boundary,
+                            elementSupport.chainVariablesForNames(processInstanceId, activity.getId(),
+                                elementSupport.conditionalVariableNames(boundary)))) {
                             log.info("{}: Conditional boundary {} satisfied, firing on host {}", processInstanceId, boundary.getId(), element.getId());
                             if (eventTrigger.fireBoundary(activity.getId(), boundary.getId(), List.of(), executor)) {
                                 triggerConditionalEvents(processInstanceId, executor);

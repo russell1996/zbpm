@@ -161,7 +161,11 @@ class MultiInstanceExecutorPinpointTest {
         when(dbService.getInclusiveExpected(pi, "mi::batch-1")).thenReturn(3);
         when(dbService.getParallelGatewayArrivedFlows(pi, "mi::batch-1"))
             .thenReturn(Set.of(completed.toString()));
-        when(dbService.getVariablesByNames(eq(pi),
+        // WO-C8-45 (г): completionCondition читается chain-контекстом токена
+        // (root + внешние скоупы, nearest-wins) — outputCollection вложенного
+        // MI лежит в containing scope, а не в root. pinpoint по именам
+        // сохранён: getVariablesByNames уходит внутрь mergeChainLayers.
+        when(elementSupport.chainVariablesForTokenNames(eq(pi), eq(token),
             argThat(names -> names != null && names.containsAll(Set.of("completedInstances", "totalInstances")))))
             .thenReturn(List.of());
         when(scriptService.evaluateExpression(eq("completedInstances = totalInstances"), any()))
@@ -170,7 +174,7 @@ class MultiInstanceExecutorPinpointTest {
         boolean done = executor.multiInstanceContinue(pi, token, element, completed);
 
         assertThat(done).isTrue();
-        verify(dbService).getVariablesByNames(eq(pi),
+        verify(elementSupport).chainVariablesForTokenNames(eq(pi), eq(token),
             argThat(names -> names != null && names.containsAll(Set.of("completedInstances", "totalInstances"))));
         verify(dbService, never()).getVariables(any(UUID.class));
         verify(dbService).clearParallelGatewayArrivals(pi, "mi::batch-1");

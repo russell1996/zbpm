@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="defs-c845-a2" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-C8-45 (а, вариант laneDecision): тот же процесс, но gwVerdict ветвится
+       по спроецированной laneDecision (output svcMark), а не по сырому decision.
+       Проверяет, что overlay-выход виден условию в скоупе инстанса. -->
+  <bpmn:process id="c845-mi-sub-gateway-lane" name="C845 MI subprocess gateway scope" isExecutable="true">
+    <bpmn:startEvent id="startRepro">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowStart" sourceRef="startRepro" targetRef="subProbe" />
+    <bpmn:subProcess id="subProbe" name="probe">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=[&quot;A&quot;, &quot;B&quot;]" inputElement="item"
+                                     outputCollection="results" outputElement="=item" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>flowStart</bpmn:incoming>
+      <bpmn:outgoing>flowSubDone</bpmn:outgoing>
+      <bpmn:startEvent id="startProbe">
+        <bpmn:outgoing>flowProbeStart</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:userTask id="utDecide" name="decide">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=item" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowProbeStart</bpmn:incoming>
+        <bpmn:outgoing>flowDecideDone</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:serviceTask id="svcMark" name="mark">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="svcMark" />
+          <zeebe:ioMapping>
+            <zeebe:output source="=decision" target="laneDecision" />
+          </zeebe:ioMapping>
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowDecideDone</bpmn:incoming>
+        <bpmn:outgoing>flowMarkDone</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:exclusiveGateway id="gwVerdict" name="verdict">
+        <bpmn:incoming>flowMarkDone</bpmn:incoming>
+        <bpmn:outgoing>flowRejected</bpmn:outgoing>
+        <bpmn:outgoing>flowApproved</bpmn:outgoing>
+      </bpmn:exclusiveGateway>
+      <bpmn:sequenceFlow id="flowRejected" sourceRef="gwVerdict" targetRef="utRejected">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=laneDecision = "REJECTED"</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="flowApproved" sourceRef="gwVerdict" targetRef="utApproved">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=laneDecision = "APPROVED"</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:userTask id="utRejected" name="rejected">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=item" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowRejected</bpmn:incoming>
+        <bpmn:outgoing>flowBranchDone</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:userTask id="utApproved" name="approved">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=item" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowApproved</bpmn:incoming>
+        <bpmn:outgoing>flowBranchDoneApproved</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="flowProbeStart" sourceRef="startProbe" targetRef="utDecide" />
+      <bpmn:sequenceFlow id="flowDecideDone" sourceRef="utDecide" targetRef="svcMark" />
+      <bpmn:sequenceFlow id="flowMarkDone" sourceRef="svcMark" targetRef="gwVerdict" />
+      <bpmn:sequenceFlow id="flowBranchDone" sourceRef="utRejected" targetRef="endProbe" />
+      <bpmn:sequenceFlow id="flowBranchDoneApproved" sourceRef="utApproved" targetRef="endProbe" />
+      <bpmn:endEvent id="endProbe">
+        <bpmn:incoming>flowBranchDone</bpmn:incoming>
+        <bpmn:incoming>flowBranchDoneApproved</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="flowSubDone" sourceRef="subProbe" targetRef="endRepro" />
+    <bpmn:endEvent id="endRepro">
+      <bpmn:incoming>flowSubDone</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
