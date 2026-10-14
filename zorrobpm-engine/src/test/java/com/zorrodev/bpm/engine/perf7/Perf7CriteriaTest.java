@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.perf7;
 
 import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.dto.query.UiUserQuery;
+import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.UiUser;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
@@ -10,6 +11,7 @@ import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.entity.ProcessMemberEntity;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
+import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.handler.ExecutionCtx;
 import com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler;
 import com.zorrodev.bpm.engine.handler.FlowNavigator;
@@ -191,9 +193,18 @@ class Perf7CriteriaTest {
     void exclusiveGateway_fetchesVariablesOnceForThreeOutgoings() {
         DBService dbService = mock(DBService.class);
         FlowNavigator flowNavigator = mock(FlowNavigator.class);
+        ElementSupport elementSupport = mock(ElementSupport.class);
         when(dbService.createActivity(any(), any(), any(BpmnElementModel.class)))
             .thenReturn(UUID.randomUUID());
         when(dbService.getVariables(any())).thenReturn(List.of());
+        // WO-C8-45: читатель стал chain-механизмом через ElementSupport. Мок
+        // возвращает ожидаемые переменные, чтобы хендлер получил непустой
+        // контекст (без скоупов — та же root-проекция, что раньше).
+        ProcessVariable expected = new ProcessVariable();
+        expected.setName("decision");
+        expected.setValue("REJECTED");
+        when(elementSupport.chainVariablesForNames(any(), any(), any()))
+            .thenReturn(List.of(expected));
 
         BpmnElementModel gw = new BpmnElementModel();
         gw.setId("gw1");
@@ -206,7 +217,7 @@ class Perf7CriteriaTest {
         ExecutionCtx ctx = new ExecutionCtx(piId, tokenId, mock(TokenExecutor.class), null);
 
         ExclusiveGatewayHandler handler = new ExclusiveGatewayHandler(dbService, flowNavigator,
-            mock(com.zorrodev.bpm.engine.handler.ElementSupport.class));
+            elementSupport);
 
         // Оба дерева: FlowNavigator-mock возвращает null → совпадений нет,
         // defaultFlowId null → IllegalStateException. До броска хендлер уже
@@ -218,6 +229,11 @@ class Perf7CriteriaTest {
         // (chainVariablesForNames), а не прямой getVariables: без скоупов тот
         // даёт ту же root-проекцию, но вызов идёт через мок ElementSupport.
         verify(dbService, times(0)).getVariables(piId);
+        // F-1 (C8-45 r1): защита PERF-7 на НОВОМ читателе — ровно ОДНО
+        // chain-чтение на один вызов гейтвея, независимо от числа исходящих
+        // потоков (3 здесь). Регрессия «chain-чтение внутри цикла по потокам»
+        // → 3 чтения → RED.
+        verify(elementSupport, times(1)).chainVariablesForNames(eq(piId), any(), any());
         // Новый код ходит в 6-arg overload; 5-arg (старый путь) — 0 вызовов.
         verify(flowNavigator, times(0))
             .processFlow(any(), any(), anyString(), any(), any());
