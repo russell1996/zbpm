@@ -512,6 +512,17 @@ public class FlowNavigator {
      * @return true, если инстансов ещё ждут (хвост завершён, продолжать нечего);
      *         false, если join собран и вызывающий продолжает историческим путём
      *         (выходы контейнера → complete → исходящий поток один раз).
+     *
+     * <p>WO-C8-43: контейнер инстанса completes ЗДЕСЬ, до join-решения — каждая
+     * ветка закрывает свой контейнер в момент своего внутреннего end (строка
+     * завершена, расписание границ инстанса мертво: fireBoundary на такой
+     * строке — no-op). Join/исходящий поток — только на последнем прибывшем
+     * (возврат multiInstanceContinue), sequential-спaун — тоже там. Раньше
+     * контейнер completes только у последней ветки: остальные оставались
+     * CREATED навсегда (orphan в диагностике/UI, врёт activeTokenCount).
+     * Sequential: спаун следующего идёт на входящем токене контейнера
+     * (miToken), строка этого контейнера уже COMPLETED — порядок безразличен:
+     * спаун не читает статус текущего контейнера.
      */
     private boolean finishMiSubProcessInstance(UUID processInstanceId, Token endToken,
             BpmnProcessDefinitionModel bpmn, BpmnElementModel subProcessElement,
@@ -535,8 +546,14 @@ public class FlowNavigator {
         }
         mi.aggregateMultiInstanceOutput(processInstanceId, subProcessActivityId, subProcessElement);
         dbService.deleteVariables(processInstanceId, subProcessActivityId);
+        // WO-C8-43: контейнер ЭТОГО инстанса completes сейчас, не дожидаясь
+        // остальных (иначе orphan). Ниже multiInstanceContinue решает только
+        // судьбу join: не-last → true (хвост завершён, вызывающий выходит),
+        // last → false (вызывающий доводит выходы контейнера и исходящий
+        // поток один раз; completeActivity на уже-COMPLETED — идемпотентен).
+        dbService.completeActivity(subProcessActivityId);
         // Токен MI-инстансов — входящий токен контейнера (спaун шёл на нём):
-        // join bookkeeping идёт на нём же, complete строки — ниже у вызывающего.
+        // join bookkeeping идёт на нём же.
         UUID miToken = scope.getToken();
         // WO-C8-41 (F4): ранняя добивка сиблингов при completionCondition —
         // ВНУТРИ multiInstanceContinue (там видны arrived/expected и отличие
@@ -621,7 +638,10 @@ public class FlowNavigator {
                 }
                 // multiInstanceContinue сказал «join собран»: хвост ниже доводит
                 // контейнер (выходы в root по WO-DIFF-1 — контейнерные маппинги
-                // НЕ-MI-семантики) и продолжает исходящий поток один раз.
+                // НЕ-MI-семантики; сам контейнер уже COMPLETED в
+                // finishMiSubProcessInstance — WO-C8-43, повторный
+                // completeActivity ниже идемпотентен) и продолжает исходящий
+                // поток один раз.
             }
             if (subProcessElement != null
                 && subProcessElement.getType() == BpmnElementType.SUB_PROCESS
