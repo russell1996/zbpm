@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="defs-c845-c" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-C8-45 (в): ОБЫЧНЫЙ (не-MI) подпроцесс со скоуп-локальной переменной.
+       Input mapping контейнера пишет localFlag=true в скоуп sub1; gateway внутри
+       читает её. В root localFlag НЕТ (RED: инцидент «no outgoing…»), в chain —
+       видна (GREEN: utYes). Проверяет, что фикс — не только про MI. -->
+  <bpmn:process id="c845-plain-sub-gateway" name="C845 plain subprocess gateway scope" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=true" target="localFlag" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subF1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subF1" sourceRef="subStart" targetRef="utInner" />
+      <bpmn:userTask id="utInner" name="inner">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+        </bpmn:extensionElements>
+        <bpmn:incoming>subF1</bpmn:incoming>
+        <bpmn:outgoing>subF2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="subF2" sourceRef="utInner" targetRef="gwInner" />
+      <bpmn:exclusiveGateway id="gwInner" name="inner verdict">
+        <bpmn:incoming>subF2</bpmn:incoming>
+        <bpmn:outgoing>flowYes</bpmn:outgoing>
+        <bpmn:outgoing>flowNo</bpmn:outgoing>
+      </bpmn:exclusiveGateway>
+      <bpmn:sequenceFlow id="flowYes" sourceRef="gwInner" targetRef="utYes">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=localFlag = true</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="flowNo" sourceRef="gwInner" targetRef="utNo">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=localFlag = false</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:userTask id="utYes" name="yes">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowYes</bpmn:incoming>
+        <bpmn:outgoing>subF3</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:userTask id="utNo" name="no">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowNo</bpmn:incoming>
+        <bpmn:outgoing>subF4</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="subF3" sourceRef="utYes" targetRef="subEnd" />
+      <bpmn:sequenceFlow id="subF4" sourceRef="utNo" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd" name="subEnd">
+        <bpmn:incoming>subF3</bpmn:incoming>
+        <bpmn:incoming>subF4</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="sub1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

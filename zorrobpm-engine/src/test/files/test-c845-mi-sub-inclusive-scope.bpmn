@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="defs-c845-b" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-C8-45 (б): inclusive gateway-СПЛИТ внутри MI-подпроцесса. Условия
+       комплементарны: каждый инстанс активирует ровно одну ветвь по СВОЕМУ
+       decision. На root-чтении activated пусто (RED: веточных задач нет), на
+       chain-чтении каждый инстанс получает свою задачу (GREEN). Ветви кончаются
+       end-событиями — join-readiness здесь не задействован. -->
+  <bpmn:process id="c845-mi-sub-inclusive" name="C845 MI subprocess inclusive scope" isExecutable="true">
+    <bpmn:startEvent id="startRepro">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowStart" sourceRef="startRepro" targetRef="subProbe" />
+    <bpmn:subProcess id="subProbe" name="probe">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=[&quot;A&quot;, &quot;B&quot;]" inputElement="item"
+                                     outputCollection="results" outputElement="=item" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>flowStart</bpmn:incoming>
+      <bpmn:outgoing>flowSubDone</bpmn:outgoing>
+      <bpmn:startEvent id="startProbe">
+        <bpmn:outgoing>flowProbeStart</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:userTask id="utDecide" name="decide">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=item" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowProbeStart</bpmn:incoming>
+        <bpmn:outgoing>flowDecideDone</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:inclusiveGateway id="gwSplit" name="split">
+        <bpmn:incoming>flowDecideDone</bpmn:incoming>
+        <bpmn:outgoing>flowIncRejected</bpmn:outgoing>
+        <bpmn:outgoing>flowIncApproved</bpmn:outgoing>
+      </bpmn:inclusiveGateway>
+      <bpmn:sequenceFlow id="flowIncRejected" sourceRef="gwSplit" targetRef="utIncRejected">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=decision = "REJECTED"</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="flowIncApproved" sourceRef="gwSplit" targetRef="utIncApproved">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=decision = "APPROVED"</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:userTask id="utIncRejected" name="incRejected">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=item" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowIncRejected</bpmn:incoming>
+        <bpmn:outgoing>flowToEndR</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:userTask id="utIncApproved" name="incApproved">
+        <bpmn:extensionElements>
+          <zeebe:userTask />
+          <zeebe:assignmentDefinition assignee="=item" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>flowIncApproved</bpmn:incoming>
+        <bpmn:outgoing>flowToEndA</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="flowProbeStart" sourceRef="startProbe" targetRef="utDecide" />
+      <bpmn:sequenceFlow id="flowDecideDone" sourceRef="utDecide" targetRef="gwSplit" />
+      <bpmn:sequenceFlow id="flowToEndR" sourceRef="utIncRejected" targetRef="endR" />
+      <bpmn:sequenceFlow id="flowToEndA" sourceRef="utIncApproved" targetRef="endA" />
+      <bpmn:endEvent id="endR">
+        <bpmn:incoming>flowToEndR</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:endEvent id="endA">
+        <bpmn:incoming>flowToEndA</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="flowSubDone" sourceRef="subProbe" targetRef="endRepro" />
+    <bpmn:endEvent id="endRepro">
+      <bpmn:incoming>flowSubDone</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
