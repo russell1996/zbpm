@@ -35,6 +35,7 @@ class ProcessInstanceDbOperationsImplTest {
     @Mock private VariableHistoryWriter historyWriter;
     @Mock private DomainEventEmitter domainEventEmitter;
     @Mock private com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
+    @Mock private CancelledScopeStateCleaner cancelledScopeStateCleaner;
     @InjectMocks private ProcessInstanceDbOperationsImpl db;
 
     @Test
@@ -91,5 +92,22 @@ class ProcessInstanceDbOperationsImplTest {
         verify(processInstanceRepository).setCancelled(eq(id), eq(true));
         verify(processInstanceRepository).setCompletedAt(eq(id), any(java.time.Instant.class));
         verify(domainEventEmitter).emitProcessInstanceCancelled(eq(id), eq(pdId));
+    }
+
+    /**
+     * WO-C8-46: отмена чистит скоуп-состояние ДО пометки cancelled, в той же
+     * транзакции (единый choke-point; порядок важен — зачистка обязана видеть
+     * строки до терминальной пометки).
+     */
+    @Test
+    void cancelProcessInstance_clearsScopeStateBeforeMarkingCancelled() {
+        UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
+        ProcessInstanceEntity e = new ProcessInstanceEntity(); e.setId(id); e.setProcessDefinitionId(pdId);
+        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(e));
+        db.cancelProcessInstance(id);
+        var inOrder = org.mockito.Mockito.inOrder(
+            cancelledScopeStateCleaner, processInstanceRepository);
+        inOrder.verify(cancelledScopeStateCleaner).clear(id);
+        inOrder.verify(processInstanceRepository).setCancelled(eq(id), eq(true));
     }
 }
