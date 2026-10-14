@@ -458,13 +458,22 @@ public class BpmnParseServiceImpl implements BpmnParseService {
      * instance exactly this way: {@code FlowNavigator.proceedToOutgoing} saw an empty
      * outgoing list and silently took the dead-end branch).
      *
-     * <p>Semantics: declared ids are kept verbatim and win on conflicts (a declared
-     * {@code <bpmn:outgoing>} pointing at a non-existent flow is NOT removed or
-     * rewritten — navigation still fails closed with {@code IllegalStateException}
-     * on the missing flow, exactly as before; the mismatch is WARN-logged here).
-     * Only ids present in the graph but absent from the declaration are appended
-     * (INFO-logged). Schemas WITH declared flows are therefore byte-identical in
-     * behaviour; schemas WITHOUT them now navigate the same graph.
+     * <p>Semantics — per direction ({@code incoming} and {@code outgoing} are
+     * independent): an EMPTY declared list means «the author declared nothing», so the
+     * graph is authoritative and the ids are filled in. A NON-EMPTY declared list is
+     * kept VERBATIM, even when the graph disagrees (partial declarations stay exactly
+     * as before; both mismatch directions are WARN-logged here). Appending graph flows
+     * to a partial declaration would change fork/join and implicit-fork semantics —
+     * proven live by the r1 regression: {@code test-loop.bpmn} declares
+     * {@code incoming=[flow1]} on {@code parallel1} while the graph also targets it
+     * with the self-loop {@code flow2}; appending {@code flow2} turned the
+     * single-incoming fork into a two-incoming join, the gateway parked on
+     * «Not ready yet» and the execution-depth guard stopped tripping
+     * ({@code ActivityServiceImplTests.recursionDepthGuardStopsInfiniteLoop},
+     * {@code ActivityServiceCharacterizationTest.recursiveParallelGateway_hitsDepthLimit}).
+     * A declared {@code <bpmn:outgoing>} pointing at a non-existent flow is likewise
+     * NOT removed or rewritten — navigation still fails closed with
+     * {@code IllegalStateException} on the missing flow, exactly as before.
      */
     private void normalizeFlowReferences(com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd) {
         Map<String, List<String>> derivedOutgoing = new HashMap<>();
@@ -480,7 +489,10 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         for (com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel element : pd.getElements()) {
             // toElementModel-копии ставят списки через set (null, когда в XML
             // объявлений нет) поверх инициализированного LinkedList — здесь
-            // null приводим к пустому, иначе merge ниже падает NPE.
+            // null приводим к пустому, иначе merge ниже падает NPE. Пустой
+            // список вместо null нейтрален: все читатели (FlowNavigator:61,172,
+            // InclusiveGatewayHandler:165,225, CompletionService:99) трактуют
+            // null и пустой список одинаково (тупик/0/skip/false).
             if (element.getIncoming() == null) {
                 element.setIncoming(new ArrayList<>());
             }
@@ -495,10 +507,20 @@ public class BpmnParseServiceImpl implements BpmnParseService {
     }
 
     private void mergeFlowRefs(String elementId, String kind, List<String> declared, List<String> derived) {
-        for (String flowId : derived) {
-            if (!declared.contains(flowId)) {
+        if (declared.isEmpty()) {
+            // Автор не объявил ничего в этом направлении — граф авторитетен.
+            for (String flowId : derived) {
                 declared.add(flowId);
                 log.info("WO-C8-44: element '{}' has no declared <bpmn:{}> for sequence flow '{}' — derived from the flow graph",
+                    elementId, kind, flowId);
+            }
+            return;
+        }
+        // Объявлено хоть что-то — список не трогаем (см. javadoc: частичная
+        // декларация + добивка из графа меняла fork/join-семантику). Только логи.
+        for (String flowId : derived) {
+            if (!declared.contains(flowId)) {
+                log.warn("WO-C8-44: element '{}' declares <bpmn:{}> but sequence flow '{}' of the graph is not declared — kept as-is (declared list wins)",
                     elementId, kind, flowId);
             }
         }
