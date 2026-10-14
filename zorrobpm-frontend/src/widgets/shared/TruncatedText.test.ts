@@ -280,4 +280,20 @@ describe('WO-UI-35 TruncatedText (unit)', () => {
     expect(nav, 'row click must NOT fire when the dialog opens').not.toHaveBeenCalled()
     expect(document.querySelector('[role="dialog"]')).not.toBeNull()
   })
+
+  it('inherited attrs (class/style) from the call site reach the span, not dropped (fragment root)', () => {
+    // P-11: класс передаётся в 6+ местах применения (напр. имя инстанса
+    // `class="text-base font-semibold"`). Мульти-корневой Vue без явной
+    // привязки attrs молча выбрасывает их (Vue warn «Extraneous non-props
+    // attributes ... fragment root nodes») — визуальный регресс.
+    const wrapper = mount(TruncatedText, {
+      props: { value: SHORT, title: 'Message' },
+      attrs: { class: 'text-base font-semibold', style: 'color: red' },
+    })
+    mounted.push(wrapper)
+    const span = wrapper.find('[data-testid="truncated-text"]').element as HTMLElement
+    expect(span.className).toContain('text-base')
+    expect(span.className).toContain('font-semibold')
+    expect(span.style.color).toBe('red')
+  })
 })
