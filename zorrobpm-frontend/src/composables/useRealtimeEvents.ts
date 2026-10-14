@@ -8,6 +8,7 @@ import { sharedRefresh } from '@/services/refreshInterceptor'
 import { publishRealtimeEvent } from '@/services/realtimeBus'
 import {
   acquireSseLeadership,
+  getSseTabId,
   publishFanout,
   subscribeFanout,
   type SseFanoutMessage,
@@ -91,9 +92,6 @@ function mirrorHealth(patch: {
   if (patch.wasConnected !== undefined) sharedRealtimeHealth.wasConnected.value = patch.wasConnected
   if (patch.realtimeDown !== undefined) sharedRealtimeHealth.realtimeDown.value = patch.realtimeDown
   if (patch.sessionExpired !== undefined) sharedRealtimeHealth.sessionExpired.value = patch.sessionExpired
-  // WO-UI-31: единственная воронка смен здоровья — здесь обновляем снимок
-  // для поздних подписчиков (follower, см. SSE_HEALTH_STORAGE_KEY).
-  writeHealthSnapshot()
 }
 
 // Тот же baseURL-резолвинг, что в services/api.ts: EventSource обязан идти на
@@ -197,54 +195,14 @@ function storeLastEventId(id: string): void {
   }
 }
 
-/**
- * WO-UI-31: снимок здоровья канала для ПОЗДНИХ подписчиков.
- *
- * Корень рассинхрона (репорт владельца 2026-10-14: «точка горит, а в
- * панели Подключено, Эта вкладка: ведомый»): health-ПАТЧИ идут только на
- * смену состояния. Follower, который подписался ПОСЛЕ того как лидер уже
- * здоров, не получает ни одного патча → сидит на isConnected=false
- * вечно → через гистерезис у него горит точка при живом лидере, а панель
- * говорит «Подключено» (lastError='none').
- *
- * Снимок пишется в каждой смене здоровья (mirrorHealth — единственная
- * воронка) и читается follower'ом при подписке: после этого живые патчи
- * держат состояние синхронным. sessionStorage общий на вкладки одного
- * origin — тот же механизм, что Н-3 использует для Last-Event-ID.
- */
-const SSE_HEALTH_STORAGE_KEY = 'zbpm.sse.health'
-
-function writeHealthSnapshot(): void {
-  try {
-    if (typeof sessionStorage === 'undefined') return
-    sessionStorage.setItem(
-      SSE_HEALTH_STORAGE_KEY,
-      JSON.stringify({
-        isConnected: sharedRealtimeHealth.isConnected.value,
-        realtimeDown: sharedRealtimeHealth.realtimeDown.value,
-        sessionExpired: sharedRealtimeHealth.sessionExpired.value,
-      }),
-    )
-  } catch {
-    // приватный режим/квота — снимок не фатален (патчи дальше работают)
-  }
-}
-
-function readHealthSnapshot(): ChannelHealth | null {
-  try {
-    if (typeof sessionStorage === 'undefined') return null
-    const raw = sessionStorage.getItem(SSE_HEALTH_STORAGE_KEY)
-    if (!raw) return null
-    const p = JSON.parse(raw) as Record<string, unknown>
-    return {
-      isConnected: p.isConnected === true,
-      realtimeDown: p.realtimeDown === true,
-      sessionExpired: p.sessionExpired === true,
-    }
-  } catch {
-    return null
-  }
-}
+// WO-UI-31 (механизм синхронизации позднего follower — в connect()/
+// onFanoutMessage): health-ПАТЧИ приносят только БУДУЩИЕ смены, начальное
+// состояние здорового лидера не доставляется → follower, подписавшийся
+// после подключения лидера, запрашивает его по BroadcastChannel-фанауту
+// (kind: 'health-request'; лидер отвечает полным health-патчем). НЕ
+// sessionStorage: хранилище per-tab и в новую вкладку (Ctrl+T) не
+// пересекается — только window.open копирует; реальный канал вкладок —
+// тот же BroadcastChannel, что и ретрансляция событий (sseFanout).
 
 /**
  * WO-UI-31: ОДИН источник правды «канал в дауне» — и точку (видимость + цвет),
@@ -416,6 +374,8 @@ export function useRealtimeEvents() {
   let leadershipRelease: (() => void) | null = null
   let fanoutUnsubscribe: (() => void) | null = null
   let isLeaderTab = false
+  // WO-UI-31: таймер повторного health-request (пока лидер не ответил).
+  let healthAskTimer: ReturnType<typeof setTimeout> | null = null
   // WO-UI-26 Н-3: guard двойного connect + инвалидация протухших исходов.
   let leadershipInflight = false
   let connectGeneration = 0
@@ -439,6 +399,15 @@ export function useRealtimeEvents() {
    */
   function onFanoutMessage(msg: SseFanoutMessage) {
     if (msg.kind === 'event') {
+      // WO-UI-31: лидер НЕ применяет СВОЕ событие по фанауту — он уже
+      // обработал его прямым путём (onNamedEvent: lastEventId/курсор +
+      // storeLastEventId + dispatch + ретрансляция). Копия по локальной
+      // доставке — тот же конверт; при асинхронном GET сущности второй
+      // dispatch заходит в окно ДО markApplied первого (shouldPatch не видит
+      // ни id, ни свежий sequence) → двойной GET сущности на событие
+      // (TaskList.burst: 100 вместо 50). Фанаут-подписка лидера нужна только
+      // для health-request (ответ поздним follower) и health (идемпотентно).
+      if (isLeaderTab) return
       // Ретрансляция лидера: тот же dispatch, что у собственного EventSource.
       // Идемпотентность — по sequence/id на стороне сторов/шины (Доп.4):
       // лидер уже применил событие у себя, follower применяет у себя.
@@ -460,6 +429,30 @@ export function useRealtimeEvents() {
         realtimeDown: realtimeDown.value,
         sessionExpired: sessionExpired.value,
       })
+    } else if (msg.kind === 'health-request') {
+      // WO-UI-31: поздний follower спрашивает НАСТОЯЩЕЕ состояние — патчи
+      // несут только будущие смены, а здоровый лидер молчит. Отвечает
+      // только живой лидер полным health-патчем. Проверка — по флагу
+      // ЭТОГО экземпляра (isLeaderTab), не по модульному isSseLeader():
+      // модульный флаг общий и в топологии «два экземпляра в одном
+      // контексте» (тесты) таймаут лидераства follower'а его затирает;
+      // флаг экземпляра ведётся ровно по его лидерству (connect/
+      // onPromoted/onRevoked/disconnect). Без tabId-фильтра: локальная
+      // доставка publishFanout возвращает лидеру и ЕГО СВОЙ запрос —
+      // ответ на себя идемпотентен (полный патч = своё же состояние;
+      // петли нет: 'health' запроса не вызывает).
+      if (isLeaderTab) {
+        publishFanout({
+          kind: 'health',
+          patch: {
+            isConnected: isConnected.value,
+            wasConnected: sharedRealtimeHealth.wasConnected.value,
+            realtimeDown: realtimeDown.value,
+            sessionExpired: sessionExpired.value,
+            lastEventId: lastEventId.value,
+          },
+        })
+      }
     }
     // 'leader' обрабатывается внутри sseFanout (переизбрание молча).
   }
@@ -593,8 +586,15 @@ export function useRealtimeEvents() {
     const delay = reconnectDelayMs(reconnectAttempts)
     reconnectAttempts += 1
     error.value = 'Realtime connection lost, retrying…'
+    const gen = connectGeneration
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null
+      // WO-UI-31: экземпляр за это время отключился (вкладка закрыта,
+      // unmount) — цепочка мертва: ни refresh, ни терминальная публикация
+      // с мёртвой вкладки (fanout общий — закрытая вкладка не должна
+      // вещать sessionExpired на живые; stacked-таймеры, чей handle
+      // перезаписан, disconnect не чистит — здесь они и гаснут).
+      if (gen !== connectGeneration) return
       void refreshAndReconnect()
     }, delay)
   }
@@ -605,7 +605,12 @@ export function useRealtimeEvents() {
     // мимо `isRefreshing`: одновременный 401-refresh от axios гонялся за ту
     // же ротируемую refresh-куку, проигравший получал «already rotated».
     // credentials те же (api-инстанс с withCredentials — кука приложится).
+    const gen = connectGeneration
     const ok = await sharedRefresh(api)
+    // WO-UI-31: disconnect во время refresh — возобновление протухшее:
+    // цепочка не продолжает (иначе мёртвая вкладка докручивает backoff и
+    // публикует терминальное состояние в общий fanout — см. scheduleReconnect).
+    if (gen !== connectGeneration) return
     lastRefreshOk = ok
     if (ok) {
       error.value = null
@@ -631,6 +636,10 @@ export function useRealtimeEvents() {
       noteError('http-401', 401)
     }
     mirrorHealth({ realtimeDown: false, sessionExpired: true })
+    // WO-UI-31: терминальное состояние — остальным вкладкам (иначе у
+    // follower'а оно выводится из isConnected=false как «переподключение»
+    // вместо «сессия истекла» — точка/статус расходятся с лидером).
+    publishFanout({ kind: 'health', patch: { realtimeDown: false, sessionExpired: true } })
   }
 
   // WO-REL-57: канал мёртв при живой сессии — честный сигнал + ручной retry
@@ -640,6 +649,9 @@ export function useRealtimeEvents() {
     sessionExpired.value = false
     error.value = 'Realtime unavailable, retrying…'
     mirrorHealth({ realtimeDown: true, sessionExpired: false })
+    // WO-UI-31: «канал мёртв, сессия жива» — остальным вкладкам (красная
+    // точка у лидера и у ведомых, а не «янтарное переподключение»).
+    publishFanout({ kind: 'health', patch: { realtimeDown: true, sessionExpired: false } })
   }
 
   function retryConnection() {
@@ -647,6 +659,8 @@ export function useRealtimeEvents() {
     realtimeDown.value = false
     error.value = null
     mirrorHealth({ realtimeDown: false })
+    // WO-UI-31: ручной retry на лидере — ведомые тоже снимают «down».
+    publishFanout({ kind: 'health', patch: { realtimeDown: false } })
     if (eventSource) {
       eventSource.close()
       eventSource = null
@@ -693,26 +707,34 @@ export function useRealtimeEvents() {
       if (leader) {
         isLeaderTab = true
         leadershipRelease = release
+        // WO-UI-31: лидер тоже подписан на фанаут — только так он слышит
+        // health-request поздних follower и отвечает им полным состоянием.
+        // Свои же event/health-публикации он получает локальной доставкой
+        // (publishFanout) — идемпотентно по sequence (см. sseFanout).
+        fanoutUnsubscribe = subscribeFanout(onFanoutMessage)
         openSource()
       } else {
         isLeaderTab = false
         fanoutUnsubscribe = subscribeFanout(onFanoutMessage)
-        // WO-UI-31: снимок здоровья лидера на момент подписки — иначе
-        // follower, вошедший ПОСЛЕ подключения лидера, навсегда сидит на
-        // isConnected=false (патчи приносят только БУДУЩИЕ смены): у него
-        // горит точка при здоровом лидере, а панель показывает «Подключено».
-        // Дальше живые health-патчи держат состояние синхронным.
-        const snapshot = readHealthSnapshot()
-        if (snapshot) {
-          isConnected.value = snapshot.isConnected
-          realtimeDown.value = snapshot.realtimeDown
-          sessionExpired.value = snapshot.sessionExpired
-          mirrorHealth({
-            isConnected: snapshot.isConnected,
-            realtimeDown: snapshot.realtimeDown,
-            sessionExpired: snapshot.sessionExpired,
-          })
+        // WO-UI-31: запросить НАСТОЯЩЕЕ здоровье лидера. Health-ПАТЧИ
+        // приносят только БУДУЩИЕ смены: follower, подписавшийся ПОСЛЕ
+        // подключения здорового лидера, не получил бы ни одного патча и
+        // сидел на isConnected=false вечно — через гистерезис у него
+        // горит точка при живом лидере, а панель показывает «Подключено»
+        // (рассинхрон из репорта владельца 2026-10-14). Лидер отвечает
+        // полным health-патчем (ветка 'health-request' в onFanoutMessage).
+        // Три попытки (лидер мог ещё не подписаться на фанаут): дальше
+        // живые патчи держат состояние синхронным.
+        let healthAskTries = 0
+        const askLeaderHealth = (): void => {
+          if (myGeneration !== connectGeneration || isLeaderTab) return
+          publishFanout({ kind: 'health-request', tabId: getSseTabId() })
+          healthAskTries += 1
+          if (healthAskTries < 3) {
+            healthAskTimer = setTimeout(askLeaderHealth, 500)
+          }
         }
+        askLeaderHealth()
         // HOLD раунд 1 (Б-1): смерть лидера = браузер отдаёт лок следующему
         // в очереди = onPromoted: follower открывает СВОЙ EventSource
         // (ровно один новый; Last-Event-ID подхватит браузер сам) и
@@ -747,6 +769,10 @@ export function useRealtimeEvents() {
     if (firstByteTimer) {
       clearTimeout(firstByteTimer)
       firstByteTimer = null
+    }
+    if (healthAskTimer) {
+      clearTimeout(healthAskTimer)
+      healthAskTimer = null
     }
     reconnectAttempts = 0
     lastRefreshOk = null
