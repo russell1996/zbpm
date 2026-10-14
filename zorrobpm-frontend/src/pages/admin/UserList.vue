@@ -5,6 +5,7 @@ import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useI18n } from 'vue-i18n'
 import UserDetailPanel from './UserDetailPanel.vue'
+import TruncatedText from '@/widgets/shared/TruncatedText.vue'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
@@ -394,7 +395,15 @@ onMounted(loadUsers)
       >
         <!-- Fixed header: compact identity hero, visually separated from the body -->
         <div class="shrink-0 border-b border-border px-4 py-3 pr-12">
-          <SheetTitle class="text-lg font-bold truncate text-foreground">{{ selectedUser?.username }}</SheetTitle>
+          <!-- WO-UI-35: длинный username — клик открывает полный текст (SheetTitle как
+               есть: заголовок шита сохранён, обрезка — внутри). -->
+          <SheetTitle class="text-lg font-bold text-foreground">
+            <TruncatedText
+              :value="selectedUser?.username ?? ''"
+              :title="t('username')"
+              class="text-lg font-bold"
+            />
+          </SheetTitle>
         </div>
         <!-- Scrollable body -->
         <div class="overflow-y-auto flex-1 p-5 space-y-6" data-testid="user-detail-body">

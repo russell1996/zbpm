@@ -9,6 +9,7 @@ import { exportToCsv } from '@/shared/lib/export'
 import { debounce } from '@/shared/lib/debounce'
 import { Download, RefreshCw } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import TruncatedText from '@/widgets/shared/TruncatedText.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
 const router = useRouter()
@@ -111,7 +112,11 @@ function exportData() {
             @keydown.enter="viewDetail(inc.id)"
           >
             <td class="px-4 py-3"><CopyableId :value="inc.id" /></td>
-            <td class="px-4 py-3 text-sm max-w-xs truncate" :title="inc.message">{{ inc.message }}</td>
+            <!-- WO-UI-35: длинное сообщение — клик открывает полный текст в shadcn Dialog
+                 (клик не утекает на строку: строка навигирует на детальную). -->
+            <td class="px-4 py-3 text-sm max-w-xs">
+              <TruncatedText :value="inc.message" :title="t('message')" />
+            </td>
             <td class="px-4 py-3">{{ inc.processName || '—' }}</td>
             <td class="px-4 py-3">{{ inc.elementName || inc.bpmnElementId || '—' }}</td>
             <td class="px-4 py-3">

@@ -18,6 +18,7 @@ import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
 import { isTaskActive, processInstanceStatus, isProcessInstanceActive, errorMessage } from '@/shared/lib/utils'
 import { RefreshCw, ArrowRight, ArrowLeft, Download, Calendar, OctagonX, Copy, Check } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import TruncatedText from '@/widgets/shared/TruncatedText.vue'
 import IoMappingTable from '@/widgets/shared/IoMappingTable.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import TabsBar from '@/widgets/shared/TabsBar.vue'
@@ -1011,7 +1012,12 @@ watch(activeTab, onTabChange)
           </div>
           <!-- Row 2: Name · v2 · Status · date — center-aligned -->
           <div class="flex items-center gap-2 flex-wrap -mt-1">
-            <span class="text-base font-semibold truncate">{{ processStore.currentInstance.processName || processStore.currentInstance.processKey || t('processInstance') }}</span>
+            <!-- WO-UI-35: длинное имя инстанса — клик открывает полный текст в shadcn Dialog -->
+            <TruncatedText
+              :value="processStore.currentInstance.processName || processStore.currentInstance.processKey || t('processInstance')"
+              :title="t('processInstance')"
+              class="text-base font-semibold"
+            />
             <span class="inline-flex items-center text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 shrink-0">
               v{{ processStore.currentInstance.processVersion }}
             </span>
@@ -1057,7 +1063,12 @@ watch(activeTab, onTabChange)
             data-testid="subprocess-plane-bar"
           >
             <span class="text-muted-foreground">⤵ {{ t('inSubprocessPlane') }}:</span>
-            <span class="font-mono truncate">{{ planeNode?.name || viewPlane }}</span>
+            <!-- WO-UI-35: имя плоскости подпроцесса — клик открывает полный текст -->
+            <TruncatedText
+              :value="planeNode?.name || viewPlane"
+              :title="t('inSubprocessPlane')"
+              class="font-mono"
+            />
             <Button
               type="button" variant="outline" size="sm" class="ml-auto h-7 text-xs"
               data-testid="back-to-parent"
@@ -1374,7 +1385,10 @@ watch(activeTab, onTabChange)
             <tbody>
               <tr v-for="inc in (incidentStore.incidents?.data || [])" :key="inc.id" class="border-t border-border">
                 <td class="px-4 py-3"><CopyableId :value="inc.id" /></td>
-                <td class="px-4 py-3 text-sm max-w-xs truncate" :title="inc.message">{{ inc.message }}</td>
+                <!-- WO-UI-35: длинное сообщение — клик открывает полный текст в shadcn Dialog -->
+                <td class="px-4 py-3 text-sm max-w-xs">
+                  <TruncatedText :value="inc.message" :title="t('message')" />
+                </td>
                 <td class="px-4 py-3">
                   <StatusBadge :status="inc.completedAt ? 'RESOLVED' : 'OPEN'" />
                 </td>
@@ -1618,7 +1632,8 @@ watch(activeTab, onTabChange)
             <h3 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('tasks') }}</h3>
             <div v-for="task in dialogUserTasks" :key="task.id" class="flex items-center justify-between text-sm border-b border-border pb-1 last:border-b-0">
               <div class="flex items-center gap-2 min-w-0">
-                <span class="font-mono truncate">{{ task.name || task.code || task.id }}</span>
+                <!-- WO-UI-35: длинное имя задачи — клик открывает полный текст -->
+                <TruncatedText :value="task.name || task.code || task.id" :title="t('tasks')" class="font-mono" />
                 <span v-if="task.status"><StatusBadge :status="task.status" :completed-at="task.completedAt" /></span>
               </div>
               <button
@@ -1635,7 +1650,8 @@ watch(activeTab, onTabChange)
             <h3 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('serviceTasks') }}</h3>
             <div v-for="task in dialogServiceTasks" :key="task.id" class="flex items-center justify-between text-sm border-b border-border pb-1 last:border-b-0">
               <div class="flex items-center gap-2 min-w-0">
-                <span class="font-mono truncate">{{ task.name || task.code || task.id }}</span>
+                <!-- WO-UI-35: длинное имя задачи — клик открывает полный текст -->
+                <TruncatedText :value="task.name || task.code || task.id" :title="t('serviceTasks')" class="font-mono" />
                 <span v-if="task.status"><StatusBadge :status="task.status" :completed-at="task.completedAt" /></span>
               </div>
               <button
@@ -1652,7 +1668,8 @@ watch(activeTab, onTabChange)
             <h3 class="text-xs font-semibold text-muted-foreground uppercase">{{ t('incidentsTab') }}</h3>
             <div v-for="inc in dialogIncidents" :key="inc.id" class="flex items-center justify-between text-sm border-b border-border pb-1 last:border-b-0">
               <div class="flex items-center gap-2 min-w-0">
-                <span class="text-xs truncate" :title="inc.message">{{ inc.message }}</span>
+                <!-- WO-UI-35: длинное сообщение инцидента — клик открывает полный текст -->
+                <TruncatedText :value="inc.message" :title="t('message')" class="text-xs" />
                 <span v-if="!inc.completedAt"><StatusBadge status="OPEN" /></span>
               </div>
               <button

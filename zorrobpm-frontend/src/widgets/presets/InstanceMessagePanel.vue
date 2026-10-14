@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import PresetPicker from './PresetPicker.vue'
+import TruncatedText from '@/widgets/shared/TruncatedText.vue'
 import { publishMessage } from '@/services/messagePublishService'
 import { errorMessage } from '@/shared/lib/utils'
 import { useToast } from '@/composables/useToast'
@@ -110,7 +111,13 @@ async function publish() {
     />
     <p v-else class="text-xs text-muted-foreground">{{ t('presetEnterMessageNameFirst') }}</p>
     <div class="flex items-center justify-end gap-2">
-      <span v-if="result" class="text-xs font-mono text-muted-foreground truncate max-w-md">{{ result }}</span>
+      <!-- WO-UI-35: длинный результат публикации — клик открывает полный текст -->
+      <TruncatedText
+        v-if="result"
+        :value="result"
+        :title="t('result')"
+        class="text-xs font-mono text-muted-foreground max-w-md"
+      />
       <Button
         type="button"
         class="px-4 py-1.5 text-sm"
