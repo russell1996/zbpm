@@ -421,6 +421,12 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 }
             }
 
+            // WO-C8-44: normalize declared flow references from the sequence-flow
+            // graph — runs AFTER every addElement/addFlow site above (top-level,
+            // nested-subprocess flattening, ad-hoc, transactions), so no path
+            // depends on its position in this method.
+            normalizeFlowReferences(pd);
+
             // WO-ENG-34: record the executable constructs this engine does not implement, so deploy
             // can refuse the model instead of running it with changed meaning. Recording, not
             // throwing — models stored by an earlier release keep parsing (this parser is ALSO the
@@ -439,6 +445,91 @@ public class BpmnParseServiceImpl implements BpmnParseService {
     private record EventDefinitionRegistry(Map<String, String> errorCodes,
                                            Map<String, String> signalNames,
                                            Map<String, String> escalationCodes) {
+    }
+
+    /**
+     * WO-C8-44: derive every flow node's {@code incoming}/{@code outgoing} from the
+     * {@code sequenceFlow} graph ({@code sourceRef}/{@code targetRef}).
+     *
+     * <p>BPMN 2.0 and Camunda 8 treat the child {@code <incoming>/<outgoing>} elements
+     * as optional — the graph is defined by the flows. Camunda Modeler always writes
+     * them, hand-written/generated schemas often do not, so navigation MUST NOT depend
+     * on the author having declared them (a MI-subprocess early exit froze the
+     * instance exactly this way: {@code FlowNavigator.proceedToOutgoing} saw an empty
+     * outgoing list and silently took the dead-end branch).
+     *
+     * <p>Semantics — per direction ({@code incoming} and {@code outgoing} are
+     * independent): an EMPTY declared list means «the author declared nothing», so the
+     * graph is authoritative and the ids are filled in. A NON-EMPTY declared list is
+     * kept VERBATIM, even when the graph disagrees (partial declarations stay exactly
+     * as before; both mismatch directions are WARN-logged here). Appending graph flows
+     * to a partial declaration would change fork/join and implicit-fork semantics —
+     * proven live by the r1 regression: {@code test-loop.bpmn} declares
+     * {@code incoming=[flow1]} on {@code parallel1} while the graph also targets it
+     * with the self-loop {@code flow2}; appending {@code flow2} turned the
+     * single-incoming fork into a two-incoming join, the gateway parked on
+     * «Not ready yet» and the execution-depth guard stopped tripping
+     * ({@code ActivityServiceImplTests.recursionDepthGuardStopsInfiniteLoop},
+     * {@code ActivityServiceCharacterizationTest.recursiveParallelGateway_hitsDepthLimit}).
+     * A declared {@code <bpmn:outgoing>} pointing at a non-existent flow is likewise
+     * NOT removed or rewritten — navigation still fails closed with
+     * {@code IllegalStateException} on the missing flow, exactly as before.
+     */
+    private void normalizeFlowReferences(com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd) {
+        Map<String, List<String>> derivedOutgoing = new HashMap<>();
+        Map<String, List<String>> derivedIncoming = new HashMap<>();
+        for (com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel flow : pd.getFlows()) {
+            if (flow.getSourceRef() != null) {
+                derivedOutgoing.computeIfAbsent(flow.getSourceRef(), k -> new ArrayList<>()).add(flow.getFlowId());
+            }
+            if (flow.getTargetRef() != null) {
+                derivedIncoming.computeIfAbsent(flow.getTargetRef(), k -> new ArrayList<>()).add(flow.getFlowId());
+            }
+        }
+        for (com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel element : pd.getElements()) {
+            // toElementModel-копии ставят списки через set (null, когда в XML
+            // объявлений нет) поверх инициализированного LinkedList — здесь
+            // null приводим к пустому, иначе merge ниже падает NPE. Пустой
+            // список вместо null нейтрален: все читатели (FlowNavigator:61,172,
+            // InclusiveGatewayHandler:165,225, CompletionService:99) трактуют
+            // null и пустой список одинаково (тупик/0/skip/false).
+            if (element.getIncoming() == null) {
+                element.setIncoming(new ArrayList<>());
+            }
+            if (element.getOutgoing() == null) {
+                element.setOutgoing(new ArrayList<>());
+            }
+            mergeFlowRefs(element.getId(), "outgoing",
+                element.getOutgoing(), derivedOutgoing.getOrDefault(element.getId(), List.of()));
+            mergeFlowRefs(element.getId(), "incoming",
+                element.getIncoming(), derivedIncoming.getOrDefault(element.getId(), List.of()));
+        }
+    }
+
+    private void mergeFlowRefs(String elementId, String kind, List<String> declared, List<String> derived) {
+        if (declared.isEmpty()) {
+            // Автор не объявил ничего в этом направлении — граф авторитетен.
+            for (String flowId : derived) {
+                declared.add(flowId);
+                log.info("WO-C8-44: element '{}' has no declared <bpmn:{}> for sequence flow '{}' — derived from the flow graph",
+                    elementId, kind, flowId);
+            }
+            return;
+        }
+        // Объявлено хоть что-то — список не трогаем (см. javadoc: частичная
+        // декларация + добивка из графа меняла fork/join-семантику). Только логи.
+        for (String flowId : derived) {
+            if (!declared.contains(flowId)) {
+                log.warn("WO-C8-44: element '{}' declares <bpmn:{}> but sequence flow '{}' of the graph is not declared — kept as-is (declared list wins)",
+                    elementId, kind, flowId);
+            }
+        }
+        for (String flowId : declared) {
+            if (!derived.contains(flowId)) {
+                log.warn("WO-C8-44: element '{}' declares <bpmn:{}>{}</bpmn:{}> with no matching sequenceFlow in the graph — kept as-is (navigation fails closed on the missing flow)",
+                    elementId, kind, flowId, kind);
+            }
+        }
     }
 
     /**
