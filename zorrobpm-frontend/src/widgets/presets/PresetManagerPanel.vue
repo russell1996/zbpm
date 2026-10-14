@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import PresetEditorDialog from './PresetEditorDialog.vue'
+import TruncatedText from '@/widgets/shared/TruncatedText.vue'
 import type { VariablePreset } from '@/types/presets'
 import { listPresets, createPreset, deletePreset, isPresetsDisabled } from '@/services/presetService'
 import { errorMessage } from '@/shared/lib/utils'
@@ -158,11 +159,15 @@ defineExpose({ reload: load, available })
       <tbody>
         <tr v-for="p in filtered()" :key="p.id" class="border-t border-border">
           <td class="px-4 py-2 max-w-48">
-            <span class="block truncate" :title="p.name">{{ p.name }}</span>
+            <!-- WO-UI-35: длинное имя шаблона — клик открывает полный текст -->
+            <TruncatedText :value="p.name" :title="t('presetName')" />
             <span v-if="p.favorite" aria-hidden="true"> ★</span>
           </td>
           <td class="px-4 py-2 text-xs">{{ kindLabel(p.targetKind) }}</td>
-          <td class="px-4 py-2 font-mono text-xs max-w-40 truncate" :title="refLabel(p)">{{ refLabel(p) }}</td>
+          <td class="px-4 py-2 font-mono text-xs max-w-40">
+            <!-- WO-UI-35: truncate на внутреннем span (урок WO-UI-23), длинный ref — в диалог -->
+            <TruncatedText :value="refLabel(p)" :title="t('presetElementName')" class="font-mono text-xs" />
+          </td>
           <td class="px-4 py-2 text-xs">{{ visibilityLabel(p.visibility) }}</td>
           <td class="px-4 py-2 text-right text-xs whitespace-nowrap">
             <Button type="button" variant="link" size="sm" class="mr-2 h-8 px-1" @click="openEdit(p)">

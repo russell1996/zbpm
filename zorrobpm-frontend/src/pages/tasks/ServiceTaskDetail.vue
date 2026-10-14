@@ -8,6 +8,7 @@ import { useToast } from '@/composables/useToast'
 import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import type { ProcessVariable } from '@/types/api'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import TruncatedText from '@/widgets/shared/TruncatedText.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import { useProcessStore } from '@/stores/process'
 import PresetPicker from '@/widgets/presets/PresetPicker.vue'
@@ -172,7 +173,12 @@ onMounted(async () => {
           </div>
           <!-- Row 2: Name · Status · JobType — center-aligned -->
           <div class="flex items-center gap-2 flex-wrap -mt-1">
-            <span class="text-base font-semibold truncate">{{ store.currentServiceTask.name || store.currentServiceTask.code || t('serviceTask') }}</span>
+            <!-- WO-UI-35: длинное имя задачи — клик открывает полный текст -->
+            <TruncatedText
+              :value="store.currentServiceTask.name || store.currentServiceTask.code || t('serviceTask')"
+              :title="t('serviceTask')"
+              class="text-base font-semibold min-w-0"
+            />
             <Badge
               variant="secondary"
               class="shrink-0 text-[11px] px-1.5 py-px rounded-full"

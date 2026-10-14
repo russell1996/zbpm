@@ -12,6 +12,7 @@ import { dataToVariables } from '@/shared/lib/formMapping'
 import { useProcessStore } from '@/stores/process'
 import PresetPicker from '@/widgets/presets/PresetPicker.vue'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
+import TruncatedText from '@/widgets/shared/TruncatedText.vue'
 import FormRenderer from '@/widgets/forms/FormRenderer.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import { ArrowLeft } from 'lucide-vue-next'
@@ -151,7 +152,12 @@ onMounted(async () => {
           </div>
           <!-- Row 2: Name · Status — center-aligned -->
           <div class="flex items-center gap-2 flex-wrap -mt-1">
-            <span class="text-base font-semibold truncate">{{ store.currentTask.name || store.currentTask.code || t('userTask') }}</span>
+            <!-- WO-UI-35: длинное имя задачи — клик открывает полный текст -->
+            <TruncatedText
+              :value="store.currentTask.name || store.currentTask.code || t('userTask')"
+              :title="t('userTask')"
+              class="text-base font-semibold min-w-0"
+            />
             <Badge
               variant="secondary"
               class="shrink-0 text-[11px] px-1.5 py-px rounded-full"
