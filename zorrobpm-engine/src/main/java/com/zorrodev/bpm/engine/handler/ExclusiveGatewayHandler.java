@@ -24,6 +24,7 @@ public class ExclusiveGatewayHandler implements ElementHandler, TypedElementHand
 
     private final DBService dbService;
     private final FlowNavigator flowNavigator;
+    private final ElementSupport elementSupport;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.EXCLUSIVE_GATEWAY; }
@@ -51,7 +52,15 @@ public class ExclusiveGatewayHandler implements ElementHandler, TypedElementHand
                 .map(ExclusiveGatewayExtensionModel::getDefaultFlowId)
                 .orElse(null);
 
-            List<com.zorrodev.bpm.contract.model.ProcessVariable> cachedVariables = dbService.getVariables(processInstanceId);
+            // WO-C8-45: условия видят chain-контекст токена (root + цепочка
+            // скоупов, nearest-wins), а не только root: gateway внутри
+            // (MI-)подпроцесса читает completion/lane-переменные СВОЕГО инстанса
+            // (дефект консьюмера 2026-10-14: оба потока false → инцидент).
+            // Pinpoint только по именам из условий (Б-1 IN-4: чужие JSON не
+            // парсятся). Без скоупов — та же root-проекция, что раньше.
+            List<com.zorrodev.bpm.contract.model.ProcessVariable> cachedVariables =
+                elementSupport.chainVariablesForNames(processInstanceId, activityId,
+                    elementSupport.flowConditionVariableNames(bpmn, outgoings));
             String matchedOutgoing = null;
             // WO-DIFF-2 (Raxon находка №2, WO-014 S-016): при нескольких одновременно
             // истинных условиях настоящий Zeebe берёт ПОСЛЕДНИЙ по документному порядку

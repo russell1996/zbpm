@@ -221,7 +221,11 @@ public class MiSubProcessScopedConditionsIntegrationTests {
         runtimeService.completeUserTask(rejected.get(0).getId(), List.of());
         runtimeService.completeUserTask(approved.get(0).getId(), List.of());
 
-        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).as("instance completed").isNotNull();
+        // Каждая веточная задача сдана, оба инстанса дошли до своих end:
+        // контейнеры COMPLETED (не orphan), инстанс завершён.
+        // LEAK-INVARIANT полный: живых нет, инцидентов нет.
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt())
+            .as("instance completed after both split branches").isNotNull();
         assertThat(liveActivities(pi)).as("LEAK-INVARIANT: no live activities left").isZero();
         assertThat(incidents(pi)).as("LEAK-INVARIANT: no incidents").isZero();
     }
@@ -353,12 +357,28 @@ public class MiSubProcessScopedConditionsIntegrationTests {
             .as("non-interrupting boundary leaves the host alive").hasSize(1);
         assertThat(incidents(pi)).as("no incidents").isZero();
 
+        // Не прерывающая граница с вечно-истинным условием выстрелила бы
+        // ЗАНОВО на хвосте сдачи utBranch (хост utSecond ещё жив) — вторая
+        // ветвь осталась бы CREATED навсегда. Гасим условие ПЕРЕД сдачей
+        // ветви записью localFlag=false в скоуп контейнера: заодно негативная
+        // половина (условие ложно → перепроверка ветвь не создаёт).
+        UUID hostToken = dbService.getActivity(
+            activities(pi, "utSecond", ActivityStatus.CREATED).get(0).getId()).getToken();
+        UUID containerScope = dbService.findToken(hostToken)
+            .map(com.zorrodev.bpm.engine.dto.Token::getScopeActivityId)
+            .orElseThrow(() -> new AssertionError("host must run on a scope token"));
+        dbService.setVariables(pi, containerScope,
+            List.of(pv("localFlag", ProcessVariableType.BOOLEAN, "false")));
+
         runtimeService.completeUserTask(branch.get(0).getId(), List.of());
+        assertThat(activities(pi, "utBranch", ActivityStatus.CREATED))
+            .as("no replacement branch after the condition turned false").isEmpty();
         runtimeService.completeUserTask(
             activities(pi, "utSecond", ActivityStatus.CREATED).get(0).getId(), List.of());
         runtimeService.completeUserTask(
             activities(pi, "utAfter", ActivityStatus.CREATED).get(0).getId(), List.of());
 
+        // Обе ветви сданы (utBranch и utSecond) — scope закрыт, utAfter создан.
         assertThat(queryService.getProcessInstance(pi).getCompletedAt()).as("instance completed").isNotNull();
         assertThat(liveActivities(pi)).as("LEAK-INVARIANT: no live activities left").isZero();
         assertThat(incidents(pi)).as("LEAK-INVARIANT: no incidents").isZero();

@@ -205,7 +205,8 @@ class Perf7CriteriaTest {
         UUID tokenId = UUID.randomUUID();
         ExecutionCtx ctx = new ExecutionCtx(piId, tokenId, mock(TokenExecutor.class), null);
 
-        ExclusiveGatewayHandler handler = new ExclusiveGatewayHandler(dbService, flowNavigator);
+        ExclusiveGatewayHandler handler = new ExclusiveGatewayHandler(dbService, flowNavigator,
+            mock(com.zorrodev.bpm.engine.handler.ElementSupport.class));
 
         // Оба дерева: FlowNavigator-mock возвращает null → совпадений нет,
         // defaultFlowId null → IllegalStateException. До броска хендлер уже
@@ -213,8 +214,10 @@ class Perf7CriteriaTest {
         assertThatThrownBy(() -> handler.handle(ctx, mock(BpmnProcessDefinitionModel.class), gw))
             .isInstanceOf(IllegalStateException.class);
 
-        // Новый код: ровно 1 getVariables перед циклом. Старый: 0 здесь (+N внутри).
-        verify(dbService, times(1)).getVariables(piId);
+        // WO-C8-45: переменные читает ЕДИНЫЙ chain-механизм через ElementSupport
+        // (chainVariablesForNames), а не прямой getVariables: без скоупов тот
+        // даёт ту же root-проекцию, но вызов идёт через мок ElementSupport.
+        verify(dbService, times(0)).getVariables(piId);
         // Новый код ходит в 6-arg overload; 5-arg (старый путь) — 0 вызовов.
         verify(flowNavigator, times(0))
             .processFlow(any(), any(), anyString(), any(), any());
