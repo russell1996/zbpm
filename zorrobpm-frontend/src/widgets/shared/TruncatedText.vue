@@ -26,6 +26,13 @@
  * без самописных оверлеев (guard — truncated-text-g24.test.ts).
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+
+// Мульти-корневой компонент (span + Dialog): inherited attrs (class/style/
+// event-обработчики из места применения, напр. `class="text-base font-semibold"`)
+// Vue на фрагмент-корень не переносит и молча ВЫБРАСЫВАЕТ (Vue warn "Extraneous
+// non-props attributes ... fragment root nodes" — реальный визуальный регресс:
+// имя инстанса теряло text-base font-semibold). Явно привязываем к span.
+defineOptions({ inheritAttrs: false })
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import { Copy } from 'lucide-vue-next'
@@ -125,6 +132,7 @@ async function copy() {
 <template>
   <span
     ref="span"
+    v-bind="$attrs"
     data-testid="truncated-text"
     class="block truncate"
     :class="{ 'cursor-pointer': truncated }"
