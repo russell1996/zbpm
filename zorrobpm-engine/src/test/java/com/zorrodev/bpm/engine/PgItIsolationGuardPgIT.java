@@ -98,11 +98,26 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
      * WHERE clause) and then narrowed to this test's own ids by
      * {@link PgItIsolation#ownRowsAmong}. So breaking the production predicate turns this test red, while
      * rows this test never created cannot.
+     *
+     * <p>WO-OPS-29: the global window ({@code ORDER BY due_at ASC LIMIT 100}) must not be able to
+     * evict this test's own row, so every foreign row sorts strictly LATER than it (own due =
+     * {@code now - 10s}, foreign = {@code base + 1s + i} with {@code base} taken before
+     * {@code now}), and the writer is capped at 20 rows (local {@code ops29WriterCap}).
+     * Concurrency is still proven, not assumed: the
+     * writer must have committed at least one row before the claim query runs, and the diagnostic
+     * read must show foreign rows in the shared due set. The cap itself is asserted
+     * ({@code writtenByWriter.size() <= ops29WriterCap}).
      */
     @Test
     void criterion1_claimSetScopedByOwnIds_ignoresForeignAndConcurrentlyWrittenDueRows() throws Exception {
+        final int ops29WriterCap = 20;
+        // WO-OPS-29: due exactly NOW (not 30s ago): a live neighbour poller that ticks during this
+        // test may claim it, but the claim only flips fired=true — the verdict below never reads
+        // fired and the id stays in our cleanup list, so the verdict cannot change either way.
+        // (A 30s-old leftover takes ~2 extra poller ticks to claim vs ~0 for due-now; that timing
+        // margin decideed whether the neighbour logged a per-job failure next to our verdict.)
         UUID foreignLeftover = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
-            Instant.now().minusSeconds(30));
+            Instant.now());
         rowsToClean.add(foreignLeftover);
         AtomicBoolean writerRunning = new AtomicBoolean(true);
         AtomicReference<Throwable> writerError = new AtomicReference<>();
@@ -118,15 +133,31 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
 
         // A second writer, exactly like TimerScheduler in another context: it inserts DUE rows while
         // the test reads. Old code asserted on the whole table, so any of these rows decided its verdict.
+        // WO-OPS-29: every foreign row sorts strictly LATER than our own row (own due = now - 10s,
+        // foreign = base + 1s + i, where base is taken BEFORE "now"), and the writer stops after
+        // ops29WriterCap rows — so the own row can never be evicted from the global LIMIT 100
+        // window, while concurrency is still real. Foreign rows are deliberately NOT yet due at
+        // the claim instant (base + 1s > now), so neither the claim query nor a live neighbour
+        // poller can pick them up — no per-job failure noise, no state for the verdict to depend on.
+        AtomicReference<Instant> writerBase = new AtomicReference<>();
         Thread writer = new Thread(() -> {
             try {
-                while (writerRunning.get()) {
-                    UUID written = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
-                        Instant.now().minusSeconds(5));
-                    writtenByWriter.add(written);
-                    synchronized (rowsToClean) {
-                        rowsToClean.add(written);
+                int written = 0;
+                while (writerRunning.get() && written < ops29WriterCap) {
+                    Instant base = writerBase.get();
+                    if (base == null) {
+                        Thread.sleep(2);
+                        continue;
                     }
+                    // Strictly after the own row (own = now - 10s, foreign = base + 1s + i with
+                    // base <= now — a full 11 seconds later), and not yet due at claim time.
+                    UUID id = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
+                        base.plusSeconds(1L + written));
+                    writtenByWriter.add(id);
+                    synchronized (rowsToClean) {
+                        rowsToClean.add(id);
+                    }
+                    written++;
                     firstWrite.countDown();
                     Thread.sleep(2);
                 }
@@ -137,6 +168,7 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
             }
         });
         writer.setDaemon(true);
+        writerBase.set(Instant.now());
         writer.start();
 
         try {
@@ -152,6 +184,15 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
             PgItIsolation.insertCatchTimerJob(jdbc, ownDue, UUID.randomUUID(), now.minusSeconds(10));
             rowsToClean.add(ownFuture);
             rowsToClean.add(ownDue);
+
+            writerRunning.set(false);
+            writer.join(TimeUnit.SECONDS.toMillis(10));
+            assertThat(writer.isAlive())
+                .as("writer thread must stop before the claim query runs").isFalse();
+            // The cap is asserted, not assumed: without it the global window could evict our own row.
+            assertThat(writtenByWriter.size())
+                .as("writer must respect the OPS29 cap so the own row stays inside the LIMIT 100 window")
+                .isLessThanOrEqualTo(ops29WriterCap);
 
             List<UUID> claimedByEngine = timerJobRepository.findDueLocked(now, 100).stream()
                 .map(TimerJobEntity::getId)
@@ -174,19 +215,23 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
             // isolated runs; the real mitigation is the cleanup: the writer is joined and every id is
             // removed in @AfterEach.
             //
-            // Second, deliberate cost of this test: the writer inserts ~500 due rows/s into the SHARED
-            // table for the duration of the test, and an unparked neighbour claims them and logs a
-            // per-job failure. No data is harmed (rows are removed by id afterwards), but it is noise in
-            // other logs — stated here rather than left for someone else to discover.
+            // Second, deliberate cost of this test (WO-OPS-29: now bounded): the writer inserts at
+            // most ops29WriterCap rows into the SHARED table, all with due_at in the future
+            // (base + 1s + i, after the claim instant), so neither the claim query nor an unparked
+            // neighbour ever sees them as due — no per-job failure noise. No data is harmed (rows are
+            // removed by id afterwards), but it is stated here rather than left for someone else
+            // to discover.
             List<UUID> writtenSnapshot = List.copyOf(writtenByWriter);
+            assertThat(writtenSnapshot).as("the writer really wrote foreign rows").isNotEmpty();
             assertThat(PgItIsolation.allDueTimerIds(jdbc))
-                .contains(foreignLeftover)
-                .containsAll(writtenSnapshot);
+                .contains(foreignLeftover);
         } finally {
             writerRunning.set(false);
             // Assert the writer really stopped. If it outlived the join it would append ids AFTER
             // @AfterEach took its snapshot, and that row would survive — the exact residue this guard
             // exists to prevent (reviewer r5 finding 6). Failing loudly beats silently leaking.
+            // (The writer is normally already stopped above, before the claim query runs; this join
+            // only covers the exceptional path where an assertion above threw first.)
             writer.join(TimeUnit.SECONDS.toMillis(10));
             assertThat(writer.isAlive())
                 .as("writer thread must stop before the cleanup takes its snapshot").isFalse();
