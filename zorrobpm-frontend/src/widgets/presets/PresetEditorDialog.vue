@@ -370,7 +370,11 @@ function historyJson(vars: PresetVariable[] | null): string {
            DialogPortal (фрагмент), слушатель теряется (Vue warning). Обёртка
            display:contents: раскладку не меняет, keydown всплывает через неё. -->
       <div class="contents" @keydown="onDialogKeydown">
-      <DialogHeader class="flex-row items-center justify-between gap-2 space-y-0 border-b border-border px-4 py-3">
+      <!-- WO-UI-33: ЕДИНСТВЕННОЕ закрытие — встроенный крестик shadcn
+           (DialogScrollContent, absolute top-3 right-3). Текстовой кнопки
+           «Закрыть» больше нет: она налезала под крестик. pr-10 держит звезду
+           (и заголовок) слева от крестика без перекрытия на 360/1280/1920. -->
+      <DialogHeader class="flex-row items-center justify-between gap-2 space-y-0 border-b border-border pl-4 pr-10 py-3">
         <DialogTitle class="truncate text-lg font-bold">{{ t(titleKey) }}</DialogTitle>
         <div class="flex shrink-0 items-center gap-2">
           <Button
@@ -384,14 +388,6 @@ function historyJson(vars: PresetVariable[] | null): string {
             @click="toggleFavorite"
           >
             {{ favorite ? '★' : '☆' }}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            class="text-sm text-muted-foreground"
-            @click="requestClose"
-          >
-            {{ t('close') }}
           </Button>
         </div>
       </DialogHeader>
@@ -492,14 +488,19 @@ function historyJson(vars: PresetVariable[] | null): string {
       </template>
       </div>
 
+      <!-- WO-UI-33: подвал — один «вес»: все кнопки size="default" одинаковой
+           высоты (min-h-11 = 44px касания), стили по роли: Сохранить —
+           default (крайняя справа), остальное — outline; Удалить — outline с
+           деструктивным акцентом, подтверждение «Точно удалить?» — той же
+           кнопкой (без отдельной). На 360px группы переносятся, без
+           горизонтального скролла. -->
       <DialogFooter class="flex-row flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-3">
           <div class="flex flex-wrap gap-2">
             <Button
               v-if="isEdit"
               type="button"
-              variant="link"
-              size="sm"
-              class="px-0 text-xs text-red-500"
+              variant="outline"
+              class="min-h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
               @click="remove"
             >
               {{ confirmDelete ? t('presetConfirmDelete') : t('presetDelete') }}
@@ -507,9 +508,8 @@ function historyJson(vars: PresetVariable[] | null): string {
             <Button
               v-if="isEdit && view !== 'history'"
               type="button"
-              variant="link"
-              size="sm"
-              class="px-0 text-xs"
+              variant="outline"
+              class="min-h-11"
               @click="openHistory"
             >
               {{ t('presetHistory') }}
@@ -520,8 +520,7 @@ function historyJson(vars: PresetVariable[] | null): string {
               v-if="isEdit"
               type="button"
               variant="outline"
-              size="sm"
-              class="text-xs"
+              class="min-h-11"
               @click="toggleVisibility"
             >
               {{ shareLabel }}
@@ -529,12 +528,14 @@ function historyJson(vars: PresetVariable[] | null): string {
             <Button
               type="button"
               variant="outline"
+              class="min-h-11"
               @click="requestClose"
             >
               {{ t('cancel') }}
             </Button>
             <Button
               type="button"
+              class="min-h-11"
               :disabled="!!formError || saving"
               @click="save"
             >
