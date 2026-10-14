@@ -16,9 +16,12 @@ export interface DiagnosticInstance {
   processKey: string | null
   processName: string | null
   version: number | null
-  status: 'running' | 'completed'
+  // WO-C8-49 (п.4): cancelled ≠ completed — по JSON должно быть видно,
+  // что инстанс отменён (прод-диагностика 9dcdd13e выглядела как completed).
+  status: 'running' | 'completed' | 'cancelled'
   startedAt: string
   completedAt: string | null
+  cancelled: boolean
   businessKeyIfAny: string | null
 }
 
@@ -130,6 +133,8 @@ export function buildDiagnosticJson(input: DiagnosticInput): DiagnosticJson {
 
   const generatedAt = new Date().toISOString()
   const isCompleted = instance.completedAt !== null
+  // WO-C8-49 (п.4): отмена — отдельное состояние (не «completed»).
+  const isCancelled = instance.cancelled === true
 
   // ── Active tokens ──
   const activeActivities = activities.filter(
@@ -266,9 +271,10 @@ export function buildDiagnosticJson(input: DiagnosticInput): DiagnosticJson {
       processKey: instance.processKey,
       processName: instance.processName,
       version: instance.processVersion,
-      status: isCompleted ? 'completed' : 'running',
+      status: isCancelled ? 'cancelled' : isCompleted ? 'completed' : 'running',
       startedAt: instance.startedAt,
       completedAt: instance.completedAt,
+      cancelled: isCancelled,
       businessKeyIfAny: null, // not available in current store
     },
     diagnostics: {
