@@ -46,8 +46,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * объявления; атрибуты {@code default}/{@code attachedToRef}, потоки, расширения
  * не трогаются). Затем два утверждения:
  * <ol>
- *   <li>parse-уровень: у КАЖДОГО элемента модели списки incoming/outgoing
- *   варианта «без» равны варианту «с» (нормализация вывела их из графа);</li>
+ *   <li>parse-уровень: вариант «без» выводит списки ИСКЛЮЧИТЕЛЬНО из графа
+ *   (каждый список равен id потоков с совпадающим sourceRef/targetRef), а
+ *   вариант «с» проходит парсер БАЙТ-В-БАЙТ как до WO-C8-44 (нормализация
+ *   непустые объявления не трогает — r1-регрессия test-loop.bpmn: добивка
+ *   {@code flow2} в частично объявленный incoming превращала fork в join);</li>
  *   <li>execution-уровень: оба варианта деплоятся, стартуют, прогоняются одним
  *   драйвером и дают ОДИНАКОВЫЙ наблюдаемый след (мультимножество
  *   {@code bpmnElementId → status}, состояние completedAt, число инцидентов).</li>
@@ -390,14 +393,26 @@ public class UndeclaredFlowRefsMatrixIntegrationTests {
         String withXml = c.xml().apply(true);
         String withoutXml = c.xml().apply(false);
 
-        // (1) parse-уровень: нормализация выводит те же списки из графа.
+        // (1) parse-уровень. Вариант «без»: списки выведены ИСКЛЮЧИТЕЛЬНО из
+        // графа (id потоков с совпадающим sourceRef/targetRef). Вариант «с»:
+        // нормализация непустые объявления НЕ трогает — списки равны сырым
+        // графовым спискам (совпадают с декларациями),
+        // т.е. поведение схем С объявлениями
+        // байт-в-байт как до WO-C8-44 (r1-регрессия test-loop.bpmn).
         BpmnProcessDefinitionModel withModel = bpmnParseService.parse(withXml);
         BpmnProcessDefinitionModel withoutModel = bpmnParseService.parse(withoutXml);
-        Map<String, List<String>> withRefs = refsOf(withModel);
-        Map<String, List<String>> withoutRefs = refsOf(withoutModel);
-        assertThat(withoutRefs)
-            .as("[%s] incoming/outgoing всех элементов без объявлений = с объявлениями", name)
-            .isEqualTo(withRefs);
+        assertThat(refsOf(withoutModel))
+            .as("[%s] incoming/outgoing без объявлений выведены из графа", name)
+            .isEqualTo(graphRefsOf(withoutModel));
+        assertThat(refsOf(withModel))
+            .as("[%s] объявленные списки не тронуты нормализацией", name)
+            .isEqualTo(graphRefsOf(withModel).entrySet().stream()
+                // Потоки — не узлы: их id есть в getFlows(), но их «списков» в
+                // модели нет; в сравнение входят только ключи элементов.
+                .filter(e -> withModel.getElement(
+                    e.getKey().substring(0, e.getKey().lastIndexOf('#'))) != null)
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue,
+                    (a, b) -> a, TreeMap::new)));
         assertThat(withoutModel.getFlows()).as("[%s] потоки на месте", name).hasSize(withModel.getFlows().size());
 
         // (2) execution-уровень: одинаковый наблюдаемый след.
@@ -487,6 +502,34 @@ public class UndeclaredFlowRefsMatrixIntegrationTests {
         for (BpmnElementModel e : model.getElements()) {
             out.put(e.getId() + "#in", new ArrayList<>(e.getIncoming()));
             out.put(e.getId() + "#out", new ArrayList<>(e.getOutgoing()));
+        }
+        return out;
+    }
+
+    /**
+     * Ожидаемые списки варианта «без» — чистый граф: для каждого элемента id
+     * потоков с совпадающим targetRef (incoming) / sourceRef (outgoing), в
+     * порядке документа. Независим от объявлений: выводится из getFlows().
+     *
+     * <p>Для ПОЛНЫХ деклараций (вариант «с» во всех кейсах матрицы) граф и
+     * декларация совпадают, поэтому та же функция — ожидание и для «с»:
+     * нормализация непустые списки не трогает, модель равна графу.
+     */
+    private static Map<String, List<String>> graphRefsOf(BpmnProcessDefinitionModel model) {
+        Map<String, List<String>> out = new TreeMap<>();
+        for (BpmnElementModel e : model.getElements()) {
+            List<String> in = new ArrayList<>();
+            List<String> outg = new ArrayList<>();
+            for (var flow : model.getFlows()) {
+                if (e.getId().equals(flow.getTargetRef())) {
+                    in.add(flow.getFlowId());
+                }
+                if (e.getId().equals(flow.getSourceRef())) {
+                    outg.add(flow.getFlowId());
+                }
+            }
+            out.put(e.getId() + "#in", in);
+            out.put(e.getId() + "#out", outg);
         }
         return out;
     }
