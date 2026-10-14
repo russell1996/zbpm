@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 F0 TEMPLATE: the canonical matrix-row process shape.
+     A service task ('work') whose completion variables become the result, + a final dump
+     job ('dump') that carries the resulting root variables. compare.js completes 'work'
+     with scenario.json#completeVars[work], then captures 'dump' as the observed result.
+     Copy this directory, rename the process/task types, and edit scenario.json.
+     (Input/output-mapping target vars are element-scoped on Zeebe 8.5 for a root task and
+      do NOT reach the dump — see INVENTORY-workers.md / report finding; capture a FEEL
+      result via a completion var or inside a sub-process scope.) -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-tmpl" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="tmplProc" name="F0 template: worker result + dump" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="work" />
+    <bpmn:serviceTask id="work" name="work">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="tmplWork" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="work" targetRef="dump" />
+    <bpmn:serviceTask id="dump" name="dump">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="tmplDump" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="dump" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
