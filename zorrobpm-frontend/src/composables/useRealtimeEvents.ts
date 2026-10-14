@@ -723,8 +723,12 @@ export function useRealtimeEvents() {
         // горит точка при живом лидере, а панель показывает «Подключено»
         // (рассинхрон из репорта владельца 2026-10-14). Лидер отвечает
         // полным health-патчем (ветка 'health-request' в onFanoutMessage).
-        // Три попытки (лидер мог ещё не подписаться на фанаут): дальше
-        // живые патчи держат состояние синхронным.
+        // Три попытки (лидер мог ещё не подписаться на фанаут). Если ни
+        // одна не дошла (лидер умер, переизбрание ещё не случилось) —
+        // рассинхрон живёт до следующего health-патча (event-патчи несут
+        // только lastEventId, isConnected они НЕ восстанавливают): точка
+        // у такого follower загорится после гистерезиса — честная деградация
+        // «канал неизвестен», а не молчаливое «Подключено» при обрыве.
         let healthAskTries = 0
         const askLeaderHealth = (): void => {
           if (myGeneration !== connectGeneration || isLeaderTab) return
@@ -742,10 +746,15 @@ export function useRealtimeEvents() {
         onPromoted((realRelease) => {
           // WO-UI-26 Н-3: повышение после disconnect — игнор (поколение ушло).
           if (myGeneration !== connectGeneration) return
-          if (fanoutUnsubscribe) {
-            fanoutUnsubscribe()
-            fanoutUnsubscribe = null
-          }
+          // WO-UI-31 (verifier r2, Б-1): подписка на фанаут НЕ снимается при
+          // повышении — тот же onFanoutMessage теперь служит ПОДПИСКОЙ ЛИДЕРА:
+          // он отвечает на health-request поздних follower (ветка выше).
+          // Если отписаться здесь, повышенный лидер становится невидимым для
+          // НОВОЙ вкладки, открытой после смены лидера: 3 запроса без ответа
+          // → isConnected=false → через гистерезис 5 с — точка на здоровом
+          // канале (регресс-тест UI31-5). onFanoutMessage роли-agnostic:
+          // 'event' сам себя пропускает для лидера (isLeaderTab), 'health' —
+          // идемпотентен; отписываться/переподписываться не нужно.
           isLeaderTab = true
           // Повышенный лидер держит НАСТОЯЩИЙ холд (аргумент), а не no-op
           // из follower-резолва — иначе disconnect не отпустит лок и цепочка

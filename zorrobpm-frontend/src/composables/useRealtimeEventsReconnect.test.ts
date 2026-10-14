@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import axios from 'axios'
 import api from '@/services/api'
-import { useRealtimeEvents } from './useRealtimeEvents'
+import { channelDotState, useRealtimeEvents } from './useRealtimeEvents'
 import * as processService from '@/services/processService'
 import * as instanceService from '@/services/instanceService'
 import * as variableService from '@/services/variableService'
@@ -244,5 +244,26 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
     expect(src.closed).toBe(false)
     expect(rt.error.value).toBeTruthy()
     rt.disconnect()
+  })
+})
+
+describe('channelDotState mapping (WO-UI-31)', () => {
+  // Единый источник правды точки и панели: четыре состояния и приоритет
+  // (expired > down > reconnecting > healthy). Живой браузерный путь
+  // прибит UI31-2 (reconnecting), UI31-3 (expired) и кр.13 (точка при
+  // мёртвом канале); здесь — полная таблица, включая down (realtimeDown),
+  // который браузерным тестом не достигается без живой 5-цикловой цепочки.
+  it('healthy: isConnected && !realtimeDown && !sessionExpired', () => {
+    expect(channelDotState({ isConnected: true, realtimeDown: false, sessionExpired: false })).toBe('healthy')
+  })
+  it('reconnecting: канал обрывётся, сессия жива, down ещё не объявлен', () => {
+    expect(channelDotState({ isConnected: false, realtimeDown: false, sessionExpired: false })).toBe('reconnecting')
+  })
+  it('down: сессия жива (refresh проходит), канал не поднялся (кап попыток)', () => {
+    expect(channelDotState({ isConnected: false, realtimeDown: true, sessionExpired: false })).toBe('down')
+  })
+  it('expired: приоритет над down и isConnected', () => {
+    expect(channelDotState({ isConnected: false, realtimeDown: true, sessionExpired: true })).toBe('expired')
+    expect(channelDotState({ isConnected: true, realtimeDown: false, sessionExpired: true })).toBe('expired')
   })
 })
