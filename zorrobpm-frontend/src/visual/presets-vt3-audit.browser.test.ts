@@ -331,13 +331,16 @@ describe('WO-VT-3 audit: VariablesEditor', () => {
 })
 
 describe('WO-VT-3 audit: PresetPicker (табы, причина блокировки)', () => {
-  it('расстояние между уровнями табов ≥12px', async () => {
-    mountAt(PresetPicker, { processKey: 'orderProcess', targetKind: 'START' }, 520)
+  it('WO-UI-34: режимных вкладок нет — остался только собственный табло-уровень редактора', async () => {
+    // Находка «два уровня табов ≤12px» снята корнем: вкладки
+    // «Ручной ввод | Из шаблона» заменены одним дропдауном «Шаблон».
+    const w = mountAt(PresetPicker, { processKey: 'orderProcess', targetKind: 'START' }, 520)
     await flushPromises()
     const tablists = [...document.querySelectorAll('[role="tablist"]')] as HTMLElement[]
-    expect(tablists.length).toBe(2)
-    const gap = tablists[1].getBoundingClientRect().top - tablists[0].getBoundingClientRect().bottom
-    expect(gap).toBeGreaterThanOrEqual(12)
+    expect(tablists.length, 'только табло VariablesEditor (Таблица | Сырой JSON)').toBe(1)
+    const modeTabs = [...document.querySelectorAll('[role="tab"]')].map((t) => t.textContent ?? '')
+    expect(modeTabs.some((x) => /Ручной ввод|Из шаблона/.test(x))).toBe(false)
+    expect(w.find('[data-testid="preset-select"]').exists()).toBe(true)
   })
 
   it('черновая пустая строка НЕ показывает «Заполните обязательные поля:» с пустым списком', async () => {
