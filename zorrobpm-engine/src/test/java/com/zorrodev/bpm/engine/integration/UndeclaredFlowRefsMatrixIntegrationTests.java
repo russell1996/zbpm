@@ -15,6 +15,7 @@ import com.zorrodev.bpm.engine.service.BpmnParseService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -395,10 +396,15 @@ public class UndeclaredFlowRefsMatrixIntegrationTests {
 
         // (1) parse-уровень. Вариант «без»: списки выведены ИСКЛЮЧИТЕЛЬНО из
         // графа (id потоков с совпадающим sourceRef/targetRef). Вариант «с»:
-        // нормализация непустые объявления НЕ трогает — списки равны сырым
-        // графовым спискам (совпадают с декларациями),
-        // т.е. поведение схем С объявлениями
-        // байт-в-байт как до WO-C8-44 (r1-регрессия test-loop.bpmn).
+        // нормализация непустые объявления НЕ трогает — во всех кейсах
+        // матрицы декларации ПОЛНЫЕ (граф == декларации), поэтому этот assert
+        // сам по себе НЕ ловит r1-регрессию (добивка в ЧАСТИЧНОЕ объявление,
+        // test-loop.bpmn). Её ловят два depth-теста через тот же парсер:
+        // ActivityServiceImplTests#recursionDepthGuardStopsInfiniteLoop и
+        // ActivityServiceCharacterizationTest$ExecutionDepthTests#recursiveParallelGateway_hitsDepthLimit
+        // (мутация «вернуть append» роняет оба — POF в отчёте WO-C8-44 §5).
+        // Здесь — только нетронутость полных деклараций (необходимое, но не
+        // достаточное условие байт-совместимости).
         BpmnProcessDefinitionModel withModel = bpmnParseService.parse(withXml);
         BpmnProcessDefinitionModel withoutModel = bpmnParseService.parse(withoutXml);
         assertThat(refsOf(withoutModel))
@@ -449,6 +455,32 @@ public class UndeclaredFlowRefsMatrixIntegrationTests {
         assertThat(withoutTrace.activities()).as("[%s] след activity без объявлений", name).isEqualTo(withTrace.activities());
         assertThat(withoutTrace.incidents()).as("[%s] инциденты без объявлений", name).isEqualTo(withTrace.incidents());
         assertThat(withTrace.completed()).as("[%s] сценарий завершается (контроль)", name).isTrue();
+    }
+
+    /**
+     * O-2 независимого verifier'а: висячая декларация (объявленный
+     * {@code <bpmn:outgoing>} на несуществующий поток) НЕ удаляется и НЕ
+     * переписывается нормализацией — навигация падает закрыто
+     * ({@code IllegalStateException} на отсутствующем потоке, как до WO-C8-44).
+     */
+    @Test
+    void danglingDeclaredOutgoing_keptVerbatimAndFailsClosed() {
+        String xml = doc("c844-dangling",
+            "",
+            "<bpmn:startEvent id=\"start\"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>"
+                + "<bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"node\" />"
+                + "<bpmn:serviceTask id=\"node\" name=\"node\">"
+                + "<bpmn:extensionElements><zeebe:taskDefinition type=\"c844svc\" /></bpmn:extensionElements>"
+                + "<bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>ghostFlow</bpmn:outgoing></bpmn:serviceTask>"
+                + "<bpmn:sequenceFlow id=\"f2\" sourceRef=\"node\" targetRef=\"end\" />"
+                + "<bpmn:endEvent id=\"end\"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>");
+        BpmnProcessDefinitionModel model = bpmnParseService.parse(xml);
+        assertThat(model.getElement("node").getOutgoing())
+            .as("висячая декларация не удалена и не переписана графом (f2 не добавлен)")
+            .containsExactly("ghostFlow");
+        assertThat(model.getElement("node").getIncoming())
+            .as("полное объявление incoming не тронуто")
+            .containsExactly("f1");
     }
 
     // ── инфраструктура теста ─────────────────────────────────────────────────
