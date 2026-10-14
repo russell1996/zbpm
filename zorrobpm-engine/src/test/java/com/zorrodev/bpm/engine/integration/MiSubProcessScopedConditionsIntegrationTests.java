@@ -307,4 +307,60 @@ public class MiSubProcessScopedConditionsIntegrationTests {
         assertThat(flowNavigator.processFlow(pi, innerToken, "flowRejected", true, null))
             .as("REJECTED flow taken for REJECTED decision").isNotNull();
     }
+
+    /**
+     * WO-C8-45 (е): conditional-CATCH внутри обычного подпроцесса видит
+     * скоуп-локальную переменную контейнера. На root-чтении условие ложно →
+     * токен паркуется на condCatch (RED: utSecond нет); на chain-чтении —
+     * проход на входе (GREEN: utSecond создан сразу после сдачи utFirst).
+     */
+    @Transactional
+    @Test
+    void conditionalCatchInsidePlainSubprocess_seesContainerInputVariable() throws Exception {
+        UUID pi = start(deploy("test-c845-conditional-in-subscope.bpmn"));
+
+        assertThat(activities(pi, "utFirst", ActivityStatus.CREATED)).as("first task parked").hasSize(1);
+        runtimeService.completeUserTask(
+            activities(pi, "utFirst", ActivityStatus.CREATED).get(0).getId(), List.of());
+
+        List<ActivityEntity> second = activities(pi, "utSecond", ActivityStatus.CREATED);
+        assertThat(second).as("conditional catch passed through on container-local localFlag").hasSize(1);
+        assertThat(incidents(pi)).as("no incidents").isZero();
+    }
+
+    /**
+     * WO-C8-45 (ж): не прерывающая conditional-BOUNDARY внутри подпроцесса
+     * срабатывает при перепроверке из {@code triggerConditionalEvents} после
+     * завершения соседней задачи. На root-чтении ветки нет (RED); на
+     * chain-чтении utBranch создан, хост utSecond жив (GREEN). Продолжает (е):
+     * доводит инстанс до конца с LEAK-INVARIANT.
+     */
+    @Transactional
+    @Test
+    void conditionalBoundaryInsideSubscope_firesOnReevaluationAfterSiblingCompletion() throws Exception {
+        UUID pi = start(deploy("test-c845-conditional-in-subscope.bpmn"));
+
+        runtimeService.completeUserTask(
+            activities(pi, "utFirst", ActivityStatus.CREATED).get(0).getId(), List.of());
+        assertThat(activities(pi, "utSecond", ActivityStatus.CREATED))
+            .as("catch passed, second task parked").hasSize(1);
+
+        // Перепроверка conditional-событий уже отработала на хвосте завершения
+        // utFirst: граница должна выстрелить по скоуп-локальному localFlag.
+        List<ActivityEntity> branch = activities(pi, "utBranch", ActivityStatus.CREATED);
+        assertThat(branch).as("non-interrupting conditional boundary fired on scope-local flag").hasSize(1);
+        assertThat(activities(pi, "utSecond", ActivityStatus.CREATED))
+            .as("non-interrupting boundary leaves the host alive").hasSize(1);
+        assertThat(incidents(pi)).as("no incidents").isZero();
+
+        runtimeService.completeUserTask(branch.get(0).getId(), List.of());
+        runtimeService.completeUserTask(
+            activities(pi, "utSecond", ActivityStatus.CREATED).get(0).getId(), List.of());
+        runtimeService.completeUserTask(
+            activities(pi, "utAfter", ActivityStatus.CREATED).get(0).getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).as("instance completed").isNotNull();
+        assertThat(liveActivities(pi)).as("LEAK-INVARIANT: no live activities left").isZero();
+        assertThat(incidents(pi)).as("LEAK-INVARIANT: no incidents").isZero();
+    }
 }
