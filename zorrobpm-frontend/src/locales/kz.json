@@ -766,6 +766,12 @@
   "channelDiagNoFirstByteHint": "Арна жауап бермейді — прокси ағынды буферлейтін шығар. Оқиғалар қайта қосылғаннан кейін жетеді.",
   "channelDiag429Hint": "Тым көп ағын — артық қойындыларды жабыңыз.",
   "channelDiagFinished": "Аяқталған",
+  "channelStateConnected": "Қосылған",
+  "channelStateReconnecting": "Қайта қосылу…",
+  "channelStateDown": "Байланыс жоқ",
+  "channelStateSessionExpired": "Сессия аяқталды — қайта кіріңіз",
+  "channelDiagCause": "Себебі",
+  "channelAriaLabel": "Realtime-арна: {state}",
   "uiErrorTitle": "Бірдеңе дұрыс болмады",
   "uiErrorReload": "Қайта жүктеу"
 }

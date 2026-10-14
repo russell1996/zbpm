@@ -766,6 +766,12 @@
   "channelDiagNoFirstByteHint": "Канал не отвечает — вероятно, прокси буферизует поток. События догонят после переподключения.",
   "channelDiag429Hint": "Слишком много открытых потоков — закройте лишние вкладки.",
   "channelDiagFinished": "Завершён",
+  "channelStateConnected": "Подключено",
+  "channelStateReconnecting": "Переподключение…",
+  "channelStateDown": "Нет связи",
+  "channelStateSessionExpired": "Сессия истекла — войдите заново",
+  "channelDiagCause": "Причина",
+  "channelAriaLabel": "Realtime-канал: {state}",
   "uiErrorTitle": "Что-то пошло не так",
   "uiErrorReload": "Перезагрузить"
 }

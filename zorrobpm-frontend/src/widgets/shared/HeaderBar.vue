@@ -39,15 +39,19 @@ const { t } = useI18n()
       </button>
       <SidebarTrigger v-if="!showMenuButton" />
       <SearchCommand />
+      <!-- WO-UI-26 Доп.7: при сбое канала — точка в шапке (детали по клику);
+           при здоровом канале — ничего. Фиксированный размер слота (h-8 w-8)
+           — появление точки не двигает соседей (layout shift = 0).
+           WO-UI-31: слот перенесён из ПРАВОЙ группы в левую, сразу ПОСЛЕ
+           <SearchCommand /> — от точки в правой группе панель «Состояние
+           канала» перекрывала кнопки страницы справа («Обновить»,
+           «Загрузить процесс»). -->
+       <span class="inline-flex h-8 w-8 items-center justify-center shrink-0" data-testid="channel-dot-slot">
+        <ChannelStatusDot />
+      </span>
     </div>
     <div class="flex items-center gap-4">
       <LanguageSwitcher />
-      <!-- WO-UI-26 Доп.7: при сбое канала — одна нейтральная точка (детали по
-           клику); при здоровом канале — ничего. Фиксированный размер слота
-           (h-2 w-2 + padding кнопки) — появление точки не двигает соседей. -->
-      <span class="inline-flex h-8 w-8 items-center justify-center shrink-0" data-testid="channel-dot-slot">
-        <ChannelStatusDot />
-      </span>
       <button
         class="p-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
         :title="ui.darkMode ? t('lightMode') : t('darkMode')"
