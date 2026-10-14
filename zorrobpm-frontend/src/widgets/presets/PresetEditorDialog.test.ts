@@ -268,6 +268,91 @@ describe('PresetEditorDialog', () => {
     expect(w.emitted('deleted')).toBeTruthy()
   })
 
+  // WO-UI-33: в шапке ровно ОДИН элемент закрытия (встроенный крестик shadcn),
+  // текстовой кнопки «Закрыть» нет. i18n-мок отдаёт ключ как есть, поэтому
+  // оба прежних элемента рендерились текстом «close» (мок t(k)=k).
+  it('WO-UI-33: ровно один элемент закрытия (крестик shadcn), кнопки «close» текстовой нет', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const w = mount(PresetEditorDialog, {
+      attachTo: host,
+      global: { stubs: {} },
+      props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
+    })
+    mounted.push(w)
+    await flushPromises()
+    const closeBtns = [...document.querySelectorAll('button')].filter(
+      (b) => (b.textContent ?? '').trim().toLowerCase() === 'close',
+    )
+    expect(closeBtns, 'exactly one close control (the shadcn X)').toHaveLength(1)
+  })
+
+  it('WO-UI-33: Esc закрывает диалог (emit close)', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const w = mount(PresetEditorDialog, {
+      attachTo: host,
+      global: { stubs: {} },
+      props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
+    })
+    mounted.push(w)
+    await flushPromises()
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    )
+    await flushPromises()
+    expect(w.emitted('close'), 'Esc closes the dialog').toBeTruthy()
+  })
+
+  it('WO-UI-33: клик по крестику закрывает диалог (emit close)', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const w = mount(PresetEditorDialog, {
+      attachTo: host,
+      global: { stubs: {} },
+      props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
+    })
+    mounted.push(w)
+    await flushPromises()
+    const closeBtn = [...document.querySelectorAll('button')].find(
+      (b) => (b.textContent ?? '').trim().toLowerCase() === 'close',
+    ) as HTMLButtonElement | undefined
+    expect(closeBtn, 'shadcn X button renders').toBeTruthy()
+    closeBtn!.click()
+    await flushPromises()
+    expect(w.emitted('close'), 'X click closes the dialog').toBeTruthy()
+  })
+
+  it('WO-UI-33 (RT-1 guard): Esc в JSON-фулскрине возвращает в редактор и НЕ закрывает диалог', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const w = mount(PresetEditorDialog, {
+      attachTo: host,
+      global: { stubs: {} },
+      props: { open: true, processKey: 'k', targetKind: 'START', targetRef: null, presetId: 'p1' },
+    })
+    mounted.push(w)
+    await flushPromises()
+    w.findComponent({ name: 'VariablesEditor' }).vm.$emit('update:modelValue', [
+      { name: 'j', type: 'JSON', value: '{"a":1}', allowEmptyString: null },
+    ])
+    await flushPromises()
+    const fsBtn = [...document.querySelectorAll('button')].find((b) =>
+      (b.textContent ?? '').includes('presetJsonFullscreen'),
+    ) as HTMLButtonElement
+    expect(fsBtn, 'fullscreen button renders').toBeTruthy()
+    fsBtn.click()
+    await flushPromises()
+    const fsArea = document.querySelector('[id$="-jsonfs"]') as HTMLTextAreaElement | null
+    expect(fsArea, 'fullscreen editor opens').not.toBeNull()
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    )
+    await flushPromises()
+    expect(w.emitted('close'), 'dialog must NOT close on Esc inside fullscreen').toBeFalsy()
+    expect(document.querySelector('[id$="-jsonfs"]'), 'fullscreen returns to the editor').toBeNull()
+  })
+
   it('history view loads entries and shows before/after', async () => {
     mockHistory.mockResolvedValue([
       { id: 'h1', action: 'UPDATE', actorUserId: 'u1', at: '2026-01-02',
