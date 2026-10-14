@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-47 (P3): MI-подпроцесс с completionCondition (ранний выход после
+     1 из 2) и ПРЕРЫВАЮЩИМ boundary-таймером на контейнере (PT10M — за тест
+     не выстреливает). Проверяется, что после раннего выхода и завершения
+     инстанса не остаётся armed-таймера на живой activity. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="defs-c847-early" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c847-early-exit" name="C8-47 MI early exit with timer" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="miSub" />
+    <bpmn:subProcess id="miSub" name="mi">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=[&quot;a&quot;, &quot;b&quot;]" inputElement="item"
+                                     outputCollection="results" outputElement="=item" />
+        </bpmn:extensionElements>
+        <bpmn:completionCondition xsi:type="bpmn:tFormalExpression">=numberOfCompletedInstances >= 1</bpmn:completionCondition>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart"><bpmn:outgoing>sf1</bpmn:outgoing></bpmn:startEvent>
+      <bpmn:sequenceFlow id="sf1" sourceRef="subStart" targetRef="w" />
+      <bpmn:serviceTask id="w" name="w">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="c847earlyw" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>sf1</bpmn:incoming>
+        <bpmn:outgoing>sf2</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="sf2" sourceRef="w" targetRef="subEnd" />
+      <bpmn:endEvent id="subEnd"><bpmn:incoming>sf2</bpmn:incoming></bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="bndTmr" name="timeout" attachedToRef="miSub" cancelActivity="true">
+      <bpmn:outgoing>flowBndOut</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="tmrDef">
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT10M</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="miSub" targetRef="dump" />
+    <bpmn:sequenceFlow id="flowBndOut" sourceRef="bndTmr" targetRef="endAfter" />
+    <bpmn:serviceTask id="dump" name="dump">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c847earlydump" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="dump" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+    <bpmn:endEvent id="endAfter"><bpmn:incoming>flowBndOut</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
