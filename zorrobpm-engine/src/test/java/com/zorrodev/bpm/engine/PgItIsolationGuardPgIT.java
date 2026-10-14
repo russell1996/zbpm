@@ -115,7 +115,7 @@ public class PgItIsolationGuardPgIT extends PostgresIT {
         // test may claim it, but the claim only flips fired=true — the verdict below never reads
         // fired and the id stays in our cleanup list, so the verdict cannot change either way.
         // (A 30s-old leftover takes ~2 extra poller ticks to claim vs ~0 for due-now; that timing
-        // margin decided whether the neighbour logged a per-job failure next to our verdict.)
+        // margin decideed whether the neighbour logged a per-job failure next to our verdict.)
         UUID foreignLeftover = PgItIsolation.insertCatchTimerJob(jdbc, UUID.randomUUID(),
             Instant.now());
         rowsToClean.add(foreignLeftover);
