@@ -766,6 +766,12 @@
   "channelDiagNoFirstByteHint": "The channel does not answer — likely the proxy buffers the stream. Events will catch up after reconnect.",
   "channelDiag429Hint": "Too many open streams — close extra tabs.",
   "channelDiagFinished": "Finished",
+  "channelStateConnected": "Connected",
+  "channelStateReconnecting": "Reconnecting…",
+  "channelStateDown": "No connection",
+  "channelStateSessionExpired": "Session expired — sign in again",
+  "channelDiagCause": "Cause",
+  "channelAriaLabel": "Realtime channel: {state}",
   "uiErrorTitle": "Something went wrong",
   "uiErrorReload": "Reload"
 }

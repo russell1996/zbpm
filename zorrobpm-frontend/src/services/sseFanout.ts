@@ -18,7 +18,11 @@
  *  - лидер публикует `{ kind: 'event', envelope }` на каждое SSE-событие;
  *  - лидер публикует `{ kind: 'health', patch }` на смену здоровья канала;
  *  - новый лидер после избрания публикует `{ kind: 'leader', tabId }`;
- *  - подписчик, получивший `leader`, переподписывается молча (без мигания).
+ *  - подписчик, получивший `leader`, переподписывается молча (без мигания);
+ *  - WO-UI-31: поздний follower шлёт `{ kind: 'health-request', tabId }` —
+ *    health-ПАТЧИ приносят только БУДУЩИЕ смены, начальное состояние
+ *    (здоровый лидер молчит) без запроса не доставляется; лидер отвечает
+ *    полным `{ kind: 'health', patch }`.
  */
 import type { EventEnvelope } from '@/types/api'
 
@@ -37,6 +41,8 @@ export type SseFanoutMessage =
   | { kind: 'event'; envelope: EventEnvelope }
   | { kind: 'health'; patch: SseHealthPatch }
   | { kind: 'leader'; tabId: string }
+  /** WO-UI-31: запрос НАСТОЯЩЕГО состояния здоровья от позднего follower. */
+  | { kind: 'health-request'; tabId: string }
 
 export type SseFanoutListener = (msg: SseFanoutMessage) => void
 

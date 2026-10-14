@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import axios from 'axios'
 import api from '@/services/api'
-import { useRealtimeEvents } from './useRealtimeEvents'
+import { channelDotState, useRealtimeEvents } from './useRealtimeEvents'
 import * as processService from '@/services/processService'
 import * as instanceService from '@/services/instanceService'
 import * as variableService from '@/services/variableService'
@@ -201,6 +201,37 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
     rt.disconnect()
   })
 
+  it('WO-UI-31: disconnect mid-backoff kills the chain (no zombie refresh / terminal publish)', async () => {
+    // Реальный сценарий (пойман браузерным прогоном): вкладки делят fanout и
+    // api-инстанс. Лидер упал, backoff пошёл (1с → refresh в полёте), вкладка
+    // закрылась. Без generation-guard возобновление протухшего refresh
+    // продолжает цепочку на МЁРТВОМ экземпляре: stacked-таймеры (handle
+    // перезаписан — disconnect их не чистит) и каждое возобновление строят
+    // новый таймер; на капе мёртвая вкладка публикует sessionExpired=true в
+    // общий fanout — живые вкладки показывают «сессия истекла» при живой
+    // сессии.
+    vi.useFakeTimers()
+    const adapter = mockRefreshFail()
+    const rt = useRealtimeEvents()
+    await connectAndWait(rt)
+    const first = FakeEventSource.instances[0]
+    first.readyState = FakeEventSource.CLOSED
+    first.onerror?.({} as Event)
+    // Синхронно доводим до момента «refresh в полёте»: таймер 1с сработал,
+    // refreshAndReconnect подвешен на await sharedRefresh (микрозадачи ещё
+    // не отыгрались) — disconnect попадает прямо в этот интервал.
+    vi.advanceTimersByTime(1000)
+    rt.disconnect()
+    // Протухшее возобновление + stacked-таймеры должны быть мертвы:
+    // дальше ни refresh, ни терминальное состояние с мёртвого экземпляра.
+    const refreshesAtDisconnect = adapter.mock.calls.length
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    expect(adapter.mock.calls.length).toBe(refreshesAtDisconnect)
+    // markSessionExpired с мёртвого экземпляра не исполнялся:
+    expect(rt.sessionExpired.value).toBe(false)
+  })
+
   it('non-CLOSED error keeps legacy behaviour (no refresh, channel alive)', async () => {
     const adapter = mockRefreshOk()
     const rt = useRealtimeEvents()
@@ -213,5 +244,26 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
     expect(src.closed).toBe(false)
     expect(rt.error.value).toBeTruthy()
     rt.disconnect()
+  })
+})
+
+describe('channelDotState mapping (WO-UI-31)', () => {
+  // Единый источник правды точки и панели: четыре состояния и приоритет
+  // (expired > down > reconnecting > healthy). Живой браузерный путь
+  // прибит UI31-2 (reconnecting), UI31-3 (expired) и кр.13 (точка при
+  // мёртвом канале); здесь — полная таблица, включая down (realtimeDown),
+  // который браузерным тестом не достигается без живой 5-цикловой цепочки.
+  it('healthy: isConnected && !realtimeDown && !sessionExpired', () => {
+    expect(channelDotState({ isConnected: true, realtimeDown: false, sessionExpired: false })).toBe('healthy')
+  })
+  it('reconnecting: канал обрывётся, сессия жива, down ещё не объявлен', () => {
+    expect(channelDotState({ isConnected: false, realtimeDown: false, sessionExpired: false })).toBe('reconnecting')
+  })
+  it('down: сессия жива (refresh проходит), канал не поднялся (кап попыток)', () => {
+    expect(channelDotState({ isConnected: false, realtimeDown: true, sessionExpired: false })).toBe('down')
+  })
+  it('expired: приоритет над down и isConnected', () => {
+    expect(channelDotState({ isConnected: false, realtimeDown: true, sessionExpired: true })).toBe('expired')
+    expect(channelDotState({ isConnected: true, realtimeDown: false, sessionExpired: true })).toBe('expired')
   })
 })
