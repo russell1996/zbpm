@@ -648,7 +648,7 @@ describe('WO-UI-31 channel dot position / colour / follower desync (browser)', (
     //    отдаёт лок следующему в очереди (sseFanout 125-131) — эмулируем
     //    вручную в момент закрытия A (pendingPromote);
     //  - вызов 3 (C) → cb не вызывается → встроенный таймаут 1500 мс →
-    //    follower (таблица, открытая после смены лидера).
+    //    follower (вкладка, открытая после смены лидера).
     let locksCalls = 0
     let pendingPromote: (() => Promise<void>) | null = null
     Object.defineProperty(navigator, 'locks', {
