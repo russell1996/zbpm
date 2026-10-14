@@ -882,20 +882,131 @@ public class ElementSupport {
         if (names == null || names.isEmpty()) {
             return List.of();
         }
+        // WO-C8-45: то же слияние — через общий mergeChainLayers (единая точка
+        // для activity- и token-входов): root первым слоем, дальше цепочка
+        // внешних скоупов, свой скоуп последним (nearest-wins).
+        return mergeChainLayers(processInstanceId, names,
+            enclosingScopeChain(processInstanceId, activityId), activityId);
+    }
+
+    /**
+     * WO-C8-45: token-вариант {@link #chainVariablesForNames} — ЕДИНЫЙ механизм
+     * переменных для оценки УСЛОВИЙ (branch conditions), когда строки activity
+     * ещё нет или её id неудобен: то же слияние (root + вся цепочка внешних
+     * скоупов токена, nearest-wins, scope-ONLY слои C8-42), pinpoint только по
+     * именам из выражения (Б-1 IN-4: чужие JSON не читаются и не парсятся —
+     * битое нерелевантное значение не роняет оценку, как на master).
+     *
+     * <p>Тот же алгоритм обхода, что {@code MultiInstanceExecutor.scopeChainOfToken}
+     * (цепочка scopeActivityId-звеньев от токена к корню, outermost-first);
+     * копия здесь — сознательно: MI-enter путь заморожен (V7), а условия обязаны
+     * идти через одну точку. Null-safe к мокам (findToken → null/empty).
+     *
+     * <p>Вызывающие: {@code FlowNavigator.processFlow} (fallback без кэша),
+     * {@code MultiInstanceExecutor.completionConditionMet} (containing scope
+     * вложенного MI, C8-41 F3). Gateway-хендлеры передают кэш, собранный этим
+     * же слиянием через activity-вход, — множества совпадают по построению
+     * (gateway создан на том же токене).
+     */
+    public List<ProcessVariable> chainVariablesForTokenNames(UUID processInstanceId, UUID tokenId,
+            java.util.Collection<String> names) {
+        if (names == null || names.isEmpty()) {
+            return List.of();
+        }
+        return mergeChainLayers(processInstanceId, names, scopeChainOfToken(tokenId), null);
+    }
+
+    /**
+     * WO-C8-45: общее слияние chain-контекста: root-слой первым (fallback для
+     * имён, которых нет ни в одном скоупе), дальше scope-ONLY слои цепочки
+     * (outermost-first), свой скоуп последним (nearest-wins). Без скоупов —
+     * ровно root-проекция (поведение и стоимость как раньше).
+     */
+    private List<ProcessVariable> mergeChainLayers(UUID processInstanceId,
+            java.util.Collection<String> names, List<UUID> chainOutermostFirst, UUID ownScopeId) {
         Map<String, ProcessVariable> merged = new java.util.LinkedHashMap<>();
         for (ProcessVariable v : dbService.getVariablesByNames(processInstanceId, names)) {
             merged.put(v.getName(), v);
         }
-        for (UUID scopeId : enclosingScopeChain(processInstanceId, activityId)) {
+        for (UUID scopeId : chainOutermostFirst) {
             // WO-C8-42: scope-ONLY (см. resolveExpressionInChainScopeByNames).
             for (ProcessVariable v : dbService.getScopeOnlyVariablesByNames(processInstanceId, scopeId, names)) {
                 merged.put(v.getName(), v);
             }
         }
-        for (ProcessVariable v : dbService.getScopeOnlyVariablesByNames(processInstanceId, activityId, names)) {
-            merged.put(v.getName(), v);
+        if (ownScopeId != null) {
+            for (ProcessVariable v : dbService.getScopeOnlyVariablesByNames(processInstanceId, ownScopeId, names)) {
+                merged.put(v.getName(), v);
+            }
         }
         return new ArrayList<>(merged.values());
+    }
+
+    /**
+     * WO-C8-45: scope-цепочка токена (outermost-first) — тот же обход, что
+     * {@link #enclosingScopeChain}, но от токена, а не от activity (у оценки
+     * условия на токене строки activity может не быть вовсе).
+     */
+    public List<UUID> scopeChainOfToken(UUID tokenId) {
+        List<UUID> chain = new ArrayList<>();
+        java.util.Optional<Token> token = tokenId == null ? java.util.Optional.empty()
+            : dbService.findToken(tokenId);
+        while (token != null && token.isPresent()) {
+            UUID scopeId = token.get().getScopeActivityId();
+            if (scopeId != null && !chain.contains(scopeId)) {
+                chain.add(scopeId);
+            }
+            UUID parentId = token.get().getParentId();
+            token = parentId == null ? java.util.Optional.empty() : dbService.findToken(parentId);
+        }
+        java.util.Collections.reverse(chain);
+        return chain;
+    }
+
+    /**
+     * WO-C8-45: имена FEEL-переменных из условий исходящих потоков (сырые
+     * выражения модели, '=' на месте — лексер его не берёт). Потоки без
+     * условия/без модели вклада не дают (условие не оценивается — WO-DIFF-10).
+     */
+    public Set<String> flowConditionVariableNames(BpmnProcessDefinitionModel bpmn,
+            java.util.Collection<String> flowIds) {
+        Set<String> names = new java.util.LinkedHashSet<>();
+        if (bpmn == null || flowIds == null) {
+            return names;
+        }
+        for (String flowId : flowIds) {
+            BpmnFlowModel flow = bpmn.getFlow(flowId);
+            String expression = java.util.Optional.ofNullable(flow)
+                .map(BpmnFlowModel::getConditionExpression)
+                .map(com.zorrodev.bpm.engine.bpmn.model.BpmnConditionExpressionModel::getExpression)
+                .filter(str -> !str.isEmpty())
+                .map(str -> str.substring(1))
+                .orElse(null);
+            if (expression != null) {
+                names.addAll(FeelVariableNames.extract(expression));
+            }
+        }
+        return names;
+    }
+
+    /**
+     * WO-C8-45: имена FEEL-переменных из условия conditional-события (catch или
+     * boundary: {@code eventDefinition.expression}). Пусто, если условия нет, —
+     * вызывающий тогда читает пустой контекст, а не весь root.
+     */
+    public Set<String> conditionalVariableNames(BpmnElementModel element) {
+        String expression = java.util.Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getEventDefinition)
+            .map(com.zorrodev.bpm.engine.bpmn.model.EventDefinitionExtensionModel::getExpression)
+            .filter(s -> !s.isBlank())
+            .orElse(null);
+        if (expression == null) {
+            return Set.of();
+        }
+        if (expression.startsWith("=")) {
+            expression = expression.substring(1);
+        }
+        return FeelVariableNames.extract(expression);
     }
 
     /**

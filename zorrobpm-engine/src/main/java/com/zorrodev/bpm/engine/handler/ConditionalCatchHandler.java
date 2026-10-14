@@ -30,6 +30,7 @@ public class ConditionalCatchHandler implements ElementHandler, TypedElementHand
     private final DBService dbService;
     private final FlowNavigator flowNavigator;
     private final ScriptService scriptService;
+    private final ElementSupport elementSupport;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.CONDITIONAL_CATCH_EVENT; }
@@ -43,7 +44,11 @@ public class ConditionalCatchHandler implements ElementHandler, TypedElementHand
         UUID tokenId = ctx.tokenId();
 
         UUID activityId = dbService.createActivity(processInstanceId, tokenId, bpmnElement);
-        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+        // WO-C8-45: conditional-catch внутри (MI-)подпроцесса видит скоуп
+        // (chain-контекст своей activity, nearest-wins), а не только root.
+        // Без скоупов — та же root-проекция, что раньше.
+        List<ProcessVariable> variables = elementSupport.chainVariablesForNames(
+            processInstanceId, activityId, elementSupport.conditionalVariableNames(bpmnElement));
         if (conditionHolds(bpmnElement, variables)) {
             dbService.completeActivity(activityId);
             log.info("{}/{}: Conditional catch {} already true, passing through: {}", processInstanceId, tokenId, bpmnElement.getId(), activityId);
