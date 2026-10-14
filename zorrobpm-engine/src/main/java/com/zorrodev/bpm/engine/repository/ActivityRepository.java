@@ -106,6 +106,16 @@ public interface ActivityRepository extends JpaRepository<ActivityEntity, UUID> 
     List<ActivityEntity> findByTokenAndBpmnElementIdAndStatusIn(UUID token, String bpmnElementId, Collection<ActivityStatus> statuses);
 
     /**
+     * WO-C8-46: ids activity-строк инстанса по BPMN-элементу в терминальном
+     * статусе (для model-aware половины зачистки: какие MI-тела уже сняты
+     * {@code cancelActiveActivities} и нуждаются в сносе body-state).
+     */
+    @Query("SELECT a.id FROM ActivityEntity a WHERE a.processInstanceId = :processInstanceId "
+        + "AND a.bpmnElementId = :bpmnElementId AND a.status = 'CANCELLED'")
+    List<UUID> findByProcessInstanceIdAndBpmnElementIdAndCancelled(UUID processInstanceId,
+        String bpmnElementId);
+
+    /**
      * WO-C8-28: activities with an open canceling-listener phase on one token —
      * the last-closer check for a deferred boundary continuation (all must close
      * before the token proceeds; serialized by the process-instance lock).

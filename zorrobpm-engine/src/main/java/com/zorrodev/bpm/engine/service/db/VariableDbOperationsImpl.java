@@ -159,6 +159,12 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
     private final JdbcTemplate jdbcTemplate;
     private final DataSource dataSource;
     private final EntityManager entityManager;
+    /**
+     * WO-C8-46: узкий ридер «activity → scopeId через токен» (нужен только
+     * зачистке отмены; вынесен из домена Variables, чтобы не тащить
+     * token/activity-репозитории в конструктор Variables).
+     */
+    private final ActivityTokenScopeReader activityTokenScopeReader;
     /** WO-ENG-16: audit-след изменений (узкий бин, не метод этого класса — другой домен). */
     private final VariableHistoryWriter historyWriter;
 
@@ -689,6 +695,17 @@ public class VariableDbOperationsImpl implements VariableDbOperations {
         variableRepository.deleteByProcessInstanceIdAndScopeId(processInstanceId, scopeId);
         // WO-ENG-16: снос скоупа историю НЕ пишет — это lifecycle-мусор
         // (временные ioMapping-входы), не бизнес-изменение значения.
+    }
+
+    @Override
+    public void deleteAllScopedVariables(@NonNull UUID processInstanceId) {
+        variableRepository.deleteByProcessInstanceIdAndScopeIdIsNotNull(processInstanceId);
+        // WO-ENG-16: историю НЕ пишем — lifecycle-мусор, как deleteVariables.
+    }
+
+    @Override
+    public UUID findScopeOfActivity(@NonNull UUID processInstanceId, @NonNull UUID activityId) {
+        return activityTokenScopeReader.scopeOf(processInstanceId, activityId);
     }
 
     @Override

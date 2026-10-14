@@ -33,6 +33,12 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
     /** WO-ENG-16: стартовые переменные тоже входят в историю (источник INIT). */
     private final VariableHistoryWriter historyWriter;
     private final DomainEventEmitter domainEventEmitter;
+    /**
+     * WO-C8-46: model-aware половина зачистки отмены (outputCollection,
+     * batch-маркеры живых MI-тел по BPMN-модели). Лениво, чтобы разорвать
+     * construction-цикл BpmnService ↔ репозитории.
+     */
+    private final CancelledScopeStateCleaner cancelledScopeStateCleaner;
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
@@ -103,11 +109,20 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
 
     @Override
     public void cancelProcessInstance(UUID processInstanceId) {
+        // WO-C8-46: скоуп-переменные ДО пометки cancelled — та же транзакция,
+        // та же зачистка, что хвосты завершения (item/loopCounter MI-инстансов,
+        // предсозданный outputCollection, batch-маркеры входа).
+        clearCancelledScopeState(processInstanceId);
         ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
         processInstanceRepository.setCancelled(processInstanceId, true);
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
         domainEventEmitter.emitProcessInstanceCancelled(processInstanceId, pi.getProcessDefinitionId());
         // WO-OBS-1: cancel ends the instance too (gauge must not leak); not a failure.
         bpmMetrics.decrementActiveInstances();
+    }
+
+    @Override
+    public void clearCancelledScopeState(UUID processInstanceId) {
+        cancelledScopeStateCleaner.clear(processInstanceId);
     }
 }

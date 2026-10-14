@@ -145,6 +145,9 @@ public class MiSubProcessIntegrationTests {
     private com.zorrodev.bpm.engine.service.DBService dbService;
 
     @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    @Autowired
     private com.zorrodev.bpm.engine.handler.ElementSupport elementSupport;
 
     private String userTaskAssignee(UUID activityId) {
@@ -509,9 +512,16 @@ public class MiSubProcessIntegrationTests {
         dbService.cancelProcessInstance(pi);
 
         // G-P LEAK-INVARIANT: после отмены ничего живого/висящего.
-        assertThat(variableRepository.findByProcessInstanceId(pi).stream()
-            .filter(v -> v.getScopeId() != null).toList())
-            .as("no scope variables left after operator cancel").isEmpty();
+        // Считаем JdbcTemplate напрямую, а не сырым JPA: зачистка идёт
+        // JDBC-bulk мимо persistence-контекста, и managed-копии снесённых
+        // строк в той же @Transactional остаются stale для entity-ридеров
+        // (WO-REL-31 CR-1 — тот же класс, что miSubSlotOf выше: там вместо
+        // сырого JPA-ридера взят merge-ридер dbService). COUNT по таблице —
+        // факт БД, не кэша.
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM variables WHERE process_instance_id = ? AND scope_id IS NOT NULL",
+            Long.class, pi))
+            .as("no scope variables left after operator cancel").isZero();
         assertThat(variableRepository.findByNameAndProcessInstanceId("results", pi))
             .as("precreated outputCollection dropped").isEmpty();
         assertThat(variableRepository.findByNameAndProcessInstanceId("_mi_batch_subProbe", pi))
