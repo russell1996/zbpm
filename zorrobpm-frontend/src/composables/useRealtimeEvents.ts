@@ -91,6 +91,9 @@ function mirrorHealth(patch: {
   if (patch.wasConnected !== undefined) sharedRealtimeHealth.wasConnected.value = patch.wasConnected
   if (patch.realtimeDown !== undefined) sharedRealtimeHealth.realtimeDown.value = patch.realtimeDown
   if (patch.sessionExpired !== undefined) sharedRealtimeHealth.sessionExpired.value = patch.sessionExpired
+  // WO-UI-31: единственная воронка смен здоровья — здесь обновляем снимок
+  // для поздних подписчиков (follower, см. SSE_HEALTH_STORAGE_KEY).
+  writeHealthSnapshot()
 }
 
 // Тот же baseURL-резолвинг, что в services/api.ts: EventSource обязан идти на
@@ -192,6 +195,82 @@ function storeLastEventId(id: string): void {
   } catch {
     // приватный режим/квота — курсор живёт только в ref, не фатально
   }
+}
+
+/**
+ * WO-UI-31: снимок здоровья канала для ПОЗДНИХ подписчиков.
+ *
+ * Корень рассинхрона (репорт владельца 2026-10-14: «точка горит, а в
+ * панели Подключено, Эта вкладка: ведомый»): health-ПАТЧИ идут только на
+ * смену состояния. Follower, который подписался ПОСЛЕ того как лидер уже
+ * здоров, не получает ни одного патча → сидит на isConnected=false
+ * вечно → через гистерезис у него горит точка при живом лидере, а панель
+ * говорит «Подключено» (lastError='none').
+ *
+ * Снимок пишется в каждой смене здоровья (mirrorHealth — единственная
+ * воронка) и читается follower'ом при подписке: после этого живые патчи
+ * держат состояние синхронным. sessionStorage общий на вкладки одного
+ * origin — тот же механизм, что Н-3 использует для Last-Event-ID.
+ */
+const SSE_HEALTH_STORAGE_KEY = 'zbpm.sse.health'
+
+function writeHealthSnapshot(): void {
+  try {
+    if (typeof sessionStorage === 'undefined') return
+    sessionStorage.setItem(
+      SSE_HEALTH_STORAGE_KEY,
+      JSON.stringify({
+        isConnected: sharedRealtimeHealth.isConnected.value,
+        realtimeDown: sharedRealtimeHealth.realtimeDown.value,
+        sessionExpired: sharedRealtimeHealth.sessionExpired.value,
+      }),
+    )
+  } catch {
+    // приватный режим/квота — снимок не фатален (патчи дальше работают)
+  }
+}
+
+function readHealthSnapshot(): ChannelHealth | null {
+  try {
+    if (typeof sessionStorage === 'undefined') return null
+    const raw = sessionStorage.getItem(SSE_HEALTH_STORAGE_KEY)
+    if (!raw) return null
+    const p = JSON.parse(raw) as Record<string, unknown>
+    return {
+      isConnected: p.isConnected === true,
+      realtimeDown: p.realtimeDown === true,
+      sessionExpired: p.sessionExpired === true,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * WO-UI-31: ОДИН источник правды «канал в дауне» — и точку (видимость + цвет),
+ * и строку «Статус» панели «Состояние канала» ведёт эта функция, а не два
+ * разных источника (dot: isConnected/realtimeDown/sessionExpired, панель:
+ * diagnostics.lastError) — именно их рассинхрон показал владельцу точку при
+ * статусе «Подключено» на вкладке-«ведомой» (репорт 2026-10-14).
+ *
+ * - 'expired' — сессия мертва (нужен вход) → точка красная (destructive);
+ * - 'down' — канал мёртв при живой сессии (попытки исчерпаны) → красная;
+ * - 'reconnecting' — обрыв, идут автоматические попытки → янтарная;
+ * - 'healthy' — точки НЕТ вообще (правило UI-26 Доп.7).
+ */
+export interface ChannelHealth {
+  isConnected: boolean
+  realtimeDown: boolean
+  sessionExpired: boolean
+}
+
+export type ChannelDotState = 'healthy' | 'reconnecting' | 'down' | 'expired'
+
+export function channelDotState(h: ChannelHealth): ChannelDotState {
+  if (h.sessionExpired) return 'expired'
+  if (h.realtimeDown) return 'down'
+  if (!h.isConnected) return 'reconnecting'
+  return 'healthy'
 }
 
 export function useRealtimeEvents() {
@@ -618,6 +697,22 @@ export function useRealtimeEvents() {
       } else {
         isLeaderTab = false
         fanoutUnsubscribe = subscribeFanout(onFanoutMessage)
+        // WO-UI-31: снимок здоровья лидера на момент подписки — иначе
+        // follower, вошедший ПОСЛЕ подключения лидера, навсегда сидит на
+        // isConnected=false (патчи приносят только БУДУЩИЕ смены): у него
+        // горит точка при здоровом лидере, а панель показывает «Подключено».
+        // Дальше живые health-патчи держат состояние синхронным.
+        const snapshot = readHealthSnapshot()
+        if (snapshot) {
+          isConnected.value = snapshot.isConnected
+          realtimeDown.value = snapshot.realtimeDown
+          sessionExpired.value = snapshot.sessionExpired
+          mirrorHealth({
+            isConnected: snapshot.isConnected,
+            realtimeDown: snapshot.realtimeDown,
+            sessionExpired: snapshot.sessionExpired,
+          })
+        }
         // HOLD раунд 1 (Б-1): смерть лидера = браузер отдаёт лок следующему
         // в очереди = onPromoted: follower открывает СВОЙ EventSource
         // (ровно один новый; Last-Event-ID подхватит браузер сам) и

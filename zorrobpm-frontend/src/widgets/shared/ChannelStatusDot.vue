@@ -10,7 +10,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
-import { useRealtimeEvents, type ChannelErrorKind } from '@/composables/useRealtimeEvents'
+import {
+  useRealtimeEvents,
+  channelDotState,
+  type ChannelDotState,
+  type ChannelErrorKind,
+} from '@/composables/useRealtimeEvents'
 import { useRealtimeChannel } from '@/composables/useRealtimeChannel'
 import { useToast } from '@/composables/useToast'
 
@@ -57,9 +62,51 @@ const downSince = ref<number | null>(null)
 const showDot = ref(false)
 let hysteresisTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * WO-UI-31: состояние — ОДИН источник правды для точки (видимость + цвет)
+ * и строки «Статус» панели. До фикса точка шла от channelDown()
+ * (isConnected/realtimeDown/sessionExpired), а «Статус» панели — от
+ * diagnostics.lastError: на вкладке-«ведомой» (isConnected ложился из
+ * health-патча лидера и мог расходятся с диагнозом) точка горела при
+ * «Статус: Подключено». Теперь оба — из channelDotState().
+ */
+const channelState = computed<ChannelDotState>(() =>
+  channelDotState({
+    isConnected: rt.isConnected.value,
+    realtimeDown: rt.realtimeDown.value,
+    sessionExpired: rt.sessionExpired.value,
+  }),
+)
+
+/** Точка видима только когда канал НЕ здоров (после гистерезиса). */
 function channelDown(): boolean {
-  return rt.realtimeDown.value || rt.sessionExpired.value || !rt.isConnected.value
+  return channelState.value !== 'healthy'
 }
+
+/**
+ * Цвет точки по состоянию (WO-UI-31): сбой/нет связи (down/expired) —
+ * destructive (красный), переподключение (идут попытки) — янтарный.
+ * Токены темы/Tailwind, без хардкод-hex; обе темы. Цвет — НЕ единственный
+ * носитель смысла (aria-label + «Статус» в панели несут текст состояния).
+ */
+const DOT_COLOR: Record<Exclude<ChannelDotState, 'healthy'>, string> = {
+  reconnecting: 'bg-amber-500',
+  down: 'bg-destructive',
+  expired: 'bg-destructive',
+}
+
+const STATE_TEXT: Record<ChannelDotState, string> = {
+  healthy: 'channelStateConnected',
+  reconnecting: 'channelStateReconnecting',
+  down: 'channelStateDown',
+  expired: 'channelStateSessionExpired',
+}
+
+const dotColor = computed(() =>
+  channelState.value === 'healthy' ? 'bg-amber-500' : DOT_COLOR[channelState.value],
+)
+
+const stateText = computed(() => t(STATE_TEXT[channelState.value]))
 
 function armHysteresis(): void {
   if (downSince.value === null) downSince.value = Date.now()
@@ -80,9 +127,10 @@ function disarm(): void {
 }
 
 // Реакция на здоровье канала — через интервал-опрос ref'ов нельзя (лишний
-// тик), поэтому watch на геттер ниже.
+// тик), поэтому watch на геттер ниже. Геттер возвращает channelState —
+// тот же источник, что и «Статус» панели.
 watch(
-  () => [rt.isConnected.value, rt.realtimeDown.value, rt.sessionExpired.value] as const,
+  () => channelState.value,
   () => {
     if (channelDown()) armHysteresis()
     else disarm()
@@ -145,23 +193,50 @@ function retryNow(): void {
     <DropdownMenuTrigger as-child>
       <!-- G24: точка — shadcn Button (ghost/icon), внутри — нейтральный
            кружок 8px; сырые HTML-теги кнопок запрещены. -->
+      <!-- G24: точка — shadcn Button (ghost/icon), внутри — кружок 8px.
+           WO-UI-31: цвет — по состоянию (bg-destructive / bg-amber-500,
+           токены темы, без хардкод-hex); пульсации нет. aria-label и
+           title несут ТЕКСТ состояния — цвет не единственный носитель
+           смысла (оба состояния различимы и для screen reader'а, и
+           при дальтонизме). -->
       <Button
         variant="ghost"
         size="icon"
         data-testid="channel-dot"
         class="h-8 w-8 shrink-0 hover:bg-transparent"
-        :aria-label="t('channelStatus')"
-        :title="t('channelStatus')"
+        :aria-label="t('channelAriaLabel', { state: stateText })"
+        :title="stateText"
       >
-        <span class="h-2 w-2 rounded-full bg-muted-foreground/60" />
+        <span
+          data-testid="channel-dot-color"
+          class="h-2 w-2 rounded-full"
+          :class="dotColor"
+        />
       </Button>
     </DropdownMenuTrigger>
-    <DropdownMenuContent align="end" class="w-80" data-testid="channel-dialog">
+    <!-- WO-UI-31: align="start" — левый край панели = левый край точки
+         (точка теперь в ЛЕВОЙ группе шапки; align="end" из правой группы
+         раскрывал панель навстречу кнопкам «Обновить»/«Загрузить процесс»).
+         В узком вьюпорте floating-ui shift (reka-ui avoidCollisions=true)
+         подтягивает панель в границы — панель w-80=320 ≤ 360. -->
+    <DropdownMenuContent align="start" class="w-80" data-testid="channel-dialog">
       <DropdownMenuLabel>{{ t('channelDiagTitle') }}</DropdownMenuLabel>
       <div class="px-2 py-1.5 text-sm">
         <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+          <!-- WO-UI-31: «Статус» = состояние канала (тот же
+               channelDotState, что ведёт точку). До фикса здесь был
+               diagnostics.lastError → точка горела, а строка говорила
+               «Подключено». -->
           <dt class="text-muted-foreground">{{ t('channelDiagStatus') }}</dt>
-          <dd data-testid="channel-diag-status">{{ t(ERROR_TEXT[rt.diagnostics.value.lastError]) }}</dd>
+          <dd data-testid="channel-diag-status">{{ stateText }}</dd>
+          <dt
+            v-if="rt.diagnostics.value.lastError !== 'none'"
+            class="text-muted-foreground"
+          >{{ t('channelDiagCause') }}</dt>
+          <dd
+            v-if="rt.diagnostics.value.lastError !== 'none'"
+            data-testid="channel-diag-cause"
+          >{{ t(ERROR_TEXT[rt.diagnostics.value.lastError]) }}</dd>
           <dt class="text-muted-foreground">{{ t('channelDiagLastAttempt') }}</dt>
           <dd>{{ rt.diagnostics.value.lastAttemptAt ?? '—' }}</dd>
           <dt class="text-muted-foreground">{{ t('channelDiagAttempts') }}</dt>

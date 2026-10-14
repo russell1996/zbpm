@@ -17,12 +17,15 @@
  * вернуть индикатор в шапку инстанса → кр.24 красный.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { h } from 'vue'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createI18n } from 'vue-i18n'
 import axios from 'axios'
 import api from '@/services/api'
 import MainLayout from '@/layouts/MainLayout.vue'
+import { channelDotState } from '@/composables/useRealtimeEvents'
+import { useRealtimeChannel } from '@/composables/useRealtimeChannel'
 import ru from '@/locales/ru.json'
 import en from '@/locales/en.json'
 import kz from '@/locales/kz.json'
@@ -304,4 +307,342 @@ describe('WO-UI-26 channel banner removal + dot (browser)', () => {
     console.log(`UI26-LEAK cycles=20 eventSourcesTotal=${FakeEventSource.instances.length} open=${open}`)
     expect(open).toBe(0)
   }, 120000)
+})
+
+// =====================================================================
+// WO-UI-31 — точка ВЛЕВО после SearchCommand, цвет по состоянию,
+// рассинхрон точка/панель на вкладке-«ведомой», панель не перекрывает
+// кнопки правой группы (1280/1920/360).
+//
+// Контракт (владелец 2026-10-14 + WO):
+//  - слот [data-testid="channel-dot-slot"] — сосед SearchCommand в ЛЕВОЙ
+//    группе шапки (не в правой, где точка перекрывала «Обновить»/
+//    «Загрузить процесс»);
+//  - цвет: сбой/нет связи → bg-destructive (красный), переподключение
+//    (идут попытки) → янтарный (bg-amber-500), здоровый → слот пуст;
+//    гистерезис 5 с сохраняется, пульсации нет;
+//  - ОДИН источник правды: строка «Статус» панели и точка ведутся из
+//    channelDotState({isConnected, realtimeDown, sessionExpired});
+//    поздний follower здорового лидера НЕ горит (снимок здоровья при
+//    подписке), а при падении лидера показывает ТО ЖЕ состояние, что
+//    лидер;
+//  - панель: align="start" от точки (левый край панели = левый край
+//    точки), не пересекает кнопки тулбара страницы на 1280 и 1920,
+//    влезает в вьюпорт; ширина ≤ 360 (в реальном 360-вьюпорте
+//    floating-ui shift/reka avoidCollisions подтягивает в границы).
+// Мутации (каждая обязана краснить): вернуть слот в правую группу;
+// вернуть нейтральный серый цвет; убрать снимок здоровья для follower.
+// =====================================================================
+
+function rectsIntersect(a: DOMRect, b: DOMRect): boolean {
+  return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+}
+
+describe('WO-UI-31 channel dot position / colour / follower desync (browser)', () => {
+  beforeEach(() => {
+    // Снимок здоровья (WO-UI-31) переживает тесты через sessionStorage —
+    // чистим, чтобы RED/GREEN не зависели от порядка.
+    try {
+      sessionStorage.removeItem('zbpm.sse.health')
+    } catch {
+      // ignore
+    }
+  })
+
+  it('UI31-1: slot — сосед SearchCommand в левой группе, не в правой', async () => {
+    const wrapper = mount(MainLayout, {
+      attachTo: mountHost(),
+      global: {
+        stubs: {
+          RouterView: true,
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+        plugins: [createPinia(), makeI18n()],
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+
+    const header = wrapper.find('header')
+    expect(header.exists()).toBe(true)
+    const headerEl = header.element as HTMLElement
+    const leftGroup = headerEl.children[0] as HTMLElement
+    const rightGroup = headerEl.children[1] as HTMLElement
+    const slot = wrapper.find('[data-testid="channel-dot-slot"]')
+    expect(slot.exists()).toBe(true)
+
+    // 1) Слот в ЛЕВОЙ группе (тот же flex, что и поиск), а не в правой.
+    expect(slot.element.parentElement).toBe(leftGroup)
+    expect(rightGroup.contains(slot.element)).toBe(false)
+
+    // 2) Сразу ПОСЛЕ SearchCommand: предыдущий сосед — кнопка поиска.
+    const searchBtn = slot.element.previousElementSibling
+    expect(searchBtn?.tagName).toBe('BUTTON')
+    expect((searchBtn as HTMLElement).textContent).toContain(en.searchPlaceholder)
+
+    // 3) Геометрия (Chromium, не jsdom): слот правее кнопки поиска
+    //    (flex-сосед через gap-3) и левее правой группы.
+    const slotRect = slot.element.getBoundingClientRect()
+    const searchRect = (searchBtn as HTMLElement).getBoundingClientRect()
+    const rightRect = rightGroup.getBoundingClientRect()
+    // eslint-disable-next-line no-console
+    console.log(
+      `UI31-POS slot=[${Math.round(slotRect.left)},${Math.round(slotRect.right)}] `
+      + `search=[${Math.round(searchRect.left)},${Math.round(searchRect.right)}] `
+      + `rightGroup.left=${Math.round(rightRect.left)}`,
+    )
+    expect(slotRect.left).toBeGreaterThanOrEqual(searchRect.right - 1)
+    expect(slotRect.right).toBeLessThanOrEqual(rightRect.left)
+  }, 30000)
+
+  it('UI31-2: поздний follower здорового лидера — точки нет, состояние healthy; '
+    + 'лидер упал → янтарная точка у обоих и статус «Reconnecting…» (не «Connected»)', async () => {
+    refreshAdapter = mockRefreshFail()
+    // Лидерство детерминировано: первый acquireSseLeadership → лидер
+    // (колбэк сразу), второй → НЕ вызывается → встроенный таймаут
+    // acquireSseLeadership (1500 мс) резолвит follower.
+    let locksCalls = 0
+    Object.defineProperty(navigator, 'locks', {
+      value: {
+        request: (_n: string, _o: unknown, cb: () => Promise<void>) => {
+          locksCalls += 1
+          if (locksCalls === 1) void cb()
+        },
+      },
+      configurable: true,
+    })
+
+    // Лидер: монтируем, открываем «соединение» (onopen от фейкового сервера).
+    const a = mount(MainLayout, {
+      attachTo: mountHost(),
+      global: {
+        stubs: { RouterView: true, RouterLink: { template: '<a><slot /></a>' } },
+        plugins: [createPinia(), makeI18n()],
+      },
+    })
+    mounted.push(a)
+    await flushPromises()
+    expect(FakeEventSource.instances).toHaveLength(1)
+    const chA = useRealtimeChannel().get()
+    expect(chA).not.toBeNull()
+    const srcA = FakeEventSource.instances[0]
+    srcA.onopen?.({} as Event)
+    await flushPromises()
+    expect(chA!.isConnected.value).toBe(true)
+
+    // Ведомый: монтируется ПОСЛЕ того, как лидер уже здоров. До фикса он
+    // получает только БУДУЩИЕ health-патчи → isConnected=false навсегда →
+    // через гистерезис горит точка при живом лидере (рассинхрон, репорт
+    // владельца 2026-10-14: «точка горит, а в панели Подключено»).
+    const b = mount(MainLayout, {
+      attachTo: mountHost(),
+      global: {
+        stubs: { RouterView: true, RouterLink: { template: '<a><slot /></a>' } },
+        plugins: [createPinia(), makeI18n()],
+      },
+    })
+    mounted.push(b)
+    await flushPromises()
+    const chB = useRealtimeChannel().get()
+    expect(chB).not.toBeNull()
+    expect(chB).not.toBe(chA)
+    // 1500 мс — таймаут лидерства в acquireSseLeadership (prod-константа)
+    // + запас на микрозадачи: после этого B точно подписан как follower.
+    await new Promise((r) => setTimeout(r, 2200))
+    expect(FakeEventSource.instances).toHaveLength(1) // follower источника не открывает
+
+    // Окно гистерезиса (5000 мс, prod-константа) + запас: рассинхрон до
+    // фикса проявляется именно здесь — точка у здорового-на-самом-деле
+    // follower появляется через 5 с после его setup.
+    await new Promise((r) => setTimeout(r, 6500))
+    expect(b.find('[data-testid="channel-dot"]').exists()).toBe(false)
+    expect(a.find('[data-testid="channel-dot"]').exists()).toBe(false)
+    // Один источник правды: состояние follower = healthy (точка и панель
+    // выведены из channelDotState — при healthy панель сказала бы
+    // «Connected», а точки нет).
+    expect(
+      channelDotState({
+        isConnected: chB!.isConnected.value,
+        realtimeDown: chB!.realtimeDown.value,
+        sessionExpired: chB!.sessionExpired.value,
+      }),
+    ).toBe('healthy')
+    expect(chB!.isConnected.value).toBe(true)
+
+    // Лидер упал (CLOSED + мёртвый refresh): follower зеркалит состояние
+    // живым health-патчем → янтарная точка («переподключение, идут
+    // попытки») и статус панели «Reconnecting…», НЕ «Connected».
+    srcA.readyState = FakeEventSource.CLOSED
+    srcA.onerror?.({} as Event)
+    await flushPromises()
+    await until(() => b.find('[data-testid="channel-dot"]').exists(), 15000)
+    const dotB = b.find('[data-testid="channel-dot"]')
+    expect(dotB.exists()).toBe(true)
+    expect(dotB.find('span').classes().join(' ')).toContain('bg-amber-500')
+    expect(dotB.find('span').classes().join(' ')).not.toContain('bg-muted-foreground')
+    // Лидер у себя — тот же цвет (единый источник правды).
+    await until(() => a.find('[data-testid="channel-dot"]').exists(), 15000)
+    const dotA = a.find('[data-testid="channel-dot"]')
+    expect(dotA.find('span').classes().join(' ')).toContain('bg-amber-500')
+
+    // Панель follower: строка «Статус» = состояние точки.
+    const triggerB = b.element.querySelector('[data-testid="channel-dot"]') as HTMLElement
+    triggerB.click()
+    await flushPromises()
+    await until(() => document.querySelector('[data-testid="channel-dialog"]') !== null, 8000)
+    const statusEl = document.querySelector('[data-testid="channel-diag-status"]')
+    expect(statusEl).not.toBeNull()
+    expect(statusEl!.textContent).toBe(en.channelStateReconnecting)
+    expect(statusEl!.textContent).not.toBe(en.channelDiagNone)
+  }, 90000)
+
+  it('UI31-3: мёртвый канал (сессия истекла) → красная точка (destructive), '
+    + 'aria-label и статус панели = «Session expired…»', async () => {
+    refreshAdapter = mockRefreshFail()
+    const wrapper = mount(MainLayout, {
+      attachTo: mountHost(),
+      global: {
+        stubs: { RouterView: true, RouterLink: { template: '<a><slot /></a>' } },
+        plugins: [createPinia(), makeI18n()],
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    // Та же цепочка, что кр.13: пять разрывов подряд с мёртвым refresh →
+    // после капа попыток (t≈31 с) — sessionExpired.
+    for (let i = 0; i < 5; i++) {
+      const cur = FakeEventSource.instances[FakeEventSource.instances.length - 1]
+      cur.readyState = FakeEventSource.CLOSED
+      cur.onerror?.({} as Event)
+      await flushPromises()
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    await until(() => wrapper.find('[data-testid="channel-dot"]').exists(), 40000)
+    // Терминальное состояние (sessionExpired) — после капа backoff; ждём
+    // перекраски точки в красный.
+    await until(() => {
+      const s = wrapper.find('[data-testid="channel-dot"] span')
+      return s.exists() && s.classes().includes('bg-destructive')
+    }, 35000)
+    const dot = wrapper.find('[data-testid="channel-dot"]')
+    const t = makeI18n().global.t
+    expect(dot.find('span').classes().join(' ')).toContain('bg-destructive')
+    expect(dot.classes().join(' ')).not.toContain('animate-pulse')
+    // Цвет — не единственный носитель смысла: aria-label несёт состояние.
+    expect(dot.attributes('aria-label')).toBe(
+      t('channelAriaLabel', { state: t('channelStateSessionExpired') }),
+    )
+    // Панель: «Статус» = состояние (не «Connected»), строка «Причина» есть.
+    const dotEl = wrapper.element.querySelector('[data-testid="channel-dot"]') as HTMLElement
+    dotEl.click()
+    await flushPromises()
+    await until(() => document.querySelector('[data-testid="channel-dialog"]') !== null, 8000)
+    const statusEl = document.querySelector('[data-testid="channel-diag-status"]')
+    expect(statusEl!.textContent).toBe(en.channelStateSessionExpired)
+    expect(statusEl!.textContent).not.toBe(en.channelDiagNone)
+    const causeEl = document.querySelector('[data-testid="channel-diag-cause"]')
+    expect(causeEl).not.toBeNull()
+    expect(causeEl!.textContent).not.toBe(en.channelDiagNone)
+  }, 120000)
+
+  it('UI31-4: панель align="start" от точки — не перекрывает кнопки «Обновить»/'
+    + '«Загрузить процесс» на 1280/1920, ширина ≤ 360', async () => {
+    refreshAdapter = mockRefreshFail()
+    // Тулбар страницы по образцу ProcessDefinitionList: h1 слева,
+    // кнопки справа (те же, что на скриншоте владельца). router-view в
+    // MainLayout резолвится глобально (app.use(router) в проде); в тесте
+    // роутера нет — регистрируем компонент глобально (resolveComponent
+    // ищет по имени, регистр не важен). render-функция (НЕ template):
+    // в браузерном окружении — runtime-only сборка Vue, runtime-компиляция
+    // template строки недоступна (Vue warn в логе).
+    const btn = (testid: string, cls: string, label: string) =>
+      h('button', { 'data-testid': testid, class: cls }, label)
+    const pageToolbar = {
+      name: 'RouterView',
+      render: () =>
+        h('div', { class: 'space-y-2' }, [
+          h('div', { class: 'flex items-center justify-between' }, [
+            h('span', { class: 'text-lg font-bold' }, 'Process definitions'),
+            h('div', { class: 'flex items-center gap-2' }, [
+              btn('page-refresh-btn', 'flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md', 'Обновить'),
+              btn('page-import-btn', 'flex items-center gap-2 px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md', 'Загрузить процесс'),
+              btn('page-submissions-btn', 'flex items-center gap-2 px-3 py-1.5 text-sm border border-border rounded-md', 'Мои подачи'),
+            ]),
+          ]),
+        ]),
+    }
+    const wrapper = mount(MainLayout, {
+      attachTo: mountHost(),
+      global: {
+        stubs: {
+          RouterLink: { template: '<a><slot /></a>' },
+        },
+        components: { RouterView: pageToolbar },
+        plugins: [createPinia(), makeI18n()],
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    // Пять разрывов подряд → устойчивый даун → точка (цепочка кр.13).
+    for (let i = 0; i < 5; i++) {
+      const cur = FakeEventSource.instances[FakeEventSource.instances.length - 1]
+      cur.readyState = FakeEventSource.CLOSED
+      cur.onerror?.({} as Event)
+      await flushPromises()
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    await until(() => wrapper.find('[data-testid="channel-dot"]').exists(), 40000)
+    const dotEl = wrapper.element.querySelector('[data-testid="channel-dot"]') as HTMLElement
+    dotEl.click()
+    await flushPromises()
+    await until(() => document.querySelector('[data-testid="channel-dialog"]') !== null, 8000)
+    await new Promise((r) => setTimeout(r, 150)) // floating-ui: позиционирование settled
+
+    const panelRect = () => (document.querySelector('[data-testid="channel-dialog"]') as HTMLElement).getBoundingClientRect()
+    const dotRect = () => dotEl.getBoundingClientRect()
+    const refreshRect = () =>
+      (wrapper.find('[data-testid="page-refresh-btn"]').element as HTMLElement).getBoundingClientRect()
+    const importRect = () =>
+      (wrapper.find('[data-testid="page-import-btn"]').element as HTMLElement).getBoundingClientRect()
+    const host = hosts[hosts.length - 1]
+
+    // 1280 (реальный вьюпорт): левый край панели = левый край точки
+    // (align="start"), правые кнопки не накрыты, панель в вьюпорте.
+    let p = panelRect()
+    // eslint-disable-next-line no-console
+    console.log(
+      `UI31-PANEL dot=[${Math.round(dotRect().left)},${Math.round(dotRect().right)}] `
+      + `panel=[${Math.round(p.left)},${Math.round(p.right)}] `
+      + `refresh=[${Math.round(refreshRect().left)},${Math.round(refreshRect().right)}] `
+      + `import=[${Math.round(importRect().left)},${Math.round(importRect().right)}]`,
+    )
+    expect(Math.abs(p.left - dotRect().left)).toBeLessThan(6)
+    expect(rectsIntersect(p, refreshRect())).toBe(false)
+    expect(rectsIntersect(p, importRect())).toBe(false)
+    expect(p.left).toBeGreaterThanOrEqual(0)
+    expect(p.right).toBeLessThanOrEqual(1280)
+    expect(p.bottom).toBeLessThanOrEqual(720)
+
+    // 1920 (широкий хост): кнопки уходят к правому краю хоста, панель
+    // остаётся у точки (левая группа) — пересечения нет, панель в
+    // (реальном 1280) вьюпорте.
+    host.style.width = '1920px'
+    await new Promise((r) => setTimeout(r, 250))
+    p = panelRect()
+    expect(Math.abs(p.left - dotRect().left)).toBeLessThan(6)
+    expect(rectsIntersect(p, refreshRect())).toBe(false)
+    expect(rectsIntersect(p, importRect())).toBe(false)
+    expect(p.right).toBeLessThanOrEqual(1280)
+
+    // 360: панель (w-80 = 320) физически влезает в 360-вьюпорт; в реальном
+    // 360-вьюпорте floating-ui shift (reka-ui avoidCollisions=true)
+    // подтягивает её в границы. Здесь (тестовый вьюпорт 1280) проверяем
+    // влезание по ширине.
+    host.style.width = '360px'
+    await new Promise((r) => setTimeout(r, 250))
+    p = panelRect()
+    expect(p.width).toBeLessThanOrEqual(360)
+    expect(rectsIntersect(p, refreshRect())).toBe(false)
+    expect(rectsIntersect(p, importRect())).toBe(false)
+  }, 150000)
 })
