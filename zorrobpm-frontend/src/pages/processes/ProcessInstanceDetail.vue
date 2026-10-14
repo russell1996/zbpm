@@ -582,12 +582,22 @@ async function onTabChange() {
   } else {
     const pi = processStore.currentInstance
     if (!pi) return
-    const hasData =
-      (activeTab.value === 'variables' && processStore.currentVariables.length > 0) ||
-      (activeTab.value === 'tasks' && taskStore.userTasks) ||
-      (activeTab.value === 'serviceTasks' && taskStore.serviceTasks) ||
-      (activeTab.value === 'incidents' && incidentStore.incidents)
-    if (!hasData) {
+    // WO-UI-32: открытие вкладки ВСЕГДА перечитывает её СОБСТВЕННЫЙ источник —
+    // тихо (stale-while-revalidate: имеющиеся данные на экране, обновление
+    // поверх, loading только первичной загрузки). hasData-кэша нет: «загружали
+    // один раз» прятал свежие значения (жалоба владельца). Один клик = ровно
+    // один запрос этой сущности — первичную загрузку страницы (loadTabData в
+    // init) лишними запросами не дублируем.
+    if (activeTab.value === 'variables') {
+      await quietVariables()
+    } else if (activeTab.value === 'tasks') {
+      await quietUserTasks()
+    } else if (activeTab.value === 'serviceTasks') {
+      await quietServiceTasks()
+    } else if (activeTab.value === 'incidents') {
+      await quietIncidents()
+    } else {
+      // history / subprocesses — прежний путь (loadTabData), как до WO-UI-32.
       await loadTabData()
     }
   }
@@ -696,6 +706,20 @@ async function refreshLiveQuiet(): Promise<void> {
 }
 
 /**
+ * WO-UI-32: событие, после которого переменные могли измениться (завершение
+ * активности/задачи/инцидента, финализация инстанса) → тихий refetch
+ * переменных через общий планировщик (дебаунс 500 мс / cap 3 с — очередь
+ * событий схлопывается в 1 запрос, шторма нет). Планируем ТОЛЬКО если вкладка
+ * variables активна ИЛИ значения уже загружены (не грузить лишнего, если
+ * пользователь на другой вкладке и данных нет — вкладку он откроет, а там
+ * перечит по onTabChange).
+ */
+function scheduleVariablesIfLoaded(key: string): void {
+  if (activeTab.value !== 'variables' && processStore.currentVariables.length === 0) return
+  scheduleListRefresh(`${key}:variables`, () => void quietVariables())
+}
+
+/**
  * WO-UI-26 Б-1: точечный обработчик события для useInstanceLiveUpdates.
  * True — обработано (общий refresh не нужен), false — нужен запасной полный.
  */
@@ -713,6 +737,8 @@ function handleLiveEvent(envelope: EventEnvelope): boolean {
   const key = `instance:${pi.id}`
   switch (envelope.type) {
     case 'activity.completed': {
+      // WO-UI-32: до локального патча — завершение могло переписать переменные.
+      scheduleVariablesIfLoaded(key)
       const elId = envelope.elementId
       if (typeof elId === 'string' && elId && processStore.patchActivityCompletedLocal(elId)) {
         instancePatchTracker.markApplied(envelope)
@@ -730,6 +756,7 @@ function handleLiveEvent(envelope: EventEnvelope): boolean {
       return true
     }
     case 'user-task.completed': {
+      scheduleVariablesIfLoaded(key)
       const activityId = envelope.data?.['activityId']
       if (typeof activityId === 'string' && activityId) {
         const known = (taskStore.userTasks?.data || []).some((t) => t.id === activityId)
@@ -754,6 +781,7 @@ function handleLiveEvent(envelope: EventEnvelope): boolean {
       return true
     }
     case 'incident.resolved': {
+      scheduleVariablesIfLoaded(key)
       const incidentId = envelope.data?.['incidentId']
       if (typeof incidentId === 'string' && incidentId) {
         const known = (incidentStore.incidents?.data || []).some((i) => i.id === incidentId)
@@ -768,11 +796,13 @@ function handleLiveEvent(envelope: EventEnvelope): boolean {
       return true
     }
     case 'process-instance.completed': {
+      scheduleVariablesIfLoaded(key)
       processStore.patchCurrentInstanceLocal({ completedAt: envelope.occurredAt ?? new Date().toISOString() })
       instancePatchTracker.markApplied(envelope)
       return true
     }
     case 'process-instance.cancelled': {
+      scheduleVariablesIfLoaded(key)
       instancePatchTracker.markApplied(envelope)
       return true
     }
