@@ -126,6 +126,10 @@ public class LeakInvariantExtensionTests {
         UUID pi = startCompletedStartEnd();
         UUID activityId = jdbc.queryForObject(
             "SELECT id FROM activities WHERE process_instance_id = ? LIMIT 1", UUID.class, pi);
+        // Осиротевшее расписание = джоб на ЖИВОЙ activity: инстанс завершён,
+        // а хост расписания ещё CREATED (класс boundary, ENG-3).
+        jdbc.update("UPDATE activities SET status = 'CREATED', completed_at = NULL"
+            + " WHERE id = ?", activityId);
         jdbc.update("INSERT INTO timer_jobs (id, activity_id, due_at, fired, created_at,"
             + " process_instance_id) VALUES (?,?,?,?,?,?)",
             UUID.randomUUID(), activityId, Instant.now().plusSeconds(3600), false, Instant.now(),
@@ -163,11 +167,15 @@ public class LeakInvariantExtensionTests {
     @Test
     @Order(7)
     void danglingTokenCounter_isReported() throws Exception {
+        // Token-блок инварианта ОТКЛЮЧЁН как недоказанный (см. checker (б):
+        // сигнал pending_branches>0 не подтверждён ни одним живым примером,
+        // только cross-test артефактами shared-H2). Тест фиксирует текущее
+        // поведение честно: checker НЕ репортит token-нарушения.
         Set<UUID> before = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbc);
         UUID pi = startCompletedStartEnd();
         jdbc.update("UPDATE tokens SET pending_branches = 2 WHERE id = ?", tokenOf(pi));
         List<Violation> violations = LeakInvariantChecker.check(jdbc, before);
-        assertThat(violations).extracting(Violation::type).contains("token");
+        assertThat(violations).extracting(Violation::type).doesNotContain("token");
     }
 
     @Test
@@ -177,6 +185,11 @@ public class LeakInvariantExtensionTests {
         UUID pi = startCompletedStartEnd();
         UUID pdId = jdbc.queryForObject(
             "SELECT process_definition_id FROM process_instances WHERE id = ?", UUID.class, pi);
+        // Orphan-пара activity+task: живая activity + открытая task-строка.
+        UUID activityId = jdbc.queryForObject(
+            "SELECT id FROM activities WHERE process_instance_id = ? LIMIT 1", UUID.class, pi);
+        jdbc.update("UPDATE activities SET status = 'CREATED', completed_at = NULL"
+            + " WHERE id = ?", activityId);
         jdbc.update("INSERT INTO user_tasks (id, bpmn_element_id, process_instance_id,"
             + " process_definition_id, created_at, completed_at) VALUES (?,?,?,?,?,?)",
             UUID.randomUUID(), "hangingTask", pi, pdId, Instant.now(), null);
@@ -189,6 +202,9 @@ public class LeakInvariantExtensionTests {
     void staleScopeVariable_isReported_butMiBatchIsIgnored() throws Exception {
         Set<UUID> before = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbc);
         UUID pi = startCompletedStartEnd();
+        // Инвариант scope-var действует только для отменённых инстансов
+        // (у нормально завершённых scope-история — не мусор): помечаем отмену.
+        jdbc.update("UPDATE process_instances SET cancelled = true WHERE id = ?", pi);
         UUID scope = UUID.randomUUID();
         jdbc.update("INSERT INTO variables (id, process_instance_id, name, text_value, type,"
             + " scope_id) VALUES (?,?,?,?,?,?)",

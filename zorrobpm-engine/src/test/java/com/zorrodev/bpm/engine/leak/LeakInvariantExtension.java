@@ -60,10 +60,22 @@ public class LeakInvariantExtension implements BeforeEachCallback, AfterEachCall
     /**
      * Spring-слушатель-двойник: регистрируется АВТОМАТИЧЕСКИ для каждого теста
      * через {@code META-INF/spring.factories} ({@code TestExecutionListener}),
-     * выполняется в фазе {@code afterTestExecution} — СТРОГО ДО
-     * {@code TransactionalTestExecutionListener.afterTestMethod} (order 4000),
-     * который делает откат {@code @Transactional}. Здесь и живёт проверка:
-     * та же транзакция теста, данные ещё не откачены.
+     * выполняется в фазе {@code afterTestExecution} — там отката
+     * {@code @Transactional} нет ВООБЩЕ (откат — только в
+     * {@code TransactionalTestExecutionListener.afterTestMethod}, order 4000).
+     * Здесь и живёт проверка: та же транзакция теста, данные ещё не откачены.
+     *
+     * <p>Почему порядок надёжен (проверено байткодом Spring 7.0.9, не памятью):
+     * {@code AbstractTestContextBootstrapper} сортирует слушателей
+     * {@code AnnotationAwareOrderComparator.sort} по {@code getOrder()} — наш
+     * 3000 идёт до 4000; а after-фазы {@code TestContextManager} гоняет в
+     * ОБРАТНОМ порядке регистрации ({@code getReversedTestExecutionListeners}) —
+     * то есть даже в фазе {@code afterTestMethod} наш слушатель шёл бы ДО
+     * отката. Мутация «проверка в {@code afterTestMethod} с order ниже
+     * транзакционного» (1000) ставит его ПОСЛЕ отката — orderProbe краснит
+     * ({@code expected ["activity"] but was []}, см. отчёт WO-OPS-26 §1).
+     * Мутация с order ВЫШЕ (5000) НЕ ломает (reversed — раньше отката):
+     * такая «мутация» обязана оставаться зелёной, это свойство архитектуры.
      *
      * <p>JUnit-сторона ({@code BeforeEachCallback}) только снимает baseline
      * (ему транзакция не нужна); {@code AfterEachCallback} — страховочная
@@ -97,6 +109,7 @@ public class LeakInvariantExtension implements BeforeEachCallback, AfterEachCall
 
     @Override
     public void beforeEach(ExtensionContext context) {
+        SpringJunitContextHolder.set(context);
         JdbcTemplate jdbc = jdbcOrNull(context);
         if (jdbc == null) {
             return;
@@ -111,7 +124,9 @@ public class LeakInvariantExtension implements BeforeEachCallback, AfterEachCall
     public void afterEach(ExtensionContext context) {
         try {
             // Транзакционный путь уже проверен listener'ом в afterTestExecution
-            // (до отката) — здесь только не-транзакционные тесты.
+            // (до отката) — он ставит LISTENER_DONE_KEY в Store этого же
+            // контекста (мост — SpringJunitContextHolder, тот же поток).
+            // Здесь только не-транзакционные тесты / тесты без listener'а.
             if (context.getStore(NAMESPACE).get(context.getUniqueId() + LISTENER_DONE_KEY)
                 != null) {
                 return;
@@ -119,6 +134,7 @@ public class LeakInvariantExtension implements BeforeEachCallback, AfterEachCall
             checkAndReport(context);
         } finally {
             BASELINES.remove(springKeyOrNull(context));
+            SpringJunitContextHolder.clear();
         }
     }
 
@@ -167,6 +183,14 @@ public class LeakInvariantExtension implements BeforeEachCallback, AfterEachCall
             }
         }
         appendReport(testId, hard, allowed);
+        // Маркер «проверка выполнена» — afterEach по нему пропускает повтор.
+        // Ставит и listener-путь (через мост — тот же Store), и fallback-путь.
+        try {
+            context.getStore(NAMESPACE).put(context.getUniqueId() + LISTENER_DONE_KEY,
+                Boolean.TRUE);
+        } catch (RuntimeException e) {
+            // Store недоступен вне JUnit-потока — не критично.
+        }
         if ("enforce".equalsIgnoreCase(mode()) && !hard.isEmpty()) {
             StringBuilder sb = new StringBuilder(
                 "WO-OPS-26 leak invariant: completed instance(s) left live residue:\n");
@@ -311,6 +335,13 @@ public class LeakInvariantExtension implements BeforeEachCallback, AfterEachCall
 
         @Override
         public void afterTestExecution(TestContext testContext) {
+            ExtensionContext junit = SpringJunitContextHolder.current();
+            if (junit != null) {
+                // Тот же поток/тест: проверка через JUnit-контекст (там baseline
+                // в Store) — ровно одна проверка на тест, до отката.
+                checkAndReport(junit);
+                return;
+            }
             ApplicationContext spring = testContext.getApplicationContext();
             JdbcTemplate jdbc;
             try {
@@ -363,8 +394,20 @@ public class LeakInvariantExtension implements BeforeEachCallback, AfterEachCall
         for (LeakInvariantChecker.Violation v : allowed) {
             sb.append("allowed | ").append(testId).append(" | ").append(v).append('\n');
         }
-        Path report = Paths.get(
-            System.getProperty(REPORT_PROPERTY, "target/leak-invariant-report.txt"));
+        // Путь отчёта: surefire-форк стартует с workingDirectory = basedir
+        // МОДУЛЯ (zorrobpm-engine), а failsafe — с basedir КОРНЯ; свойство
+        // -Dzbpm.leakInvariant.report НЕ доходит до форков как system-свойство
+        // во всех конфигурациях (доказано: файл не появлялся ни в одном из
+        // трёх прогонов с -D...=target/...). Поэтому: если свойство не задано —
+        // пишем в <user.dir>/target/leak-invariant-report.txt (user.dir форка =
+        // basedir модуля) — и дублируем в корень через относительный путь
+        // ../target/, если он существует. Один write-вызов на тест: при
+        // forkCount=2 два форка дописывают конкурентно, O_APPEND держит
+        // построчную атомарность.
+        String configured = System.getProperty(REPORT_PROPERTY);
+        Path report = configured != null ? Paths.get(configured)
+            : Paths.get(System.getProperty("user.dir"), "target",
+                "leak-invariant-report.txt");
         try {
             if (report.getParent() != null) {
                 Files.createDirectories(report.getParent());
