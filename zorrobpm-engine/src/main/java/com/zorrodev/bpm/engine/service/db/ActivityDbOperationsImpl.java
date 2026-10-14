@@ -281,6 +281,17 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
     }
 
     @Override
+    public void cancelErrorActivities(UUID processInstanceId) {
+        // WO-C8-49: каждая ERROR-строка — через cancelActivity (тот же путь, что
+        // отмена остальных активностей: CANCELLED + consume подписок), не копия.
+        List<ActivityEntity> errored = activityRepository.findByProcessInstanceIdAndStatusIn(
+            processInstanceId, List.of(ActivityStatus.ERROR));
+        for (ActivityEntity activity : errored) {
+            cancelActivity(activity.getId());
+        }
+    }
+
+    @Override
     public void cancelActiveActivitiesForToken(UUID tokenId) {
         List<ActivityEntity> active = activityRepository.findByTokenAndStatusIn(
             tokenId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS));

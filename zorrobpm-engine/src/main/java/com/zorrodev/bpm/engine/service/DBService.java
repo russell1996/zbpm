@@ -53,6 +53,16 @@ public interface DBService {
     /** Close all open incidents linked to the given activity IDs (auto-close stale). */
     void completeIncidentsByActivityIds(List<UUID> activityIds);
 
+    /**
+     * WO-C8-49: единая точка финализации инстанса — вызывается из
+     * {@link #completeProcessInstance} и {@link #cancelProcessInstance} ДО
+     * проставления completedAt: гасит ERROR-активности (тем же путём, что
+     * отмена остальных) и закрывает открытые инциденты инстанса. Без неё
+     * отмена/завершение оставляли открытый инцидент + ERROR-активность
+     * (прод-инстанс 9dcdd13e: 70 таких инцидентов на завершённых).
+     */
+    void finalizeFinishedInstance(UUID processInstanceId);
+
     /** Completed activities of an instance — used to compensate them (in reverse completion order). */
     List<Activity> getCompletedActivities(UUID processInstanceId);
 

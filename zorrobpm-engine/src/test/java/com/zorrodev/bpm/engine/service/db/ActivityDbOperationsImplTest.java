@@ -89,6 +89,23 @@ class ActivityDbOperationsImplTest {
     }
 
     @Test
+    void cancelErrorActivities_cancelsEachErrorViaSamePath() {
+        // WO-C8-49: каждая ERROR-строка — через cancelActivity (тот же путь),
+        // остальные статусы не трогаем.
+        UUID pi = UUID.randomUUID();
+        ActivityEntity err = new ActivityEntity();
+        err.setId(UUID.randomUUID()); err.setProcessInstanceId(pi); err.setBpmnElementId("svc");
+        when(activityRepository.findByProcessInstanceIdAndStatusIn(eq(pi), eq(List.of(ActivityStatus.ERROR))))
+            .thenReturn(List.of(err));
+        ActivityEntity found = new ActivityEntity();
+        found.setId(err.getId()); found.setProcessInstanceId(pi); found.setBpmnElementId("svc");
+        when(activityRepository.findById(err.getId())).thenReturn(Optional.of(found));
+        db.cancelErrorActivities(pi);
+        verify(activityRepository).setStatusAndCompletedAt(eq(err.getId()), eq(ActivityStatus.CANCELLED), any(java.time.Instant.class));
+        verify(messageSubscriptionRepository).consumeByActivityIds(eq(pi), eq(List.of(err.getId())));
+    }
+
+    @Test
     void getActiveActivities_returnsMapped() {
         UUID pi = UUID.randomUUID();
         ActivityEntity e = new ActivityEntity(); e.setId(UUID.randomUUID()); e.setBpmnElementId("x"); e.setType(BpmnElementType.USER_TASK); e.setStatus(ActivityStatus.CREATED); e.setProcessInstanceId(pi); e.setToken(UUID.randomUUID());

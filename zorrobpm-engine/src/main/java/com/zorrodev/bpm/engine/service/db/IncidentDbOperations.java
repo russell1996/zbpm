@@ -18,5 +18,13 @@ public interface IncidentDbOperations {
 
     void completeIncidentsByActivityIds(List<UUID> activityIds);
 
+    /**
+     * WO-C8-49: закрывает открытые инциденты ВСЕХ активностей инстанса (включая
+     * инциденты на уже COMPLETED-активностях — WO-REL-28 оставляет такие) тем же
+     * путём, что {@link #completeIncidentsByActivityIds}, — часть единой
+     * финализации инстанса (см. {@code DBService.finalizeFinishedInstance}).
+     */
+    void completeOpenIncidentsByProcessInstanceId(UUID processInstanceId);
+
     List<Incident> findOpenIncidentsByActivityIds(List<UUID> activityIds);
 }

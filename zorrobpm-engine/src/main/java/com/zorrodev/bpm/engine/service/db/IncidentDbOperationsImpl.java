@@ -63,6 +63,17 @@ public class IncidentDbOperationsImpl implements IncidentDbOperations {
     }
 
     @Override
+    public void completeOpenIncidentsByProcessInstanceId(UUID processInstanceId) {
+        // WO-C8-49: инцидент ссылается на инстанс только через activity —
+        // собираем id активностей и закрываем тем же путём, не копией.
+        List<UUID> activityIds = activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(processInstanceId)
+            .stream().map(ActivityEntity::getId).toList();
+        if (!activityIds.isEmpty()) {
+            completeIncidentsByActivityIds(activityIds);
+        }
+    }
+
+    @Override
     public UUID createIncident(UUID activityId, String message) {
         ActivityEntity activityEntity = activityRepository.findById(activityId).orElseThrow();
         UUID id = UUID.randomUUID();

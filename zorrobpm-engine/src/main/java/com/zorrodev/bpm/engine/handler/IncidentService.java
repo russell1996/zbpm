@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.handler;
 
 import com.zorrodev.bpm.contract.dto.Incident;
+import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
 import com.zorrodev.bpm.engine.dto.Activity;
@@ -8,7 +9,9 @@ import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.service.DBService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Comparator;
 import java.util.List;
@@ -95,6 +98,20 @@ public class IncidentService {
         if (incident.getCompletedAt() != null) {
             log.info("{}/{}: Incident {} already resolved, no-op", activity.getProcessInstanceId(), activity.getToken(), incidentId);
             return;
+        }
+
+        // WO-C8-49: закрытый инстанс не воскрешаем. Без этого resolve на инциденте
+        // завершённого/отменённого инстанса отменял старый контейнер и создавал
+        // НОВУЮ activity в ERROR + НОВЫЙ открытый инцидент на мёртвом инстансе
+        // (прод-инстанс 9dcdd13e). Проверка ПОСЛЕ блокировки и перечитывания
+        // (паттерн WO-ENG-19: отмена, целиком прошедшая до лока, иначе решалась
+        // бы по stale-состоянию) и ПОСЛЕ идемпотентности: повтор по уже
+        // закрытому инциденту — no-op как раньше, а не 409.
+        ProcessInstance pi = dbService.getProcessInstance(activity.getProcessInstanceId());
+        if (pi.getCompletedAt() != null || pi.isCancelled()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Cannot resolve incident " + incidentId + ": process instance "
+                    + activity.getProcessInstanceId() + " is already completed or cancelled");
         }
 
         // Guard: if an active activity already exists for this (token, element), close incident without re-execution

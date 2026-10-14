@@ -119,6 +119,17 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void finalizeFinishedInstance(UUID processInstanceId) {
+        // WO-C8-49: порядок — сначала гасим ERROR (cancelActivity ставит
+        // completedAt строкам), потом закрываем инциденты (включая те, что
+        // висели на уже завершённых активностях). Оба вызова — существующие
+        // пути, не копии. Вызывается ДО completedAt, так что resolve-guard
+        // (по completedAt) эти закрытия не блокирует.
+        activityDbOperations.cancelErrorActivities(processInstanceId);
+        incidentDbOperations.completeOpenIncidentsByProcessInstanceId(processInstanceId);
+    }
+
+    @Override
     public List<Activity> getCompletedActivities(UUID processInstanceId) {
         return activityDbOperations.getCompletedActivities(processInstanceId);
     }
@@ -515,11 +526,17 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void completeProcessInstance(UUID processInstanceId) {
+        // WO-C8-49: финализация — часть завершения (terminate/normal end/event),
+        // не только отмены: иначе завершение оставляет открытый инцидент + ERROR.
+        finalizeFinishedInstance(processInstanceId);
         processInstanceDbOperations.completeProcessInstance(processInstanceId);
     }
 
     @Override
     public void cancelProcessInstance(UUID processInstanceId) {
+        // WO-C8-49: финализация — часть отмены (операторская + deferred tail
+        // canceling-фазы: оба идут через этот метод).
+        finalizeFinishedInstance(processInstanceId);
         processInstanceDbOperations.cancelProcessInstance(processInstanceId);
     }
 

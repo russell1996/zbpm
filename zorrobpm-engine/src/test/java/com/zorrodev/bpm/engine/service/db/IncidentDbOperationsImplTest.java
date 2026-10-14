@@ -60,6 +60,32 @@ class IncidentDbOperationsImplTest {
     }
 
     @Test
+    void completeOpenIncidentsByProcessInstanceId_closesViaActivityIds() {
+        // WO-C8-49: инстанс → id активностей → тот же completeIncidentsByActivityIds.
+        UUID pi = UUID.randomUUID();
+        UUID a1 = UUID.randomUUID();
+        UUID a2 = UUID.randomUUID();
+        ActivityEntity e1 = new ActivityEntity(); e1.setId(a1);
+        ActivityEntity e2 = new ActivityEntity(); e2.setId(a2);
+        when(activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(pi)).thenReturn(List.of(e1, e2));
+        IncidentEntity open = new IncidentEntity();
+        open.setId(UUID.randomUUID()); open.setActivityId(a1);
+        when(incidentRepository.findByActivityIdInAndCompletedAtIsNull(List.of(a1, a2))).thenReturn(List.of(open));
+        db.completeOpenIncidentsByProcessInstanceId(pi);
+        assertThat(open.getCompletedAt()).isNotNull();
+        verify(incidentRepository).saveAll(List.of(open));
+    }
+
+    @Test
+    void completeOpenIncidentsByProcessInstanceId_noActivities_noQueries() {
+        // WO-C8-49: у инстанса нет активностей — инцидент-стор не трогаем вовсе.
+        UUID pi = UUID.randomUUID();
+        when(activityRepository.findByProcessInstanceIdOrderByCreatedAtAsc(pi)).thenReturn(List.of());
+        db.completeOpenIncidentsByProcessInstanceId(pi);
+        verify(incidentRepository, org.mockito.Mockito.never()).findByActivityIdInAndCompletedAtIsNull(any());
+    }
+
+    @Test
     void createIncident_savesAndEmitsWithJob() {
         UUID activityId = UUID.randomUUID();
         UUID processInstanceId = UUID.randomUUID();
