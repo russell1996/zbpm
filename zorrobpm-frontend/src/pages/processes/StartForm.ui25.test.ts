@@ -27,10 +27,17 @@ vi.mock('@/services/formService', () => ({
 }))
 
 vi.mock('@/services/instanceService', () => ({
-  startProcessInstance: vi.fn().mockResolvedValue({ id: 'instance-7' }),
+  startProcessInstance: vi.fn().mockResolvedValue({ id: 'instance-1' }),
   getProcessInstances: vi.fn(),
   getProcessInstance: vi.fn(),
   getProcessInstanceActivities: vi.fn(),
+}))
+
+// WO-UI-34: PresetPicker грузит список «Шаблон» on mount — без мока тест
+// зависал бы на реальном сетевом запросе.
+vi.mock('@/services/presetService', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/presetService')>()),
+  listPresets: vi.fn().mockResolvedValue([]),
 }))
 
 import { getStartForm } from '@/services/formService'
@@ -41,7 +48,7 @@ const i18n = createI18n({
   messages: { en: {
     loading: 'Loading...', form: 'Form', externalForm: 'External Form',
     startProcess: 'Start Process',
-    presetManualMode: 'Manual input', presetTemplateMode: 'From template',
+    presetTemplateLabel: 'Template', presetNoTemplate: 'No template — enter manually',
     presetTableMode: 'Table', presetRawMode: 'Raw JSON',
     presetVarName: 'Name', presetVarType: 'Type', presetVarValue: 'Value',
     presetAddVariable: 'Add variable', presetNoVariables: 'No variables',

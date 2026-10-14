@@ -132,7 +132,7 @@ describe('WO-VT-1 screenshots (real Chromium)', () => {
     await page.screenshot({ path: `${SHOT_DIR}/wo-vt-1-preset-editor.png` })
   })
 
-  it('StartForm without form-js: manual/template switch renders', async () => {
+  it('StartForm without form-js: template dropdown renders (WO-UI-34)', async () => {
     const i18n = makeI18n()
     const wrapper = mount(StartForm, {
       attachTo: attachHost(),
@@ -141,10 +141,13 @@ describe('WO-VT-1 screenshots (real Chromium)', () => {
     mounted.push(wrapper)
     await flushPromises()
 
-    // Вкладки пикера (Ручной ввод | Из шаблона) + вкладки редактора
-    // (Таблица | Сырой JSON) — обе пары рендерятся.
+    // WO-UI-34: вкладок режима («Ручной ввод | Из шаблона») больше нет —
+    // один дропдаун «Шаблон»; остаются только вкладки самого редактора
+    // (Таблица | Сырой JSON).
     const tabs = document.querySelectorAll('[role="tab"]')
-    expect(tabs.length).toBe(4)
+    expect(tabs.length).toBe(2)
+    const trigger = document.querySelector('[data-testid="preset-select"]')
+    expect(trigger, 'preset-select trigger renders').not.toBeNull()
     const rect = (wrapper.element as Element).getBoundingClientRect()
     expect(rect.width).toBeGreaterThan(300)
     await page.screenshot({ path: `${SHOT_DIR}/wo-vt-1-start-form.png` })

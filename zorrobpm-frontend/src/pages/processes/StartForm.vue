@@ -22,7 +22,8 @@ const submitting = ref(false)
 const error = ref<string | null>(null)
 const formRef = ref<InstanceType<typeof FormRenderer> | null>(null)
 const formErrors = ref<Record<string, string> | null>(null)
-// WO-VT-1: выбор «Ручной ввод | Из шаблона» для процессов без form-js.
+// WO-VT-1: PresetPicker для процессов без form-js; WO-UI-34: вкладки
+// «Ручной ввод | Из шаблона» заменены одним дропдауном «Шаблон».
 const pickerRef = ref<InstanceType<typeof PresetPicker> | null>(null)
 const askMissing = ref<string[]>([])
 const pickerInvalid = ref(false)

@@ -9,8 +9,10 @@ export function useToast() {
     toast.error(message)
   }
 
-  function info(message: string) {
-    toast.info(message)
+  // WO-UI-34: опции (action «Отменить» + duration) — как у success: тихий
+  // undo-тост при замене введённых строк шаблоном.
+  function info(message: string, options?: { action?: { label: string; onClick: () => void }; duration?: number }) {
+    toast.info(message, options)
   }
 
   function warning(message: string) {

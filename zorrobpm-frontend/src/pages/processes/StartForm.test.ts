@@ -27,6 +27,13 @@ vi.mock('@/services/instanceService', () => ({
   getProcessInstanceActivities: vi.fn(),
 }))
 
+// WO-UI-34: PresetPicker грузит список «Шаблон» on mount — без мока тест
+// зависал бы на реальном сетевом запросе.
+vi.mock('@/services/presetService', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/presetService')>()),
+  listPresets: vi.fn().mockResolvedValue([]),
+}))
+
 import { getStartForm } from '@/services/formService'
 import { startProcessInstance } from '@/services/instanceService'
 
@@ -35,7 +42,7 @@ const i18n = createI18n({
   messages: { en: {
     loading: 'Loading...', form: 'Form', externalForm: 'External Form',
     startProcess: 'Start Process',
-    presetManualMode: 'Manual input', presetTemplateMode: 'From template',
+    presetTemplateLabel: 'Template', presetNoTemplate: 'No template — enter manually',
     presetTableMode: 'Table', presetRawMode: 'Raw JSON',
     presetVarName: 'Name', presetVarType: 'Type', presetVarValue: 'Value',
     presetAddVariable: 'Add variable', presetNoVariables: 'No variables',
@@ -94,7 +101,7 @@ describe('StartForm', () => {
     expect(startProcessInstance).toHaveBeenCalled()
   })
 
-  it('criterion3: none type shows the preset picker (manual/template) without form', async () => {
+  it('criterion3: none type shows the preset picker (template dropdown) without form', async () => {
     vi.mocked(getStartForm).mockResolvedValue({ type: 'none' })
 
     const wrapper = mount(StartForm, {
@@ -103,9 +110,10 @@ describe('StartForm', () => {
     await flushPromises()
 
     expect(wrapper.find('.form-js-container').exists()).toBe(false)
-    // WO-VT-1: вместо хинта noStartFormConfigured — выбор «Ручной ввод | Из шаблона».
-    expect(wrapper.text()).toContain('Manual input')
-    expect(wrapper.text()).toContain('From template')
+    // WO-VT-1: вместо хинта noStartFormConfigured — PresetPicker.
+    // WO-UI-34: вместо вкладок — дропдаун «Шаблон», по умолчанию «Без шаблона».
+    expect(wrapper.text()).toContain('Template')
+    expect(wrapper.text()).toContain('No template — enter manually')
   })
 
   it('criterion4: external shows URL link', async () => {
