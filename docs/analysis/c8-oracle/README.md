@@ -73,6 +73,14 @@ curl -s localhost:39600/actuator/health            # -> {"status":"UP",...}
 docker logs zbpm-cmp-connectors 2>&1 | grep -c 'Connection refused'   # expect 0 (connectors connected)
 ```
 
+> **Known benign log noise (connectors).** The `connectors-bundle` logs a repeating
+> `ProcessDefinitionImporter ... UnsupportedOperationException: Unable to determine authentication`
+> (plus a one-time `DefaultNoopAuthentication: Unable to determine authentication`) because its
+> optional inbound / process-definition-import feature tries to use Camunda *Cloud* auth, which we
+> deliberately leave off on this self-managed, plaintext stand. It does **not** affect job workers:
+> `io.camunda:http-json:1` and the other bundled workers register and run (0 `Connection refused`).
+> This is the bundle's default behavior with no cloud credentials, not a stand defect.
+
 Tear down (only `zbpm-cmp-*`; `--keep-zeebe` leaves a shared zeebe up):
 
 ```bash
