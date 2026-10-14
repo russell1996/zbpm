@@ -11,10 +11,12 @@ import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
+import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import com.zorrodev.bpm.engine.service.ScriptService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -66,6 +68,14 @@ public class MiSubProcessScopedConditionsIntegrationTests {
     private DBService dbService;
     @Autowired
     private FlowNavigator flowNavigator;
+    @Autowired
+    private BpmnService bpmnService;
+    @Autowired
+    private ScriptService scriptService;
+    @Autowired
+    private com.zorrodev.bpm.engine.handler.ElementSupport elementSupport;
+    @Autowired
+    private com.zorrodev.bpm.engine.service.ActivityService activityService;
 
     private UUID deploy(String file) throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/" + file));
@@ -314,18 +324,42 @@ public class MiSubProcessScopedConditionsIntegrationTests {
 
     /**
      * WO-C8-45 (е): conditional-CATCH внутри обычного подпроцесса видит
-     * скоуп-локальную переменную контейнера. На root-чтении условие ложно →
-     * токен паркуется на condCatch (RED: utSecond нет); на chain-чтении —
-     * проход на входе (GREEN: utSecond создан сразу после сдачи utFirst).
+     * скоуп-локальную переменную контейнера — БЕЛЫЙ ЯЩИК на прод-пути входа
+     * ({@code ConditionalCatchHandler.handle}): токен создан на scope-токене
+     * вручную, условие истинно только через chain (в root localFlag нет).
+     * На root-чтении хендлер паркует токен (возврата нет — RED: активностей
+     * condCatch/utSecond ноль); на chain-чтении — проход на входе (GREEN).
+     * (Полный E2E-поток дополнительно покрыт тестом (ж): тот же catch на
+     * входе после сдачи utFirst.)
      */
     @Transactional
     @Test
     void conditionalCatchInsidePlainSubprocess_seesContainerInputVariable() throws Exception {
-        UUID pi = start(deploy("test-c845-conditional-in-subscope.bpmn"));
+        UUID pdId = deploy("test-c845-conditional-in-subscope.bpmn");
+        UUID pi = start(pdId);
+        var bpmn = bpmnService.getProcessDefinitionModelById(pdId);
+        var element = bpmn.getElement("condCatch");
 
-        assertThat(activities(pi, "utFirst", ActivityStatus.CREATED)).as("first task parked").hasSize(1);
-        runtimeService.completeUserTask(
-            activities(pi, "utFirst", ActivityStatus.CREATED).get(0).getId(), List.of());
+        // Строка контейнера sub1 (нужна как ownScope для chain-слияния).
+        UUID containerActivity = activities(pi, "sub1", ActivityStatus.CREATED).get(0).getId();
+        // Внутренняя задача уже бежит на scope-токене контейнера sub1.
+        UUID innerTask = activities(pi, "utFirst", ActivityStatus.CREATED).get(0).getId();
+        UUID scopeToken = dbService.getActivity(innerTask).getToken();
+        assertThat(dbService.findToken(scopeToken)
+            .map(com.zorrodev.bpm.engine.dto.Token::getScopeActivityId))
+            .as("inner task runs on the container scope token").hasValue(containerActivity);
+
+        var handler = new com.zorrodev.bpm.engine.handler.ConditionalCatchHandler(
+            dbService, flowNavigator, scriptService, elementSupport);
+        UUID fork = dbService.createToken(scopeToken, containerActivity).getId();
+        // Белый ящик: drive-executor доводит цепочку синхронно; user task
+        // ПАРКУЕТСЯ сам (строка CREATED + job), дальше цепочка не идёт —
+        // ассертим припаркованную строку, а не завершение (завершения нет,
+        // это вход, не E2E-прогон до конца инстанса).
+        handler.handle(new com.zorrodev.bpm.engine.handler.ExecutionCtx(
+            pi, fork,
+            (com.zorrodev.bpm.engine.handler.TokenExecutor) activityService, null),
+            bpmn, element);
 
         List<ActivityEntity> second = activities(pi, "utSecond", ActivityStatus.CREATED);
         assertThat(second).as("conditional catch passed through on container-local localFlag").hasSize(1);
