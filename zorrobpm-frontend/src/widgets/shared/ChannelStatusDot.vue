@@ -194,14 +194,12 @@ function retryNow(): void {
   <!-- Подсказка — нативным title (ноль JS, ноль layout). -->
   <DropdownMenu v-if="showDot">
     <DropdownMenuTrigger as-child>
-      <!-- G24: точка — shadcn Button (ghost/icon), внутри — нейтральный
-           кружок 8px; сырые HTML-теги кнопок запрещены. -->
-      <!-- G24: точка — shadcn Button (ghost/icon), внутри — кружок 8px.
-           WO-UI-31: цвет — по состоянию (bg-destructive / bg-amber-500,
-           токены темы, без хардкод-hex); пульсации нет. aria-label и
-           title несут ТЕКСТ состояния — цвет не единственный носитель
-           смысла (оба состояния различимы и для screen reader'а, и
-           при дальтонизме). -->
+      <!-- G24: точка — shadcn Button (ghost/icon), внутри — кружок 8px;
+           сырые HTML-теги кнопок запрещены. WO-UI-31: цвет — по состоянию
+           (bg-destructive / bg-amber-500, токены темы, без хардкод-hex);
+           пульсации нет. aria-label и title несут ТЕКСТ состояния — цвет
+           не единственный носитель смысла (состояния различимы и для
+           screen reader'а, и при дальтонизме). -->
       <Button
         variant="ghost"
         size="icon"

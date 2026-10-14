@@ -638,4 +638,113 @@ describe('WO-UI-31 channel dot position / colour / follower desync (browser)', (
     expect(rectsIntersect(p, refreshRect())).toBe(false)
     expect(rectsIntersect(p, importRect())).toBe(false)
   }, 150000)
+
+  it('UI31-5: вкладка, открытая ПОСЛЕ смены лидера — повышенный лидер отвечает '
+    + 'на health-request (критерий 3 для топологии handover: без точки, healthy)', async () => {
+    refreshAdapter = mockRefreshFail()
+    // Детерминированное лидерство для handover:
+    //  - вызов 1 (A) → cb сразу = первоначальный лидер;
+    //  - вызов 2 (B) → cb ДЕРЖИМ: Web Locks гарантируют, что смерть лидера
+    //    отдаёт лок следующему в очереди (sseFanout 125-131) — эмулируем
+    //    вручную в момент закрытия A (pendingPromote);
+    //  - вызов 3 (C) → cb не вызывается → встроенный таймаут 1500 мс →
+    //    follower (таблица, открытая после смены лидера).
+    let locksCalls = 0
+    let pendingPromote: (() => Promise<void>) | null = null
+    Object.defineProperty(navigator, 'locks', {
+      value: {
+        request: (_n: string, _o: unknown, cb: () => Promise<void>) => {
+          locksCalls += 1
+          if (locksCalls === 1) void cb()
+          else if (locksCalls === 2) pendingPromote = cb
+        },
+      },
+      configurable: true,
+    })
+
+    // A — первоначальный лидер, здоров.
+    const a = mount(MainLayout, {
+      attachTo: mountHost(),
+      global: {
+        stubs: { RouterView: true, RouterLink: { template: '<a><slot /></a>' } },
+        plugins: [createPinia(), makeI18n()],
+      },
+    })
+    mounted.push(a)
+    await flushPromises()
+    expect(FakeEventSource.instances).toHaveLength(1)
+    const chA = useRealtimeChannel().get()
+    expect(chA).not.toBeNull()
+    const srcA = FakeEventSource.instances[0]
+    srcA.onopen?.({} as Event)
+    await flushPromises()
+    expect(chA!.isConnected.value).toBe(true)
+
+    // B — вторая вкладка (follower).
+    const b = mount(MainLayout, {
+      attachTo: mountHost(),
+      global: {
+        stubs: { RouterView: true, RouterLink: { template: '<a><slot /></a>' } },
+        plugins: [createPinia(), makeI18n()],
+      },
+    })
+    mounted.push(b)
+    await flushPromises()
+    const chB = useRealtimeChannel().get()
+    expect(chB).not.toBeNull()
+    expect(chB).not.toBe(chA)
+    // 1500 мс (таймаут лидерства, prod-константа) + запас: B — follower.
+    await new Promise((r) => setTimeout(r, 2200))
+    expect(FakeEventSource.instances).toHaveLength(1) // B источника не открывает
+
+    // A (лидер) закрыта → браузер отдаёт лок следующему в очереди:
+    // pending-колбэк B выполняется (повышение).
+    a.unmount()
+    mounted.splice(mounted.indexOf(a), 1)
+    await flushPromises()
+    expect(pendingPromote).not.toBeNull()
+    pendingPromote!() // синхронно до openSource (см. sseFanout acquireSseLeadership)
+    await flushPromises()
+    expect(FakeEventSource.instances).toHaveLength(2)
+    const srcB = FakeEventSource.instances[1]
+    expect(srcB.closed).toBe(false)
+    srcB.onopen?.({} as Event)
+    await flushPromises()
+    expect(chB!.isConnected.value).toBe(true)
+
+    // C — вкладка, открытая ПОСЛЕ смены лидера. До фикса (verifier r2 Б-1):
+    // onPromoted отписывал B от фанаута и НЕ подписывал обратно → повышенный
+    // лидер не слышит health-request → 3 запроса C без ответа →
+    // isConnected=false → через гистерезис 5 с — точка на ЗДОРОВОМ канале.
+    // После фикса: B отвечает полным патчем → C healthy, точки нет.
+    const c = mount(MainLayout, {
+      attachTo: mountHost(),
+      global: {
+        stubs: { RouterView: true, RouterLink: { template: '<a><slot /></a>' } },
+        plugins: [createPinia(), makeI18n()],
+      },
+    })
+    mounted.push(c)
+    await flushPromises()
+    const chC = useRealtimeChannel().get()
+    expect(chC).not.toBeNull()
+    // 1500 мс (C — follower) + первый health-request + запас.
+    await new Promise((r) => setTimeout(r, 2500))
+    // C — follower: СВОЕГО EventSource не открывает (один открытый источник
+    // — у повышенного лидера B).
+    expect(FakeEventSource.instances.filter((s) => !s.closed)).toHaveLength(1)
+    // Окно гистерезиса (5000 мс, prod-константа) + запас: без фикса точка
+    // у C появляется именно здесь.
+    await new Promise((r) => setTimeout(r, 6500))
+    expect(c.find('[data-testid="channel-dot"]').exists()).toBe(false)
+    expect(b.find('[data-testid="channel-dot"]').exists()).toBe(false)
+    expect(chC!.isConnected.value).toBe(true)
+    expect(
+      channelDotState({
+        isConnected: chC!.isConnected.value,
+        realtimeDown: chC!.realtimeDown.value,
+        sessionExpired: chC!.sessionExpired.value,
+      }),
+    ).toBe('healthy')
+  }, 90000)
 })
