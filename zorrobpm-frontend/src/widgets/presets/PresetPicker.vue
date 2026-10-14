@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { ChevronDown } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
 import {
   Select,
   SelectContent,
@@ -10,7 +12,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import TabsBar from '@/widgets/shared/TabsBar.vue'
+import {
+  Combobox,
+  ComboboxAnchor,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+} from '@/components/ui/combobox'
 import VariablesEditor from './VariablesEditor.vue'
 import PresetEditorDialog from './PresetEditorDialog.vue'
 import type { PresetTargetKind, PresetVariable, VariablePreset } from '@/types/presets'
@@ -26,14 +36,19 @@ import {
   duplicateVariableNames,
 } from '@/shared/lib/presetVariables'
 import { errorMessage } from '@/shared/lib/utils'
+import { useToast } from '@/composables/useToast'
 
 /**
- * WO-VT-1 (фронт, §1-бис п.2): переключатель «Ручной ввод | Из шаблона».
- * Ручной — VariablesEditor; из шаблона — список шаблонов места (key/kind/ref),
- * предпросмотр с правкой копии, плейсхолдеры разворачиваются при «Применить»,
- * пустые «спросить при запуске» блокируют применение, пока не заполнены
- * (значение из формы в шаблон НЕ сохраняется само — только кнопкой).
- * При выключенном флаге блок прячется целиком (п.6 WO).
+ * WO-UI-34: одна форма без вкладок. Сверху строка «Шаблон»: shadcn Select
+ * (при >8 шаблонов — shadcn Combobox с поиском); первый пункт — «Без шаблона
+ * — ввести вручную» (по умолчанию). Ниже ОДИН VariablesEditor: выбор
+ * шаблона заполняет тот же редактор (строки правятся, как ручной ввод).
+ * Замена уже введённых строк — без тихой потери: тихий тост
+ * «Шаблон применён/снят · Отменить» (undo возвращает прежние строки).
+ * При выключенном флаге (available=false) список «Шаблон» не показывается
+ * вообще — только редактор (WO п.3).
+ * Контракт для потребителей (8 страниц) сохранён: getVariables/missingAsk/
+ * canApply/hasErrors/available/mode, события change/templateSaved.
  */
 const props = defineProps<{
   processKey: string
@@ -47,53 +62,38 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+const toast = useToast()
 
-type Mode = 'manual' | 'template'
-const mode = ref<Mode>('manual')
-const manualVars = ref<PresetVariable[]>([])
-const templateVars = ref<PresetVariable[]>([])
+const vars = ref<PresetVariable[]>([])
 const presets = ref<VariablePreset[]>([])
+/** '' = «Без шаблона» (ручной ввод); иначе id выбранного шаблона. */
 const selectedId = ref<string>('')
+/** WO-UI-34: запрос поиска Combobox. Пункт «Без шаблона» — режим, не
+ *  шаблон: во время поиска (когда ищут ИМЯ шаблона) он скрыт, чтобы не
+ *  мешать фильтру; пустой запрос — пункт на месте, как по умолчанию. */
+const searchQuery = ref('')
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 const available = ref(true)
 const showSaveDialog = ref(false)
 
-const modeTabs = computed(() => [
-  { id: 'manual', label: t('presetManualMode') },
-  { id: 'template', label: t('presetTemplateMode') },
-])
-
-function visibilityLabel(visibility: string): string {
-  return visibility === 'PROCESS' ? t('presetVisibilityProcess') : t('presetVisibilityPrivate')
-}
-
-const activeVars = computed(() => (mode.value === 'manual' ? manualVars.value : templateVars.value))
-// WO-VT-3 (п.6): черновая пустая строка {name:'', value:''} — не «спросить»
-// (раньше давала «Заполните обязательные поля:» с пустым списком).
-const missingAsk = computed(() => missingAskVariables(activeVars.value).filter((n) => n.trim() !== ''))
-
-// WO-VT-3 (критерий 6): ссылки на поля из причины — кликом фокус на поле.
-const manualEditorRef = useTemplateRef('manualEditor')
-const templateEditorRef = useTemplateRef('templateEditor')
-
-function focusAskField(name: string) {
-  const vars = activeVars.value
-  const idx = vars.findIndex((v) => v.name === name)
-  if (idx < 0) return
-  const editor = mode.value === 'manual' ? manualEditorRef.value : templateEditorRef.value
-  editor?.focusField(idx)
-  // В компакте поле может быть скрыто фильтром/сворачиванием — ищем по id.
-  void nextTick().then(() => {
-    const el = document.querySelector(`#pv-name-${idx}, #pv-value-${idx}`) as HTMLElement | null
-    el?.focus()
-  })
-}
+/** WO-UI-34: >8 шаблонов — Combobox с поиском, иначе plain Select. */
+const useCombobox = computed(() => presets.value.length > 8)
 
 /**
- * WO-VT-1: невалидные строки блокируют применение (раньше плохой JSON не
- * давал сохранить инлайн-редактор). Черновые пустые строки — не ошибки.
+ * reka-ui не принимает пустую строку как value SelectItem/ComboboxItem
+ * (нормализует в null → краш). Для пункта «Без шаблона» — sentinel:
+ * наружу (selectedId/getVariables) уходит '' как и раньше.
  */
+const NONE_VALUE = '__none__'
+
+/** Контракт: 'manual' | 'template' (эквивалент прежней mode). */
+const mode = computed(() => (selectedId.value ? 'template' : 'manual'))
+
+// WO-VT-3 (п.6): черновая пустая строка {name:'', value:''} — не «спросить».
+const missingAsk = computed(() => missingAskVariables(vars.value).filter((n) => n.trim() !== ''))
+
+/** WO-VT-1: невалидные строки блокируют применение. Черновые пустые — не ошибки. */
 function rowsInvalid(rows: PresetVariable[]): boolean {
   if (duplicateVariableNames(rows).length) return true
   return rows.some((r) => {
@@ -106,12 +106,99 @@ function rowsInvalid(rows: PresetVariable[]): boolean {
     }) !== null
   })
 }
-const hasErrors = computed(() =>
-  mode.value === 'manual' ? rowsInvalid(manualVars.value) : rowsInvalid(templateVars.value))
-const canApply = computed(() => activeVars.value.length > 0 && missingAsk.value.length === 0 && !hasErrors.value)
+const hasErrors = computed(() => rowsInvalid(vars.value))
+const canApply = computed(() => vars.value.length > 0 && missingAsk.value.length === 0 && !hasErrors.value)
 
-function currentForSave(): PresetVariable[] {
-  return activeVars.value.map((v) => ({ ...v }))
+function visibilityLabel(visibility: string): string {
+  return visibility === 'PROCESS' ? t('presetVisibilityProcess') : t('presetVisibilityPrivate')
+}
+
+function selectedLabel(): string {
+  if (!selectedId.value) return t('presetNoTemplate')
+  const p = presets.value.find((x) => x.id === selectedId.value)
+  return p ? `${p.name}${p.favorite ? t('presetFavoriteStar') : ''}` : t('presetNoTemplate')
+}
+
+const editorRef = useTemplateRef<InstanceType<typeof VariablesEditor> | null>('editor')
+
+/** WO-VT-3 (критерий 6): ссылка на поле из причины — кликом фокус на поле. */
+function focusAskField(name: string) {
+  const idx = vars.value.findIndex((v) => v.name === name)
+  if (idx < 0) return
+  editorRef.value?.focusField(idx)
+  // В компакте поле может быть скрыто фильтром/сворачиванием — ищем по id.
+  void nextTick().then(() => {
+    const el = document.querySelector(`#pv-name-${idx}, #pv-value-${idx}`) as HTMLElement | null
+    el?.focus()
+  })
+}
+
+function deepCloneRows(rows: PresetVariable[]): PresetVariable[] {
+  return rows.map((v) => ({ ...v }))
+}
+
+/**
+ * WO-UI-34 п.2: замена непустых строк никогда не молча теряет их — тихий
+ * тост с действием «Отменить» (undo возвращает прежние строки и выбор).
+ */
+function offerUndo(snapshot: { vars: PresetVariable[]; selectedId: string }, message: string) {
+  toast.info(message, {
+    duration: 6000,
+    action: {
+      label: t('presetUndo'),
+      onClick: () => {
+        vars.value = snapshot.vars
+        selectedId.value = snapshot.selectedId
+        emit('change', vars.value)
+      },
+    },
+  })
+}
+
+/** Смена пункта «Шаблон»: '' — ручной ввод, id — применить шаблон.
+ *  reka AcceptableValue = string|number|bigint|Record|null; у нас — только
+ *  строки (sentinel и preset id), остальное нормализуется в id-строку. */
+function onSelect(value: unknown) {
+  const raw = String(value ?? '')
+  const id = raw === NONE_VALUE ? '' : raw
+  if (id === selectedId.value) return
+  if (id === '') {
+    if (selectedId.value !== '' && vars.value.length) {
+      offerUndo({ vars: deepCloneRows(vars.value), selectedId: selectedId.value }, t('presetTemplateCleared'))
+    }
+    vars.value = []
+    selectedId.value = ''
+    emit('change', vars.value)
+    return
+  }
+  const prev = selectedId.value
+  loading.value = true
+  loadError.value = null
+  void (async () => {
+    try {
+      const full = await getPreset(id)
+      if (vars.value.length) {
+        offerUndo({ vars: deepCloneRows(vars.value), selectedId: prev }, t('presetTemplateApplied'))
+      }
+      vars.value = (full.variables ?? []).map((v) => ({ ...v }))
+      selectedId.value = id
+      emit('change', vars.value)
+    } catch (e) {
+      loadError.value = errorMessage(e, t('loadError'))
+    } finally {
+      loading.value = false
+    }
+  })()
+}
+
+function onVarsChange(v: PresetVariable[]) {
+  vars.value = v
+  emit('change', v)
+}
+
+/** Переменные, готовые к отправке: плейсхолдеры развёрнуты. */
+function getVariables(): PresetVariable[] {
+  return applyPresetVariables(vars.value)
 }
 
 async function loadPresets() {
@@ -134,65 +221,37 @@ async function loadPresets() {
   }
 }
 
-async function onSelectPreset() {
-  if (!selectedId.value) {
-    templateVars.value = []
-    emit('change', [])
-    return
-  }
-  loading.value = true
-  try {
-    const full = await getPreset(selectedId.value)
-    templateVars.value = (full.variables ?? []).map((v) => ({ ...v }))
-    emit('change', templateVars.value)
-  } catch (e) {
-    loadError.value = errorMessage(e, t('loadError'))
-  } finally {
-    loading.value = false
-  }
-}
-
-function onTemplateVarsChange(v: PresetVariable[]) {
-  templateVars.value = v
-  emit('change', v)
-}
-
-function onManualVarsChange(v: PresetVariable[]) {
-  manualVars.value = v
-  emit('change', v)
-}
-
-/** Переменные, готовые к отправке: плейсхолдеры развёрнуты. */
-function getVariables(): PresetVariable[] {
-  return applyPresetVariables(activeVars.value)
-}
-
 function onTemplateSaved(preset: VariablePreset) {
   showSaveDialog.value = false
   emit('templateSaved', preset)
   void loadPresets().then(() => {
+    if (!presets.value.some((p) => p.id === preset.id)) {
+      presets.value = [...presets.value, preset]
+    }
     selectedId.value = preset.id
-    void onSelectPreset()
+    // Сохранённый шаблон = копия текущих строк из диалога: подставляем его
+    // переменные без повторного запроса.
+    vars.value = (preset.variables ?? []).map((v) => ({ ...v }))
+    emit('change', vars.value)
   })
 }
 
-watch(mode, (m) => {
-  if (m === 'template' && available.value) void loadPresets()
+// WO-UI-34: список «Шаблон» всегда в форме — грузим при монтировании.
+onMounted(() => {
+  if (available.value) void loadPresets()
 })
 
-// WO-VT-3 (A-NEW-2): пикер больше не пересоздаётся key'ем при каждой букве
-// имени сообщения — но список шаблонов привязан к ref. При смене ref
-// перезагружаем СПИСОК (ручной ввод и правки копии не трогаем); выбранный
-// шаблон сбрасываем, только если его нет в новом списке.
+// WO-VT-3 (A-NEW-2): список привязан к ref. При смене ref перезагружаем
+// СПИСОК; выбранный шаблон сбрасываем, только если его нет в новом списке.
 watch(
   () => [props.processKey, props.targetKind, props.targetRef],
   async () => {
-    if (!available.value || mode.value !== 'template') return
+    if (!available.value) return
     const prevSelected = selectedId.value
     await loadPresets()
     if (prevSelected && !presets.value.some((p) => p.id === prevSelected)) {
       selectedId.value = ''
-      templateVars.value = []
+      vars.value = []
       emit('change', [])
     }
   },
@@ -202,104 +261,122 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
 </script>
 
 <template>
-  <!-- WO-VT-3 (критерий 3 табов): сегментированный контрол НАД содержимым,
-       отступ ≥12px до второго уровня (в тулбаре редактора). -->
-  <div v-if="available" class="space-y-3">
-    <div class="border-b border-border pb-0">
-      <TabsBar
-        :tabs="modeTabs"
-        :active-id="mode"
-        @update:active-id="mode = $event as 'manual' | 'template'"
-      />
+  <!-- WO-UI-34: строка «Шаблон» + один редактор. available=false — без
+       списка, только редактор (WO п.3). -->
+  <div class="space-y-3">
+    <div v-if="available && loading && !presets.length" class="flex items-center gap-2">
+      <Label for="preset-select" class="shrink-0 text-sm">{{ t('presetTemplateLabel') }}</Label>
+      <span class="text-sm text-muted-foreground">{{ t('loading') }}</span>
     </div>
-    <div v-if="mode === 'manual'" class="pt-3">
-      <VariablesEditor ref="manualEditor" :model-value="manualVars" @update:model-value="onManualVarsChange" />
-      <div class="mt-2 flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          class="text-xs"
-          :disabled="!manualVars.length"
-          @click="showSaveDialog = true"
-        >
-          {{ t('presetSaveAsTemplate') }}
-        </Button>
-        <p v-if="missingAsk.length" class="text-xs text-amber-600 dark:text-amber-400">
-          {{ t('presetFillAskFieldsPrefix') }}
-          <template v-for="(f, fi) in missingAsk" :key="`m-${f}`">
-            <Button
-              type="button"
-              variant="link"
-              size="sm"
-              class="h-auto p-0 font-mono text-xs"
-              :title="t('presetGoToField', { field: f })"
-              @click="focusAskField(f)"
-            >
-              {{ f }}</Button><span v-if="fi < missingAsk.length - 1">, </span>
-          </template>
-        </p>
-      </div>
-    </div>
-    <div v-else class="space-y-3 pt-3">
-      <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
-      <p v-else-if="loadError" class="text-sm text-red-500">{{ loadError }}</p>
-      <template v-else>
-        <Label for="preset-select" class="sr-only">{{ t('presetTemplateMode') }}</Label>
+    <template v-else-if="available">
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-1" data-testid="preset-template-row">
+        <Label for="preset-select" class="shrink-0 text-sm">{{ t('presetTemplateLabel') }}</Label>
         <Select
-          :model-value="selectedId"
-          @update:model-value="selectedId = String($event); onSelectPreset()"
+          v-if="!useCombobox"
+          :model-value="selectedId || NONE_VALUE"
+          @update:model-value="onSelect($event)"
         >
-          <SelectTrigger id="preset-select" data-testid="preset-select" class="w-full h-9 text-sm">
-            <SelectValue :placeholder="t('presetChooseTemplate')" />
+          <SelectTrigger id="preset-select" data-testid="preset-select" class="h-9 min-w-56 flex-1 text-sm">
+            <SelectValue :placeholder="t('presetNoTemplate')" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem v-for="p in presets" :key="p.id" :value="p.id" :data-testid="`preset-opt-${p.id}`">
-              {{ p.name }}{{ p.favorite ? t('presetFavoriteStar') : '' }} ({{ visibilityLabel(p.visibility) }})
+            <SelectItem :value="NONE_VALUE" data-testid="preset-opt-manual">{{ t('presetNoTemplate') }}</SelectItem>
+            <SelectItem
+              v-for="p in presets"
+              :key="p.id"
+              :value="p.id"
+              :data-testid="`preset-opt-${p.id}`"
+              class="gap-2"
+            >
+              <span class="flex min-w-0 items-center gap-2">
+                <span class="truncate">
+                  {{ p.name }}{{ p.favorite ? t('presetFavoriteStar') : '' }}
+                </span>
+                <Badge variant="secondary" class="shrink-0 px-1.5 py-0 text-[10px] font-normal">
+                  {{ visibilityLabel(p.visibility) }}
+                </Badge>
+              </span>
             </SelectItem>
           </SelectContent>
         </Select>
-        <p v-if="!presets.length" class="text-sm text-muted-foreground">{{ t('presetNoTemplates') }}</p>
-        <VariablesEditor
-          v-if="selectedId"
-          ref="templateEditor"
-          :model-value="templateVars"
-          @update:model-value="onTemplateVarsChange"
-        />
-        <div v-if="selectedId" class="flex flex-wrap items-center gap-2">
+        <Combobox
+          v-else
+          :model-value="selectedId || NONE_VALUE"
+          @update:model-value="onSelect($event)"
+        >
+          <ComboboxAnchor>
+            <ComboboxTrigger
+              id="preset-select"
+              data-testid="preset-select"
+              class="flex h-9 min-w-56 flex-1 items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span class="truncate">{{ selectedLabel() }}</span>
+              <ChevronDown class="h-4 w-4 shrink-0 opacity-50" />
+            </ComboboxTrigger>
+          </ComboboxAnchor>
+          <ComboboxList class="w-(--reka-combobox-trigger-width) min-w-56">
+            <ComboboxInput
+              class="mb-1 w-full rounded-md border border-input bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
+              :placeholder="t('presetSearchTemplates')"
+              @input="searchQuery = ($event.target as HTMLInputElement).value"
+            />
+            <!-- «Без шаблона» — режим, не шаблон: при поиске по имени скрыт. -->
+            <ComboboxItem v-if="!searchQuery" :value="NONE_VALUE" data-testid="preset-opt-manual">{{ t('presetNoTemplate') }}</ComboboxItem>
+            <ComboboxItem
+              v-for="p in presets"
+              :key="p.id"
+              :value="p.id"
+              :data-testid="`preset-opt-${p.id}`"
+            >
+              <span class="min-w-0 flex-1 truncate">
+                {{ p.name }}{{ p.favorite ? t('presetFavoriteStar') : '' }}
+              </span>
+              <Badge variant="secondary" class="shrink-0 px-1.5 py-0 text-[10px] font-normal">
+                {{ visibilityLabel(p.visibility) }}
+              </Badge>
+            </ComboboxItem>
+            <ComboboxEmpty class="px-2 py-1.5 text-sm text-muted-foreground">{{ t('presetNoTemplates') }}</ComboboxEmpty>
+          </ComboboxList>
+        </Combobox>
+        <p v-if="loadError" class="w-full text-sm text-red-500">{{ loadError }}</p>
+        <p v-else-if="!presets.length" class="w-full text-sm text-muted-foreground">{{ t('presetNoTemplates') }}</p>
+      </div>
+    </template>
+    <VariablesEditor ref="editor" :model-value="vars" @update:model-value="onVarsChange" />
+    <div class="flex flex-wrap items-center gap-2">
+      <Button
+        v-if="available"
+        type="button"
+        variant="outline"
+        size="sm"
+        class="text-xs"
+        :disabled="!vars.length"
+        @click="showSaveDialog = true"
+      >
+        {{ t('presetSaveAsTemplate') }}
+      </Button>
+      <p v-if="missingAsk.length" class="text-xs text-amber-600 dark:text-amber-400">
+        {{ t('presetFillAskFieldsPrefix') }}
+        <template v-for="(f, fi) in missingAsk" :key="`m-${f}`">
           <Button
             type="button"
-            variant="outline"
+            variant="link"
             size="sm"
-            class="text-xs"
-            :disabled="!templateVars.length"
-            @click="showSaveDialog = true"
+            class="h-auto p-0 font-mono text-xs"
+            :title="t('presetGoToField', { field: f })"
+            @click="focusAskField(f)"
           >
-            {{ t('presetSaveAsTemplate') }}
-          </Button>
-          <p v-if="missingAsk.length" class="text-xs text-amber-600 dark:text-amber-400">
-            {{ t('presetFillAskFieldsPrefix') }}
-            <template v-for="(f, fi) in missingAsk" :key="`t-${f}`">
-              <Button
-                type="button"
-                variant="link"
-                size="sm"
-                class="h-auto p-0 font-mono text-xs"
-                :title="t('presetGoToField', { field: f })"
-                @click="focusAskField(f)"
-              >
-                {{ f }}</Button><span v-if="fi < missingAsk.length - 1">, </span>
-            </template>
-          </p>
-        </div>
-      </template>
+            {{ f }}</Button><span v-if="fi < missingAsk.length - 1">, </span>
+        </template>
+      </p>
     </div>
     <PresetEditorDialog
+      v-if="available"
       :open="showSaveDialog"
       :process-key="processKey"
       :target-kind="targetKind"
       :target-ref="targetRef ?? null"
-      :initial-variables="currentForSave()"
+      :initial-variables="vars.map((v) => ({ ...v }))"
       @close="showSaveDialog = false"
       @saved="onTemplateSaved"
     />
