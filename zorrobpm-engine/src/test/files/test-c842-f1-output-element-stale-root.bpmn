@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-42 F-1 (red-team r1, a130e522b): вложенные MI-подпроцессы. outputElement
+     ВНУТРЕННЕГО тела ссылается на цикл-переменную activity ВНЕШНЕГО инстанса
+     (внутренний inputElement называется item — в собственном скоупе внутреннего
+     инстанса строки activity НЕТ) + lane-переменные decision/comment.
+     Перед входом в root посажены stale activity (employeeId 99999) и
+     stale loopCounter (999). decisions[i] обязан нести значение СОБСТВЕННОГО
+     (внешнего) инстанса и позиционный слот — а не stale root. RED на мутации
+     MB (chainVariablesForNames на merge-ридере): собственный слой merge-ридера
+     добирает stale root activity для имени, которого в собственном скоупе нет,
+     и перетирает байнд внешнего скоупа. decisions живёт в скоупе внешнего
+     инстанса (containing scope внутреннего MI-тела) и удаляется с ним на
+     завершении — поэтому внешний outputElement проецирует decisions в
+     outerResults (root), как innerResults → outerResults в S8a.
+     Форма — по образцу test-c841-parity-s8a-nested.bpmn (MI sub в MI sub). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-c842f1" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c842f1" name="C842 F-1 nested MI stale root loopvar" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="outerSub" />
+    <bpmn:subProcess id="outerSub" name="outer">
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=outerActs" inputElement="activity"
+                                     outputCollection="outerResults"
+                                     outputElement="{&#34;uuid&#34;: activity.uuid, &#34;decisions&#34;: decisions}" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="outerStart"><bpmn:outgoing>of1</bpmn:outgoing></bpmn:startEvent>
+      <bpmn:sequenceFlow id="of1" sourceRef="outerStart" targetRef="innerSub" />
+      <bpmn:subProcess id="innerSub" name="inner">
+        <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+          <bpmn:extensionElements>
+            <zeebe:loopCharacteristics inputCollection="=innerActs" inputElement="item"
+                                       outputCollection="decisions"
+                                       outputElement="{&#34;employee&#34;: activity.employeeId, &#34;decision&#34;: decision, &#34;comment&#34;: comment}" />
+          </bpmn:extensionElements>
+        </bpmn:multiInstanceLoopCharacteristics>
+        <bpmn:incoming>of1</bpmn:incoming>
+        <bpmn:outgoing>of2</bpmn:outgoing>
+        <bpmn:startEvent id="innerStart"><bpmn:outgoing>if1</bpmn:outgoing></bpmn:startEvent>
+        <bpmn:sequenceFlow id="if1" sourceRef="innerStart" targetRef="ut" />
+        <bpmn:userTask id="ut" name="inner decision task">
+          <bpmn:incoming>if1</bpmn:incoming>
+          <bpmn:outgoing>if2</bpmn:outgoing>
+        </bpmn:userTask>
+        <bpmn:sequenceFlow id="if2" sourceRef="ut" targetRef="innerEnd" />
+        <bpmn:endEvent id="innerEnd"><bpmn:incoming>if2</bpmn:incoming></bpmn:endEvent>
+      </bpmn:subProcess>
+      <bpmn:sequenceFlow id="of2" sourceRef="innerSub" targetRef="outerEnd" />
+      <bpmn:endEvent id="outerEnd"><bpmn:incoming>of2</bpmn:incoming></bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" sourceRef="outerSub" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

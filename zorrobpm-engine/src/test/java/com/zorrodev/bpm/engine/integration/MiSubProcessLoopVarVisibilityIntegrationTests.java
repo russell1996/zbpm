@@ -5,6 +5,7 @@ import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.TestMain;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
+import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.entity.OutboxKind;
@@ -26,6 +27,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -72,10 +74,28 @@ public class MiSubProcessLoopVarVisibilityIntegrationTests {
     private OutboxRepository outboxRepository;
     @Autowired
     private com.zorrodev.bpm.engine.repository.UserTaskRepository userTaskRepository;
+    @Autowired
+    private ElementSupport elementSupport;
 
     private UUID deploy() throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/test-c842-approval-route-v2.bpmn"));
         return processDefinitionService.addProcessDefinition(bpmn).getId();
+    }
+
+    private UUID deployF1() throws Exception {
+        String bpmn = Files.readString(Paths.get("src/test/files/test-c842-f1-output-element-stale-root.bpmn"));
+        return processDefinitionService.addProcessDefinition(bpmn).getId();
+    }
+
+    /** Значение JSON-переменной из видимого контекста activity (та же цепочка, что у движка). */
+    private Map<String, Object> visibleJson(UUID pi, UUID activityId, String name) throws Exception {
+        for (ProcessVariable v : elementSupport.visibleVariables(pi, activityId)) {
+            if (name.equals(v.getName()) && v.getValue() != null) {
+                return new ObjectMapper().readValue(v.getValue(),
+                    new tools.jackson.core.type.TypeReference<Map<String, Object>>() {});
+            }
+        }
+        throw new AssertionError("variable " + name + " not visible for activity " + activityId);
     }
 
     private List<ActivityEntity> activities(UUID pi, String bpmnElementId, ActivityStatus status) {
@@ -605,6 +625,100 @@ public class MiSubProcessLoopVarVisibilityIntegrationTests {
         Map<String, String> d2 = jobVariables(pi, "srvWorkTaskDecide", decides2.get(0).getId());
         assertThat(d2.get("activityUuid")).as("decide-2 carries a2").isEqualTo("a2");
         runtimeService.completeServiceTask(decides2.get(0).getId(), List.of());
+        assertThat(incidents(pi)).as("no incidents").isZero();
+    }
+
+    /**
+     * F-1 (red-team r1, a130e522b): слой агрегации outputElement
+     * ({@code ElementSupport.chainVariablesForNames}) — ВЛОЖЕННЫЙ MI-подпроцесс,
+     * чей outputElement ссылается на цикл-переменную activity ВНЕШНЕГО инстанса
+     * (внутренний inputElement назван item, поэтому строки activity во
+     * ВНУТРЕННЕМ инстанс-скоупе нет — она живёт во внешнем инстанс-скоупе).
+     * Перед входом: stale root {@code activity} (чужой employeeId) и stale root
+     * {@code loopCounter=999}. Ожидание: каждый decisions[i] несёт значения
+     * СВОЕГО (внешнего) инстанса и позиционный слот; stale root не используется
+     * и не затирается.
+     *
+     * <p>На мутации MB (chainVariablesForNames → merge-ридер, строки ~891/895)
+     * тест RED: merge-ридер собственного слоя добирает stale root activity для
+     * имени, которого в собственном скоупе нет, и перетирает байнд внешнего
+     * скоупа. Верхнеуровневый MI (outerResults) — контроль: там activity в
+     * собственном скоупе инстанса, own-wins держит своё в обоих вариантах.
+     *
+     * <p>Дублирует зонд п.3 HOLD (miSlot — merge-ридер loopCounter,
+     * MultiInstanceExecutor ~638): stale root loopCounter=999 обязан не сдвинуть
+     * позиционные слоты (мута слота 998 раздула бы массивы null-ами).
+     */
+    @Transactional
+    @Test
+    void staleRoot_outputElementLoopVar_nestedMI_carriesOwnInstanceValues() throws Exception {
+        UUID pdId = deployF1();
+        StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+        dto.setProcessDefinitionId(pdId);
+        dto.setVariables(List.of(
+            pv("outerActs", ProcessVariableType.JSON,
+                "[{\"employeeId\":21346,\"uuid\":\"o1\"},{\"employeeId\":29250,\"uuid\":\"o2\"}]"),
+            pv("innerActs", ProcessVariableType.JSON,
+                "[{\"employeeId\":111,\"uuid\":\"i1\"},{\"employeeId\":222,\"uuid\":\"i2\"}]"),
+            pv("activity", ProcessVariableType.JSON, "{\"employeeId\":99999,\"uuid\":\"stale\"}"),
+            pv("loopCounter", ProcessVariableType.LONG, "999")));
+        UUID pi = runtimeService.startProcessInstance(dto).getId();
+
+        List<ActivityEntity> uts = activities(pi, "ut", ActivityStatus.CREATED);
+        assertThat(uts).as("2 outer x 2 inner user tasks").hasSize(4);
+
+        // К какому (внешний, внутренний) инстансу каждая задача — из видимого
+        // контекста: activity — скоуп внешнего инстанса, item — собственный
+        // внутренний. Сдача в перемешанном порядке (по id строки) — слот обязан
+        // быть позиционным, не порядком завершения.
+        List<ActivityEntity> ordered = new ArrayList<>(uts);
+        ordered.sort(Comparator.comparing(ActivityEntity::getId));
+        for (ActivityEntity ut : ordered) {
+            String outerUuid = String.valueOf(visibleJson(pi, ut.getId(), "activity").get("uuid"));
+            String innerUuid = String.valueOf(visibleJson(pi, ut.getId(), "item").get("uuid"));
+            runtimeService.completeUserTask(ut.getId(), List.of(
+                pv("decision", ProcessVariableType.STRING, "D-" + innerUuid),
+                pv("comment", ProcessVariableType.STRING, "c-" + outerUuid + "-" + innerUuid)));
+        }
+
+        // decisions живёт в скоупе внешнего инстанса и удаляется с ним на
+        // завершении — внешний outputElement проецирует его в outerResults
+        // (root) ДО сноса: проверяем агрегаты там.
+        ObjectMapper om = new ObjectMapper();
+        ProcessVariableEntity outerResults = variableRepository
+            .findByNameAndProcessInstanceId("outerResults", pi).orElseThrow();
+        List<Map<String, Object>> orRows = om.readValue(outerResults.getTextValue(),
+            new tools.jackson.core.type.TypeReference<List<Map<String, Object>>>() {});
+        assertThat(orRows).as("outerResults sized by outer collection").hasSize(2);
+        assertThat(orRows.stream().map(r -> String.valueOf(r.get("uuid"))).toList())
+            .as("outerResults positional: slot 0 = o1, slot 1 = o2").containsExactly("o1", "o2");
+        for (Map<String, Object> outer : orRows) {
+            String outerUuid = String.valueOf(outer.get("uuid"));
+            String outerEmployee = switch (outerUuid) {
+                case "o1" -> "21346";
+                case "o2" -> "29250";
+                default -> throw new AssertionError("unexpected outer element " + outerUuid);
+            };
+            List<Map<String, Object>> decisions =
+                (List<Map<String, Object>>) outer.get("decisions");
+            assertThat(decisions).as("outer " + outerUuid + ": decisions sized by inner collection").hasSize(2);
+            assertThat(String.valueOf(decisions.get(0).get("employee")))
+                .as("outer " + outerUuid + " slot 0: employee of ITS OWN instance, not stale root").isEqualTo(outerEmployee);
+            assertThat(String.valueOf(decisions.get(0).get("decision"))).as("outer " + outerUuid + " slot 0: inner item i1").isEqualTo("D-i1");
+            assertThat(String.valueOf(decisions.get(0).get("comment"))).as("outer " + outerUuid + " slot 0: comment of i1").isEqualTo("c-" + outerUuid + "-i1");
+            assertThat(String.valueOf(decisions.get(1).get("employee")))
+                .as("outer " + outerUuid + " slot 1: employee of ITS OWN instance, not stale root").isEqualTo(outerEmployee);
+            assertThat(String.valueOf(decisions.get(1).get("decision"))).as("outer " + outerUuid + " slot 1: inner item i2").isEqualTo("D-i2");
+            assertThat(String.valueOf(decisions.get(1).get("comment"))).as("outer " + outerUuid + " slot 1: comment of i2").isEqualTo("c-" + outerUuid + "-i2");
+        }
+
+        // Stale root-строки нетронуты: не использованы и не перезаписаны.
+        assertThat(rootRows(pi, "activity").get(0).getTextValue()).as("stale root activity untouched")
+            .contains("stale");
+        assertThat(rootRows(pi, "loopCounter").get(0).getTextValue()).as("stale root loopCounter untouched")
+            .isEqualTo("999");
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt())
+            .as("instance completed end-to-end").isNotNull();
         assertThat(incidents(pi)).as("no incidents").isZero();
     }
 }
