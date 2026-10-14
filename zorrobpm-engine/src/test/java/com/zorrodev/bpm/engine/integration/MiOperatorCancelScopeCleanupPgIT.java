@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -43,6 +44,7 @@ class MiOperatorCancelScopeCleanupPgIT extends PostgresIT {
     @Autowired private JdbcTemplate jdbc;
 
     @Test
+    @Transactional
     void operatorCancel_cleansMiScopeVariablesAndBodyState() throws Exception {
         String bpmn = Files.readString(Paths.get("src/test/files/test-c840-mi-sub-minimal.bpmn"));
         ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
