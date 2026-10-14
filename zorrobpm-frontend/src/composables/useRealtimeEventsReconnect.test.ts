@@ -201,6 +201,37 @@ describe('useRealtimeEvents reconnect after JWT expiry (WO-UI-22)', () => {
     rt.disconnect()
   })
 
+  it('WO-UI-31: disconnect mid-backoff kills the chain (no zombie refresh / terminal publish)', async () => {
+    // Реальный сценарий (пойман браузерным прогоном): вкладки делят fanout и
+    // api-инстанс. Лидер упал, backoff пошёл (1с → refresh в полёте), вкладка
+    // закрылась. Без generation-guard возобновление протухшего refresh
+    // продолжает цепочку на МЁРТВОМ экземпляре: stacked-таймеры (handle
+    // перезаписан — disconnect их не чистит) и каждое возобновление строят
+    // новый таймер; на капе мёртвая вкладка публикует sessionExpired=true в
+    // общий fanout — живые вкладки показывают «сессия истекла» при живой
+    // сессии.
+    vi.useFakeTimers()
+    const adapter = mockRefreshFail()
+    const rt = useRealtimeEvents()
+    await connectAndWait(rt)
+    const first = FakeEventSource.instances[0]
+    first.readyState = FakeEventSource.CLOSED
+    first.onerror?.({} as Event)
+    // Синхронно доводим до момента «refresh в полёте»: таймер 1с сработал,
+    // refreshAndReconnect подвешен на await sharedRefresh (микрозадачи ещё
+    // не отыгрались) — disconnect попадает прямо в этот интервал.
+    vi.advanceTimersByTime(1000)
+    rt.disconnect()
+    // Протухшее возобновление + stacked-таймеры должны быть мертвы:
+    // дальше ни refresh, ни терминальное состояние с мёртвого экземпляра.
+    const refreshesAtDisconnect = adapter.mock.calls.length
+    await vi.runAllTimersAsync()
+    await Promise.resolve()
+    expect(adapter.mock.calls.length).toBe(refreshesAtDisconnect)
+    // markSessionExpired с мёртвого экземпляра не исполнялся:
+    expect(rt.sessionExpired.value).toBe(false)
+  })
+
   it('non-CLOSED error keeps legacy behaviour (no refresh, channel alive)', async () => {
     const adapter = mockRefreshOk()
     const rt = useRealtimeEvents()

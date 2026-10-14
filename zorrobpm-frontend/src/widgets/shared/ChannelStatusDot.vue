@@ -102,8 +102,11 @@ const STATE_TEXT: Record<ChannelDotState, string> = {
   expired: 'channelStateSessionExpired',
 }
 
-const dotColor = computed(() =>
-  channelState.value === 'healthy' ? 'bg-amber-500' : DOT_COLOR[channelState.value],
+// Каноничные цвета только для не-healthy состояний: при 'healthy' точка
+// не рендерится (v-if на channelDown()), поэтому в DOT_COLOR healthy нет —
+// каст безопасен (указатель на v-if выше).
+const dotColor = computed(
+  () => DOT_COLOR[channelState.value as Exclude<ChannelDotState, 'healthy'>],
 )
 
 const stateText = computed(() => t(STATE_TEXT[channelState.value]))

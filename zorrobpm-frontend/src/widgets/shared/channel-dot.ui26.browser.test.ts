@@ -323,15 +323,17 @@ describe('WO-UI-26 channel banner removal + dot (browser)', () => {
 //    гистерезис 5 с сохраняется, пульсации нет;
 //  - ОДИН источник правды: строка «Статус» панели и точка ведутся из
 //    channelDotState({isConnected, realtimeDown, sessionExpired});
-//    поздний follower здорового лидера НЕ горит (снимок здоровья при
-//    подписке), а при падении лидера показывает ТО ЖЕ состояние, что
-//    лидер;
+//    поздний follower здорового лидера НЕ горит (запрос состояния
+//    health-request по BroadcastChannel-фанауту: health-патчи несут
+//    только будущие смены, начальное состояние здоровый лидер не
+//    доставляет сам), а при падении лидера показывает ТО ЖЕ состояние,
+//    что лидер (живые health-патчи);
 //  - панель: align="start" от точки (левый край панели = левый край
 //    точки), не пересекает кнопки тулбара страницы на 1280 и 1920,
 //    влезает в вьюпорт; ширина ≤ 360 (в реальном 360-вьюпорте
 //    floating-ui shift/reka avoidCollisions подтягивает в границы).
 // Мутации (каждая обязана краснить): вернуть слот в правую группу;
-// вернуть нейтральный серый цвет; убрать снимок здоровья для follower.
+// вернуть нейтральный серый цвет; убрать health-request/ответ лидера.
 // =====================================================================
 
 function rectsIntersect(a: DOMRect, b: DOMRect): boolean {
@@ -339,15 +341,6 @@ function rectsIntersect(a: DOMRect, b: DOMRect): boolean {
 }
 
 describe('WO-UI-31 channel dot position / colour / follower desync (browser)', () => {
-  beforeEach(() => {
-    // Снимок здоровья (WO-UI-31) переживает тесты через sessionStorage —
-    // чистим, чтобы RED/GREEN не зависели от порядка.
-    try {
-      sessionStorage.removeItem('zbpm.sse.health')
-    } catch {
-      // ignore
-    }
-  })
 
   it('UI31-1: slot — сосед SearchCommand в левой группе, не в правой', async () => {
     const wrapper = mount(MainLayout, {
