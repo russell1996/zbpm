@@ -131,6 +131,20 @@ function mockRefreshFail() {
   return adapter
 }
 
+// Живой refresh (антоним mockRefreshFail): сессия валидна, КАЖДЫЙ новый
+// EventSource сервер режет → после капа попыток — честный realtimeDown
+// (состояние 'down'), а НЕ sessionExpired. Форма ответа — та же, что в
+// useRealtimeEventsRel57.test.ts (mockRefreshOk): sharedRefresh считает
+// success по status 200.
+function mockRefreshOk() {
+  const adapter = vi.fn(async (cfg: { url?: string }) => {
+    void cfg
+    return { data: {}, status: 200, statusText: 'OK' }
+  })
+  ;(api.defaults as Record<string, unknown>).adapter = adapter
+  return adapter
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
   // SSE-путь зовёт sharedRefresh(api) напрямую (POST /auth/refresh через
@@ -536,6 +550,96 @@ describe('WO-UI-31 channel dot position / colour / follower desync (browser)', (
     const causeEl = document.querySelector('[data-testid="channel-diag-cause"]')
     expect(causeEl).not.toBeNull()
     expect(causeEl!.textContent).not.toBe(en.channelDiagNone)
+  }, 120000)
+
+  it('UI31-6: down (refresh ЖИВ, канал мёртв, кап попыток исчерпан) → точка '
+    + 'видна и красная (bg-destructive); не sessionExpired, не reconnecting', async () => {
+    // Единственный живой путь в состояние 'down' (строка `down:` DOT_COLOR —
+    // единственная из трёх не покрытая: UI31-3 держит `expired:`, UI31-2 —
+    // `reconnecting:`): refresh проходит (сессия валидна), но каждый новый
+    // EventSource сервер режет. Пять обрывов подряд = кап из 5 попыток
+    // (SSE_RECONNECT_MAX_ATTEMPTS); stacked-таймеры backoff (1/2/4/8/16 с)
+    // на живом refresh каждый открывают НОВЫЙ источник (refreshAndReconnect
+    // → openSource), цепочка заканчивается на ~16-й секунде. Шестой обрыв —
+    // терминальный: lastRefreshOk=true → markRealtimeDown() (а не
+    // markSessionExpired — та цепочка в UI31-3 с мёртвым refresh).
+    mockRefreshOk()
+    const wrapper = mount(MainLayout, {
+      attachTo: mountHost(),
+      global: {
+        stubs: { RouterView: true, RouterLink: { template: '<a><slot /></a>' } },
+        plugins: [createPinia(), makeI18n()],
+      },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    expect(FakeEventSource.instances).toHaveLength(1)
+    const ch = useRealtimeChannel().get()
+    expect(ch).not.toBeNull()
+
+    // Пять обрывов подряд (как UI31-3): attempts доходят до капа 5,
+    // stacked-таймеры 1/2/4/8/16 с открывают src2..src6 на живом refresh.
+    const src1 = FakeEventSource.instances[0]
+    for (let i = 0; i < 5; i++) {
+      src1.readyState = FakeEventSource.CLOSED
+      src1.onerror?.({} as Event)
+      await flushPromises()
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    // Ждём конца backoff-цепочки: 6 источников = 5 попыток отработали
+    // (каждый таймер открыл новый источник).
+    await until(() => FakeEventSource.instances.length >= 6, 30000)
+
+    // Шестой обрыв — терминальный: refresh жив → realtimeDown, НЕ
+    // sessionExpired (разводка markRealtimeDown vs markSessionExpired).
+    const last = FakeEventSource.instances[FakeEventSource.instances.length - 1]
+    last.readyState = FakeEventSource.CLOSED
+    last.onerror?.({} as Event)
+    await flushPromises()
+    await until(() => ch!.realtimeDown.value === true, 10000)
+
+    // Состояние дословно как в F-1: realtimeDown=true, sessionExpired=false,
+    // isConnected=false → channelDotState = 'down'.
+    expect(ch!.realtimeDown.value).toBe(true)
+    expect(ch!.sessionExpired.value).toBe(false)
+    expect(ch!.isConnected.value).toBe(false)
+    expect(
+      channelDotState({
+        isConnected: ch!.isConnected.value,
+        realtimeDown: ch!.realtimeDown.value,
+        sessionExpired: ch!.sessionExpired.value,
+      }),
+    ).toBe('down')
+
+    // Точка видима (гистерезис 5 с исчерпан давно) и КРАСНАЯ — bg-destructive
+    // (не янтарный reconnecting, не нейтральный мут). Ждём перекраски:
+    // пока идёт backoff-цепочка, состояние 'reconnecting' (янтарный); после
+    // markRealtimeDown computed dotColor пересчитывается на 'down'.
+    await until(() => {
+      const s = wrapper.find('[data-testid="channel-dot"] span')
+      return s.exists() && !s.classes().includes('bg-amber-500')
+    }, 5000)
+    const dot = wrapper.find('[data-testid="channel-dot"]')
+    expect(dot.exists()).toBe(true)
+    // Мутация `down: 'bg-muted-foreground'` (security review M3) падает именно здесь:
+    // expected '…bg-muted-foreground' to contain 'bg-destructive'.
+    expect(dot.find('span').classes().join(' ')).toContain('bg-destructive')
+    expect(dot.find('span').classes().join(' ')).not.toContain('bg-amber-500')
+    expect(dot.find('span').classes().join(' ')).not.toContain('bg-muted-foreground')
+    expect(dot.classes().join(' ')).not.toContain('animate-pulse')
+
+    // Панель: «Статус» = состояние down («Нет связи»/«No connection»), а не
+    // «Session expired…» (UI31-3) и не «Reconnecting…» (UI31-2).
+    const dotEl = wrapper.element.querySelector('[data-testid="channel-dot"]') as HTMLElement
+    dotEl.click()
+    await flushPromises()
+    await until(() => document.querySelector('[data-testid="channel-dialog"]') !== null, 8000)
+    const statusEl = document.querySelector('[data-testid="channel-diag-status"]')
+    expect(statusEl).not.toBeNull()
+    expect(statusEl!.textContent).toBe(en.channelStateDown)
+    expect(statusEl!.textContent).not.toBe(en.channelStateSessionExpired)
+    wrapper.unmount()
+    mounted = []
   }, 120000)
 
   it('UI31-4: панель align="start" от точки — не перекрывает кнопки «Обновить»/'
