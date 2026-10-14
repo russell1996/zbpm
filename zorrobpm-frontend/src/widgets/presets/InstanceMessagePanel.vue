@@ -16,7 +16,8 @@ import { useToast } from '@/composables/useToast'
  *
  * WO-VT-3 (A-NEW-2): пикер НЕ пересоздаётся при доборе имени — :key убран,
  * targetRef обновляется живой пропсой; введённые переменные сохраняются
- * внутри PresetPicker.manualVars/templateVars и выживают при смене имени.
+ * внутри PresetPicker (единое состояние vars, WO-UI-34) и выживают при
+ * смене имени (сброс — только если выбранный шаблон исчез из нового списка).
  */
 const props = defineProps<{
   processKey: string
