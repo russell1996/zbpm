@@ -232,7 +232,7 @@ public class ActivityServiceImplTests {
         var flowNav = new com.zorrodev.bpm.engine.handler.FlowNavigator(dbService, bpmnService, scriptService, elementSupport,
             org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class), serviceTaskEnqueueService,
             miExecutorProvider());
-        registerHandler(BpmnElementType.EXCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNav));
+        registerHandler(BpmnElementType.EXCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNav, elementSupport));
         registerHandler(BpmnElementType.PARALLEL_GATEWAY, new com.zorrodev.bpm.engine.handler.ParallelGatewayHandler(dbService, flowNav));
         registerHandler(BpmnElementType.INCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler(dbService, flowNav, scriptService, elementSupport));
         registerHandler(BpmnElementType.EVENT_BASED_GATEWAY, new com.zorrodev.bpm.engine.handler.EventBasedGatewayHandler(dbService, flowNav));
@@ -240,7 +240,7 @@ public class ActivityServiceImplTests {
         registerHandler(BpmnElementType.MESSAGE_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.MessageCatchHandler(dbService, activityService, boundaryScheduler));
         registerHandler(BpmnElementType.TIMER_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.TimerCatchHandler(dbService, elementSupport, incidentService));
         registerHandler(BpmnElementType.SIGNAL_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.SignalCatchHandler(dbService));
-        registerHandler(BpmnElementType.CONDITIONAL_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.ConditionalCatchHandler(dbService, flowNav, scriptService));
+        registerHandler(BpmnElementType.CONDITIONAL_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.ConditionalCatchHandler(dbService, flowNav, scriptService, elementSupport));
         registerHandler(BpmnElementType.INTERMEDIATE_THROW_EVENT, new com.zorrodev.bpm.engine.handler.IntermediateThrowEventHandler(dbService, flowNav));
         registerHandler(BpmnElementType.MESSAGE_THROW_EVENT, new com.zorrodev.bpm.engine.handler.MessageThrowHandler(dbService, flowNav, activityService));
         registerHandler(BpmnElementType.SIGNAL_THROW_EVENT, new com.zorrodev.bpm.engine.handler.SignalThrowHandler(dbService, flowNav, activityService));

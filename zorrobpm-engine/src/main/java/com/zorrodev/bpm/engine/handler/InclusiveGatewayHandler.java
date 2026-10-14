@@ -54,7 +54,15 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
                 .map(ExclusiveGatewayExtensionModel::getDefaultFlowId)
                 .orElse(null);
 
-            List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
+            // WO-C8-45: тот же chain-контекст, что у exclusive (см. комментарий
+            // там): сплит внутри (MI-)подпроцесса активирует ветви по переменным
+            // своего инстанса. Имена — только из оцениваемых потоков (default
+            // не оценивается и имён не даёт).
+            List<String> conditionFlows = new ArrayList<>(outgoings);
+            conditionFlows.remove(defaultFlowId);
+            List<ProcessVariable> variables = elementSupport.chainVariablesForNames(
+                processInstanceId, activityId,
+                elementSupport.flowConditionVariableNames(bpmn, conditionFlows));
             List<String> activated = new ArrayList<>();
             for (String outgoing : outgoings) {
                 if (outgoing.equals(defaultFlowId)) {
@@ -70,7 +78,7 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
 
             log.info("{}/{}: Entering and completing {}: {}/{} (activating {} of {} branches)", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId(), activated.size(), outgoings.size());
 
-            Token newToken = dbService.createToken(tokenId);
+            Token newToken = dbService.createToken(tokenId, miInstanceScopeOrNull(bpmn, tokenId));
             UUID newTokenId = newToken.getId();
             // WO-ENG-1 (durable): set pending branch count before any branch executes.
             // Use activated.size() (only condition-passing branches), not outgoings.size().
@@ -122,6 +130,37 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
             log.info("{}/{}: Entering and completing {}: {}/{}", processInstanceId, tokenId, bpmnElement.getType(), activityId, bpmnElement.getId());
             flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, bpmnElement, executor);
         }
+    }
+
+    /**
+     * WO-C8-45 (б, lifecycle): если сплит стоит ВНУТРИ инстанса MI-подпроцесса
+     * (токен сплита несёт scopeActivityId строки MI-контейнера), форк-токен
+     * наследует тот же scope — иначе ветви бегут на scope-less токене и их
+     * end-события уходят в счётчик ветвей вместо MI-хвоста: строка контейнера
+     * остаётся CREATED навсегда (orphan), хотя инстанс завершён (G-P).
+     * Вне MI-инстанса — null, поведение прежнее (обычный scope-less форк;
+     * parallel-сплит в MI — не этот WO, V7).
+     * Перекрывающиеся условия (2 ветви одного инстанса) безопасны:
+     * прибытия MI-join'а дедуплицируются по id строки контейнера
+     * ({@code recordParallelGatewayArrival}), второй end того же инстанса —
+     * чистый no-op без повтора хвоста.
+     */
+    private UUID miInstanceScopeOrNull(BpmnProcessDefinitionModel bpmn, UUID tokenId) {
+        com.zorrodev.bpm.engine.dto.Token parent =
+            tokenId == null ? null : dbService.findToken(tokenId).orElse(null);
+        UUID parentScope = parent == null ? null : parent.getScopeActivityId();
+        if (parentScope == null) {
+            return null;
+        }
+        com.zorrodev.bpm.engine.dto.Activity scopeActivity = dbService.getActivity(parentScope);
+        BpmnElementModel scopeElement = scopeActivity == null ? null
+            : bpmn.getElement(scopeActivity.getBpmnElementId());
+        if (scopeElement != null && scopeElement.getType() == BpmnElementType.SUB_PROCESS
+            && scopeElement.getExtensions() != null
+            && scopeElement.getExtensions().getMultiInstanceExtension() != null) {
+            return parentScope;
+        }
+        return null;
     }
 
     /**

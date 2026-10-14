@@ -278,7 +278,7 @@ public class MultiInstanceExecutor {
         Integer expected = dbService.getInclusiveExpected(processInstanceId, gatewayKey);
         int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, gatewayKey).size();
 
-        boolean done = (expected != null && arrived >= expected) || completionConditionMet(processInstanceId, arrived, expected, mi);
+        boolean done = (expected != null && arrived >= expected) || completionConditionMet(processInstanceId, token, arrived, expected, mi);
         if (done) {
             // WO-C8-41 (F4, oracle S9): done РАНЬШЕ всех приходов (arrived <
             // expected) — сработало completionCondition: оставшиеся сиблинги
@@ -733,7 +733,7 @@ public class MultiInstanceExecutor {
         }
     }
 
-    private boolean completionConditionMet(UUID processInstanceId, int arrived, Integer expected, MultiInstanceExtensionModel mi) {
+    private boolean completionConditionMet(UUID processInstanceId, UUID token, int arrived, Integer expected, MultiInstanceExtensionModel mi) {
         String expression = mi.getCompletionCondition();
         if (expression == null || expression.isBlank()) {
             return false;
@@ -748,7 +748,13 @@ public class MultiInstanceExecutor {
         // not a unary test. evaluateScript would misinterpret the expression.
         // WO-PERF-9 (B-8, full-scan): the condition only needs its own
         // referenced names — one indexed SELECT, not the whole scope.
-        List<ProcessVariable> variables = new ArrayList<>(rootVariablesFor(processInstanceId, expression));
+        // WO-C8-45 (г): контекст — chain токена продолжающегося инстанса
+        // (root + внешние скоупы, nearest-wins): outputCollection вложенного MI
+        // лежит в containing scope тела (C8-41 F3), а не в root — root-чтение
+        // условие никогда не срабатывало. Сверху цепочка пуста: ровно
+        // rootVariablesFor, поведение прежнее.
+        List<ProcessVariable> variables = new ArrayList<>(elementSupport.chainVariablesForTokenNames(
+            processInstanceId, token, extractFeelVariableNames(expression)));
         long total = expected != null ? expected : 0;
         long active = expected != null ? Math.max(0, expected - arrived) : 0;
         addLocalLong(variables, "completedInstances", arrived);
