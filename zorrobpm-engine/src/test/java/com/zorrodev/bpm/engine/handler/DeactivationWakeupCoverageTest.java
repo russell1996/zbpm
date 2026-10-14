@@ -110,7 +110,9 @@ class DeactivationWakeupCoverageTest {
      */
     // WO-C8-41 (F4): 124 → 126 — два новых cancel-сайта добивки сиблингов
     // при раннем completionCondition (cancelRemainingMiSubInstances, R18 выше).
-    private static final int EXPECTED_SITE_COUNT = 126;
+    // WO-C8-43: 126 → 127 — per-branch complete контейнера MI-инстанса
+    // (finishMiSubProcessInstance, R19 выше).
+    private static final int EXPECTED_SITE_COUNT = 127;
 
     /** site key -> причина, почему перепроверка здесь не нужна. Непустая — проверяется тестом. */
     private static final Map<String, String> WHITELIST = new LinkedHashMap<>();
@@ -201,6 +203,14 @@ class DeactivationWakeupCoverageTest {
         + "а join-ы ВНУТРИ терминированных сиблингов умирают вместе со scope "
         + "(тот же класс, что R08 — воскрешать их значило бы выполнить хвост "
         + "отменённого потока) ";
+    private static final String R19 =
+        "WO-C8-43: контейнер инстанса параллельного MI-подпроцесса completes в момент "
+        + "СВОЕГО внутреннего end (не дожидаясь остальных — иначе orphan CREATED навсегда). "
+        + "Это закрытие живой ветви без собственного продолжения: join/агрегация/исходящий "
+        + "поток — только на последнем прибывшем (вызывающий finishBranch доводит их, не-last "
+        + "выходит без продолжения). Припаркованные join-ы доставщика не теряют: их "
+        + "перепроверка — на их собственных деактивациях, как раньше; соседние ветви живы, "
+        + "scope не гасится (не R08 — здесь никто не отменяется, ветвь завершилась штатно) ";
     private static final String R14 =
         "шлюз-«проход» (ровно один вход, ни сплит ни join): activity этого шлюза закрывается, и "
         + "тот же токен идёт дальше по исходящему потоку. Доставщик не умирает — ветвь остаётся "
@@ -327,6 +337,16 @@ class DeactivationWakeupCoverageTest {
         // (ключи — дословно из вывода сканера, см. его сообщение при падении).
         WHITELIST.put("MultiInstanceExecutor.java#cancelRemainingMiSubInstances[for (com.zorrodev.bpm.engine.dto.Activity sibling : siblings) {]|dbService.cancelActivity(sibling.getId())", R18);
         WHITELIST.put("MultiInstanceExecutor.java#cancelRemainingMiSubInstances[processInstanceId, live, sibling.getId())) {]|dbService.cancelActivity(inner.getId())", R18);
+        // ── WO-C8-43: per-branch complete MI-подпроцесса ─────────────────────────
+        // Контейнер инстанса completes в момент СВОЕГО внутреннего end — это закрытие
+        // живой ветви (join/агрегация собраны только на последнем прибывшем; см. R19:
+        // своей исходящей ветви у контейнера нет, хвост продолжает вызывающий
+        // finishBranch только на join, не-last выходит без продолжения).
+        // Припаркованные join-ы этим путём НЕ теряют доставщика: доставщик ветви
+        // умирает штатно в том же вызове, где join переоценивается на приходе
+        // (multiInstanceContinue → InclusiveGateway-механика), а уведомление соседей
+        // — на их собственных деактивациях, как раньше.
+        WHITELIST.put("FlowNavigator.java#finishMiSubProcessInstance[]|dbService.completeActivity(subProcessActivityId)", R19);
         // ── ветка ПРЕРЫВАЮЩЕЙ границы в EventTrigger.fireBoundary: хост (или его MI-…
         WHITELIST.put("EventTrigger.java#fireBoundary[for (Activity instance : ownInstances) {]|dbService.cancelActivity(instance.getId())", R12);
         WHITELIST.put("EventTrigger.java#fireBoundary[} else if (!miHost && isPlainHostOnSharedToken(processInstanceId, tokenId, host)) {]|dbService.cancelActivity(hostActivityId)", R12);
