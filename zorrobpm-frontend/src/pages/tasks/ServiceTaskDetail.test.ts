@@ -169,13 +169,14 @@ describe('ServiceTaskDetail — preset picker wiring (WO-VT-1 Б-2)', () => {
     })
     const w = await renderWithPicker()
     const picker = w.findComponent(PresetPicker)
-    await picker.findAll('[role="tab"]')[1].trigger('click')
-    await flushPromises()
+    // WO-UI-34: вкладок режима нет — один дропдаун «Шаблон». Пункт 0 =
+    // «Без шаблона» (sentinel), пункт 1 = первый шаблон (p1).
     const trg = picker.find('[data-testid="preset-select"]')
     trg.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
     await flushPromises()
     await new Promise((r) => setTimeout(r, 50))
-    ;(document.querySelector('[role="option"]') as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    const opts = document.querySelectorAll('[role="option"]')
+    ;(opts[1] as HTMLElement).dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await flushPromises()
     await new Promise((r) => setTimeout(r, 50))
     await actionButton(w).trigger('click')

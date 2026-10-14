@@ -131,10 +131,12 @@ describe('ProcessDefinitionDetail render', () => {
     await flushPromises()
     await new Promise((resolve) => setTimeout(resolve, 0));
     await (flushPromises as () => Promise<void>)()
-    // WO-VT-1: инлайн-редактор старта заменён PresetPicker «Ручной ввод | Из шаблона».
+    // WO-VT-1: инлайн-редактор старта заменён PresetPicker.
+    // WO-UI-34: вместо вкладок «Ручной ввод | Из шаблона» — один дропдаун
+    // «Шаблон», по умолчанию «Без шаблона — ввести вручную».
     // WO-UI-27: диалог — shadcn-Dialog в портале document.
-    expect(document.body.textContent).toContain('presetManualMode')
-    expect(document.body.textContent).toContain('presetTemplateMode')
+    expect(document.body.textContent).toContain('presetTemplateLabel')
+    expect(document.body.textContent).toContain('presetNoTemplate')
   })
 
   it('manual rows offer all six variable types', async () => {
