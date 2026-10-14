@@ -421,6 +421,12 @@ public class BpmnParseServiceImpl implements BpmnParseService {
                 }
             }
 
+            // WO-C8-44: normalize declared flow references from the sequence-flow
+            // graph — runs AFTER every addElement/addFlow site above (top-level,
+            // nested-subprocess flattening, ad-hoc, transactions), so no path
+            // depends on its position in this method.
+            normalizeFlowReferences(pd);
+
             // WO-ENG-34: record the executable constructs this engine does not implement, so deploy
             // can refuse the model instead of running it with changed meaning. Recording, not
             // throwing — models stored by an earlier release keep parsing (this parser is ALSO the
@@ -439,6 +445,69 @@ public class BpmnParseServiceImpl implements BpmnParseService {
     private record EventDefinitionRegistry(Map<String, String> errorCodes,
                                            Map<String, String> signalNames,
                                            Map<String, String> escalationCodes) {
+    }
+
+    /**
+     * WO-C8-44: derive every flow node's {@code incoming}/{@code outgoing} from the
+     * {@code sequenceFlow} graph ({@code sourceRef}/{@code targetRef}).
+     *
+     * <p>BPMN 2.0 and Camunda 8 treat the child {@code <incoming>/<outgoing>} elements
+     * as optional — the graph is defined by the flows. Camunda Modeler always writes
+     * them, hand-written/generated schemas often do not, so navigation MUST NOT depend
+     * on the author having declared them (a MI-subprocess early exit froze the
+     * instance exactly this way: {@code FlowNavigator.proceedToOutgoing} saw an empty
+     * outgoing list and silently took the dead-end branch).
+     *
+     * <p>Semantics: declared ids are kept verbatim and win on conflicts (a declared
+     * {@code <bpmn:outgoing>} pointing at a non-existent flow is NOT removed or
+     * rewritten — navigation still fails closed with {@code IllegalStateException}
+     * on the missing flow, exactly as before; the mismatch is WARN-logged here).
+     * Only ids present in the graph but absent from the declaration are appended
+     * (INFO-logged). Schemas WITH declared flows are therefore byte-identical in
+     * behaviour; schemas WITHOUT them now navigate the same graph.
+     */
+    private void normalizeFlowReferences(com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd) {
+        Map<String, List<String>> derivedOutgoing = new HashMap<>();
+        Map<String, List<String>> derivedIncoming = new HashMap<>();
+        for (com.zorrodev.bpm.engine.bpmn.model.BpmnFlowModel flow : pd.getFlows()) {
+            if (flow.getSourceRef() != null) {
+                derivedOutgoing.computeIfAbsent(flow.getSourceRef(), k -> new ArrayList<>()).add(flow.getFlowId());
+            }
+            if (flow.getTargetRef() != null) {
+                derivedIncoming.computeIfAbsent(flow.getTargetRef(), k -> new ArrayList<>()).add(flow.getFlowId());
+            }
+        }
+        for (com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel element : pd.getElements()) {
+            // toElementModel-копии ставят списки через set (null, когда в XML
+            // объявлений нет) поверх инициализированного LinkedList — здесь
+            // null приводим к пустому, иначе merge ниже падает NPE.
+            if (element.getIncoming() == null) {
+                element.setIncoming(new ArrayList<>());
+            }
+            if (element.getOutgoing() == null) {
+                element.setOutgoing(new ArrayList<>());
+            }
+            mergeFlowRefs(element.getId(), "outgoing",
+                element.getOutgoing(), derivedOutgoing.getOrDefault(element.getId(), List.of()));
+            mergeFlowRefs(element.getId(), "incoming",
+                element.getIncoming(), derivedIncoming.getOrDefault(element.getId(), List.of()));
+        }
+    }
+
+    private void mergeFlowRefs(String elementId, String kind, List<String> declared, List<String> derived) {
+        for (String flowId : derived) {
+            if (!declared.contains(flowId)) {
+                declared.add(flowId);
+                log.info("WO-C8-44: element '{}' has no declared <bpmn:{}> for sequence flow '{}' — derived from the flow graph",
+                    elementId, kind, flowId);
+            }
+        }
+        for (String flowId : declared) {
+            if (!derived.contains(flowId)) {
+                log.warn("WO-C8-44: element '{}' declares <bpmn:{}>{}</bpmn:{}> with no matching sequenceFlow in the graph — kept as-is (navigation fails closed on the missing flow)",
+                    elementId, kind, flowId, kind);
+            }
+        }
     }
 
     /**
