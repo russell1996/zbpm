@@ -1,0 +1,45 @@
+# WO-OPS-30 F0 — Camunda 8 comparison stand (oracle).
+#
+# Self-contained. `docker compose up -d` brings up ONLY the two zbpm-cmp-* containers
+# defined here. Prefer stack/up.sh / stack/down.sh: they guard against recreating an
+# already-running zeebe and NEVER touch foreign containers (raxon-*, wo*, zbpm-*-pgci*,
+# zorrobpm-*, tooling-*, ...).
+#
+#   zeebe        camunda/zeebe:8.5.0            (oracle: behavior)      container: zbpm-cmp-zeebe
+#                  gateway  gRPC   127.0.0.1:36500 -> 26500  (runner + connectors point here)
+#                  actuator HTTP   127.0.0.1:39600 -> 9600    (health: GET /actuator/health)
+#                  partitions = 1 (single-partition stand, deterministic)
+#   connectors   camunda/connectors-bundle:8.5.9 (oracle: connector behavior, used in F2b)
+#                  ZEEBE_CLIENT_BROKER_GATEWAY-ADDRESS = host.docker.internal:36500
+#
+# Auth is left disabled (plaintext) — this is a throwaway local comparison stand, not prod.
+services:
+  zeebe:
+    image: camunda/zeebe:8.5.0
+    container_name: zbpm-cmp-zeebe
+    ports:
+      - "127.0.0.1:36500:26500"
+      - "127.0.0.1:39600:9600"
+    environment:
+      - ZEEBE_BROKER_CLUSTER_PARTITIONSCOUNT=1
+      - ZEEBE_BROKER_GATEWAY_NETWORK_HOST=0.0.0.0
+      - ZEEBE_BROKER_GATEWAY_NETWORK_PORT=26500
+    restart: unless-stopped
+
+  # No depends_on on purpose: zeebe may already be running as a standalone container
+  # (e.g. started by the maintainer for the campaign). `docker compose up -d connectors` then
+  # starts ONLY the connectors service; it connects to the gateway once it is reachable.
+  #
+  # ZEEBE_CLIENT_BROKER_GATEWAY-ADDRESS is parameterized (C8_ORACLE_GATEWAY):
+  #   - fresh stand-up (both services from this file, same network)  -> default `zeebe:26500`
+  #   - reusing an EXTERNAL zeebe (maintainer's, bridge IP, port bound to 127.0.0.1) -> stack/up.sh
+  #     exports C8_ORACLE_GATEWAY=<zeebe bridge IP>:26500 and `docker network connect`s the
+  #     connectors onto zeebe's network so the in-container gateway port is routable.
+  #     (host.docker.internal:36500 does NOT work against a 127.0.0.1-bound port — the
+  #     host-gateway IP is not loopback; verified live, connection refused.)
+  connectors:
+    image: camunda/connectors-bundle:8.5.9
+    container_name: zbpm-cmp-connectors
+    environment:
+      - ZEEBE_CLIENT_BROKER_GATEWAY-ADDRESS=${C8_ORACLE_GATEWAY:-zeebe:26500}
+    restart: unless-stopped
