@@ -533,7 +533,8 @@ public class DBServiceImpl implements DBService {
         // Финализация здесь переводила ту ERROR в CANCELLED — регрессия
         // CompensationWaitIntegrationTests.waitForCompletionTrue_failedHandlerReleasesTheThrower.
         // Финализация живёт в kill-путях: cancelProcessInstance, terminate (root),
-        // kill дочерних инстансов в EventTrigger.
+        // kill дочерних инстансов в EventTrigger и ErrorEscalationThrower
+        // (вылет error/escalation из дочернего инстанса через call activity).
         processInstanceDbOperations.completeProcessInstance(processInstanceId);
     }
 

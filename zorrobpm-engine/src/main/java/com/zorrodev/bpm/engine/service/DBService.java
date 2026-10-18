@@ -56,11 +56,13 @@ public interface DBService {
     /**
      * WO-C8-49: единая точка финализации КИЛЛИРОВАННОГО инстанса — вызывается из
      * {@link #cancelProcessInstance}, из {@code EndEventHandler.TerminateEndEvent}
-     * (root-scope) и из kill-путей дочерних инстансов в {@code EventTrigger} — в
-     * каждом ДО проставления completedAt: гасит ERROR-активности (тем же путём,
-     * что отмена остальных) и закрывает открытые инциденты инстанса. Без неё
-     * отмена/terminate оставляли открытый инцидент + ERROR-активность
-     * (прод-инстанс 9dcdd13e: 70 таких инцидентов на завершённых).
+     * (root-scope), из kill-путей дочерних инстансов в {@code EventTrigger}
+     * (interrupting boundary / interrupting event-subprocess) и в
+     * {@code ErrorEscalationThrower} (вылет error/escalation из дочернего инстанса
+     * через call activity) — в каждом ДО проставления completedAt: гасит
+     * ERROR-активности (тем же путём, что отмена остальных) и закрывает открытые
+     * инциденты инстанса. Без неё отмена/terminate оставляли открытый инцидент +
+     * ERROR-активность (прод-инстанс 9dcdd13e: 70 таких инцидентов на завершённых).
      *
      * <p>Намеренно НЕ вызывается из {@link #completeProcessInstance}: нормальный
      * выход с открытым инцидентом достижим (failed compensation handler —
