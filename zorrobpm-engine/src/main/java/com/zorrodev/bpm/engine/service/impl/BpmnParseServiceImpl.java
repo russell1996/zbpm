@@ -202,7 +202,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
 
             if (Optional.ofNullable(process.getServiceTasks()).isPresent()) {
                 for (BpmnServiceTaskModel serviceTask : process.getServiceTasks()) {
-                    BpmnElementModel element = toElementModel(serviceTask);
+                    BpmnElementModel element = toElementModel(serviceTask, bpmn);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -252,7 +252,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             }
             if (Optional.ofNullable(process.getUserTasks()).isPresent()) {
                 for (BpmnUserTaskModel userTask : process.getUserTasks()) {
-                    BpmnElementModel element = toElementModel(userTask);
+                    BpmnElementModel element = toElementModel(userTask, bpmn);
                     element.setProcessDefinition(pd);
                     pd.addElement(element);
                 }
@@ -798,6 +798,11 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         BpmnMultiInstanceModel mi = readSubProcessMultiInstance(rawBpmn, containerId);
         if (mi != null) {
             attachMultiInstance(element, mi);
+            // WO-C8-50: compatibility warning (same as the task nested path below): the
+            // marker belongs as a direct child of the container.
+            log.warn("WO-C8-50: subProcess '{}' carries multiInstanceLoopCharacteristics inside "
+                + "bpmn:extensionElements — accepted for compatibility, move it to a direct child "
+                + "of the subProcess", containerId);
         }
     }
 
@@ -834,21 +839,235 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             elementXml = block.substring(open, close + "</bpmn:multiInstanceLoopCharacteristics>".length());
         }
         try {
-            BpmnSubProcessMultiInstanceWrapper wrapper = SecureXmlParser.unmarshal(
-                "<subProcessMultiInstance xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\""
-                    + " xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">"
-                    + elementXml + "</subProcessMultiInstance>",
-                BpmnSubProcessMultiInstanceWrapper.class);
-            if (wrapper == null || wrapper.getMultiInstance() == null) {
-                log.warn("WO-C8-40: subProcess '{}' extension block parsed to no multi-instance marker — marker ignored",
-                    containerId);
-                return null;
-            }
-            return wrapper.getMultiInstance();
+            // WO-C8-50: the fragment may carry an xsi:type (completionCondition is
+            // written <bpmn:completionCondition xsi:type="bpmn:tFormalExpression">) —
+            // without xmlns:xsi on the envelope the unmarshal fails and the whole
+            // MI marker is dropped silently (consumer v50+: subprocess ran once).
+            return parseNestedMiFragment(elementXml, containerId);
         } catch (RuntimeException e) {
             log.warn("WO-C8-40: subProcess '{}' extension block failed to parse multi-instance marker — marker ignored: {}",
                 containerId, e.toString());
             return null;
+        }
+    }
+
+    /**
+     * WO-C8-50: shared fragment → model step for a {@code multiInstanceLoopCharacteristics}
+     * element extracted from a host's own {@code <bpmn:extensionElements>} block (the
+     * Camunda 8/Zeebe nested spelling). The SAME {@link BpmnMultiInstanceModel} type the
+     * standard direct-child path maps — so {@code completionCondition} and every other
+     * child parses identically in both spellings (one разбор, never a copy). Null +
+     * warn on failure (the caller treats null as "no marker", never as a bound MI).
+     */
+    static BpmnMultiInstanceModel parseNestedMiFragment(String elementXml, String elementId) {
+        BpmnSubProcessMultiInstanceWrapper wrapper = SecureXmlParser.unmarshal(
+            "<subProcessMultiInstance xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\""
+                + " xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\""
+                + " xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">"
+                + elementXml + "</subProcessMultiInstance>",
+            BpmnSubProcessMultiInstanceWrapper.class);
+        if (wrapper == null || wrapper.getMultiInstance() == null) {
+            log.warn("WO-C8-50: element '{}' nested multi-instance marker parsed to no model — marker ignored",
+                elementId);
+            return null;
+        }
+        return wrapper.getMultiInstance();
+    }
+
+    /**
+     * WO-C8-50: the DIRECT {@code <bpmn:extensionElements>} child block of one
+     * {@code <bpmn:TAG id="...">} element (serviceTask/userTask carry their MI marker
+     * there in the Camunda 8/Zeebe nested spelling), returned wrapped as a standalone
+     * document for the shared JAXB types — or null when the element has no direct
+     * block. Same narrowness contract as
+     * {@link #subProcessExtensionBlock(String, String, java.util.Set)}: documentation/comments
+     * are skipped, and any {@code <bpmn:*>} other than the allowed children means the
+     * block belongs to a nested element, not to this one. Task kinds never nest the
+     * same tag, but the paired close is still depth-aware (one helper, no second
+     * copy of the rule).
+     *
+     * @param tag                  the BPMN element name ({@code serviceTask}, {@code userTask})
+     * @param allowedBpmnChildren  {@code <bpmn:*>} children the element's own block may
+     *                             carry ({@code multiInstanceLoopCharacteristics} for the nested MI spelling)
+     */
+    static String elementExtensionBlock(String rawBpmn, String tag, String elementId,
+                                        java.util.Set<String> allowedBpmnChildren) {
+        if (rawBpmn == null || tag == null || elementId == null || elementId.isBlank()) {
+            return null;
+        }
+        String openPrefix = "<bpmn:" + tag;
+        String closeTag = "</bpmn:" + tag + ">";
+        int from = 0;
+        while (true) {
+            int open = rawBpmn.indexOf(openPrefix, from);
+            if (open == -1) {
+                return null;
+            }
+            int afterPrefix = open + openPrefix.length();
+            if (afterPrefix < rawBpmn.length()) {
+                char delim = rawBpmn.charAt(afterPrefix);
+                if (delim != '>' && delim != '/' && !Character.isWhitespace(delim)) {
+                    from = afterPrefix;
+                    continue;
+                }
+            }
+            int headEnd = tagHeadEnd(rawBpmn, open);
+            if (headEnd == -1) {
+                return null;
+            }
+            String head = rawBpmn.substring(open, headEnd);
+            boolean mine = head.contains("id=\"" + elementId + "\"")
+                || head.contains("id='" + elementId + "'");
+            int close = matchingCloseTag(rawBpmn, headEnd, tag);
+            if (close == -1) {
+                return null;
+            }
+            if (!mine) {
+                from = headEnd + 1;
+                continue;
+            }
+            String body = rawBpmn.substring(headEnd + 1, close);
+            int cursor = 0;
+            while (true) {
+                while (cursor < body.length() && Character.isWhitespace(body.charAt(cursor))) {
+                    cursor++;
+                }
+                if (body.startsWith("<!--", cursor)) {
+                    int commentEnd = body.indexOf("-->", cursor + 4);
+                    if (commentEnd == -1) {
+                        return null;
+                    }
+                    cursor = commentEnd + 3;
+                } else if (body.startsWith("<bpmn:documentation", cursor)) {
+                    int docEnd = body.indexOf("</bpmn:documentation>", cursor + 20);
+                    if (docEnd == -1) {
+                        return null;
+                    }
+                    cursor = docEnd + "</bpmn:documentation>".length();
+                } else {
+                    break;
+                }
+            }
+            String extPrefix = "<bpmn:extensionElements";
+            if (!body.startsWith(extPrefix, cursor)) {
+                return null;
+            }
+            int extHeadEnd = tagHeadEnd(body, cursor + extPrefix.length() - 1);
+            if (extHeadEnd == -1) {
+                return null;
+            }
+            if (body.charAt(extHeadEnd - 1) == '/') {
+                return null;
+            }
+            int innerFrom = extHeadEnd + 1;
+            int extClose = matchingCloseTag(body, extHeadEnd, "extensionElements");
+            if (extClose == -1) {
+                return null;
+            }
+            String between = body.substring(innerFrom, extClose);
+            int probe = 0;
+            while (true) {
+                int nested = between.indexOf("<bpmn:", probe);
+                if (nested == -1) {
+                    break;
+                }
+                if (between.startsWith("<!--", nested)) {
+                    int commentEnd = between.indexOf("-->", nested + 4);
+                    if (commentEnd == -1) {
+                        return null;
+                    }
+                    probe = commentEnd + 3;
+                    continue;
+                }
+                String allowedName = null;
+                for (String a : allowedBpmnChildren) {
+                    if (between.startsWith("<bpmn:" + a, nested)) {
+                        allowedName = a;
+                        break;
+                    }
+                }
+                if (allowedName == null) {
+                    return null;
+                }
+                int allowedHeadEnd = tagHeadEnd(between, nested);
+                if (allowedHeadEnd == -1) {
+                    return null;
+                }
+                if (between.charAt(allowedHeadEnd - 1) == '/') {
+                    probe = allowedHeadEnd + 1;
+                } else {
+                    int allowedClose = matchingCloseTag(between, allowedHeadEnd, allowedName);
+                    if (allowedClose == -1) {
+                        return null;
+                    }
+                    probe = allowedClose + ("</bpmn:" + allowedName + ">").length();
+                }
+            }
+            return "<taskExtension xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\""
+                + " xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\">"
+                + between + "</taskExtension>";
+        }
+    }
+
+    /**
+     * WO-C8-50: test-visible extraction step — the {@code <bpmn:multiInstanceLoopCharacteristics>}
+     * element nested in a serviceTask/userTask's own {@code <bpmn:extensionElements>} block
+     * (null when the task carries no such marker there). The fragment → model step is the
+     * shared {@link #parseNestedMiFragment} (same type, same children as the subProcess
+     * nested path and the standard direct-child path).
+     */
+    static BpmnMultiInstanceModel readNestedTaskMultiInstance(String rawBpmn, String tag, String elementId) {
+        String block = elementExtensionBlock(rawBpmn, tag, elementId, java.util.Set.of("multiInstanceLoopCharacteristics"));
+        if (block == null) {
+            return null;
+        }
+        int open = block.indexOf("<bpmn:multiInstanceLoopCharacteristics");
+        if (open == -1) {
+            return null;
+        }
+        int headEnd = tagHeadEnd(block, open);
+        if (headEnd == -1) {
+            return null;
+        }
+        String elementXml;
+        if (block.charAt(headEnd - 1) == '/') {
+            elementXml = block.substring(open, headEnd);
+        } else {
+            int close = block.indexOf("</bpmn:multiInstanceLoopCharacteristics>", headEnd);
+            if (close == -1) {
+                return null;
+            }
+            elementXml = block.substring(open, close + "</bpmn:multiInstanceLoopCharacteristics>".length());
+        }
+        try {
+            return parseNestedMiFragment(elementXml, elementId);
+        } catch (RuntimeException e) {
+            log.warn("WO-C8-50: {} '{}' nested multi-instance marker failed to parse — marker ignored: {}",
+                tag, elementId, e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * WO-C8-50: attaches the nested-spelling MI marker of a serviceTask/userTask (the marker
+     * lives in the task's own {@code <bpmn:extensionElements>} block instead of being a direct
+     * child). No-op when the direct spelling already bound (JAXB owns it), when there is no
+     * nested marker, or when the raw source is unavailable. A recognised nested marker logs a
+     * compatibility warning: the marker belongs as a direct child of the element, the nested
+     * form is accepted only so deployed v44–v49-style models keep running.
+     */
+    private void attachNestedTaskMultiInstance(BpmnElementModel element, String rawBpmn,
+                                               String tag, String elementId) {
+        if (element.getExtensions() != null
+            && element.getExtensions().getMultiInstanceExtension() != null) {
+            return;
+        }
+        BpmnMultiInstanceModel mi = readNestedTaskMultiInstance(rawBpmn, tag, elementId);
+        if (mi != null) {
+            attachMultiInstance(element, mi);
+            log.warn("WO-C8-50: {} '{}' carries multiInstanceLoopCharacteristics inside "
+                + "bpmn:extensionElements — accepted for compatibility, move it to a direct child "
+                + "of the element", tag, elementId);
         }
     }
 
@@ -1278,7 +1497,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
     private void flattenSubProcessChildren(BpmnSubProcessModel sub, String rawBpmn, com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel pd, EventDefinitionRegistry registry, Map<String, String> messageNames, Map<String, String> messageKeys) {
         if (sub.getServiceTasks() != null) {
             for (BpmnServiceTaskModel serviceTask : sub.getServiceTasks()) {
-                BpmnElementModel child = toElementModel(serviceTask);
+                BpmnElementModel child = toElementModel(serviceTask, rawBpmn);
                 child.setProcessDefinition(pd);
                 child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
@@ -1294,7 +1513,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         }
         if (sub.getUserTasks() != null) {
             for (BpmnUserTaskModel userTask : sub.getUserTasks()) {
-                BpmnElementModel child = toElementModel(userTask);
+                BpmnElementModel child = toElementModel(userTask, rawBpmn);
                 child.setProcessDefinition(pd);
                 child.setParentContainerElementId(sub.getId()); // WO-C8-38: lexical scope for ScopeContainment
                 pd.addElement(child);
@@ -1540,6 +1759,15 @@ public class BpmnParseServiceImpl implements BpmnParseService {
     }
 
     private BpmnElementModel toElementModel(BpmnServiceTaskModel serviceTask) {
+        return toElementModel(serviceTask, null);
+    }
+
+    /**
+     * WO-C8-50: {@code rawBpmn} rides along so the Camunda 8/Zeebe nested MI spelling
+     * (marker inside the task's own {@code <bpmn:extensionElements>}) binds exactly like
+     * the standard direct child. Null keeps the old behaviour (direct spelling only).
+     */
+    private BpmnElementModel toElementModel(BpmnServiceTaskModel serviceTask, String rawBpmn) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(serviceTask.getId());
         element.setName(serviceTask.getName());
@@ -1575,6 +1803,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             }
         attachIoMapping(element, serviceTask.getExtensionElements());
         attachMultiInstance(element, serviceTask.getMultiInstanceLoopCharacteristics());
+        attachNestedTaskMultiInstance(element, rawBpmn, "serviceTask", serviceTask.getId());
         return element;
     }
 
@@ -1852,6 +2081,11 @@ public class BpmnParseServiceImpl implements BpmnParseService {
     }
 
     private BpmnElementModel toElementModel(BpmnUserTaskModel userTask) {
+        return toElementModel(userTask, null);
+    }
+
+    /** WO-C8-50: same nested-MI raw-source contract as {@link #toElementModel(BpmnServiceTaskModel, String)}. */
+    private BpmnElementModel toElementModel(BpmnUserTaskModel userTask, String rawBpmn) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(userTask.getId());
         element.setName(userTask.getName());
@@ -1955,6 +2189,7 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         }
         attachIoMapping(element, userTask.getExtensionElements());
         attachMultiInstance(element, userTask.getMultiInstanceLoopCharacteristics());
+        attachNestedTaskMultiInstance(element, rawBpmn, "userTask", userTask.getId());
         return element;
     }
 

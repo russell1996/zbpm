@@ -75,6 +75,17 @@ public final class BpmnSupportScanner {
         Set.of("task", "scriptTask", "manualTask", "businessRuleTask", "sendTask", "receiveTask");
 
     /**
+     * WO-C8-50: the element kinds the parser binds a NESTED multi-instance marker on
+     * (marker inside the host's own {@code <bpmn:extensionElements>}): the same three
+     * kinds as the direct spelling — serviceTask/userTask (the
+     * {@code attachNestedTaskMultiInstance} path) and embedded subProcess (the
+     * {@code attachSubProcessMultiInstance} path). Every other host drops the nested
+     * marker silently, which rule 4d refuses.
+     */
+    private static final Set<String> NESTED_MULTI_INSTANCE_BOUND_HOSTS =
+        Set.of("serviceTask", "userTask", "subProcess");
+
+    /**
      * The BPMN 2.0 flow-node kinds — the only elements a {@code sequenceFlow} may legally point at,
      * so the only ones that make a {@code sourceRef}/{@code targetRef} resolvable.
      *
@@ -219,6 +230,28 @@ public final class BpmnSupportScanner {
                     + "<multiInstanceLoopCharacteristics> instead."));
         }
 
+        // 4d. WO-C8-50: a multi-instance marker nested inside a host's OWN
+        // <bpmn:extensionElements> that the parser does not bind to that host — the
+        // element runs once while the XML asks for one instance per item (consumer
+        // v50+: a subProcess-shaped defect, found here on every other host kind).
+        // The parser binds the nested spelling only on serviceTask/userTask/subProcess
+        // (the same three kinds as the direct spelling); everywhere else the marker is
+        // dropped silently. The nested form itself is NOT refused on the three binding
+        // kinds (compatibility: deployed v44–v49-style models keep running; the parser
+        // logs a move-to-direct-child warning instead). Disjoint from rules 4/4b/4c by
+        // construction: those match DIRECT loop-marker children only (loopMarkerOf never
+        // descends into extensionElements), this one matches nested markers only.
+        List<String> nestedMiUnbound = idsOfNestedMultiInstanceOnUnboundHosts(document);
+        if (!nestedMiUnbound.isEmpty()) {
+            findings.add(new UnsupportedBpmnConstruct(
+                UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_SHAPE,
+                nestedMiUnbound,
+                "Multi-instance written inside <bpmn:extensionElements> is only read on serviceTask, "
+                    + "userTask and embedded subProcess: " + String.join(", ", nestedMiUnbound) + " carries "
+                    + "such a marker on an element that runs it once. Move the marker to a direct "
+                    + "<multiInstanceLoopCharacteristics> child of a serviceTask, userTask or subProcess, "
+                    + "or drop it."));
+        }
         // 5. conditional start event: became an ordinary none-start (the condition was parsed but
         //    nothing ever read it), and it even consumed the "at most one plain start" budget.
         List<String> conditionalStarts = idsOfElementsWithChild(
@@ -430,6 +463,69 @@ public final class BpmnSupportScanner {
     }
 
     /**
+     * WO-C8-50: ids of the hosts whose OWN direct {@code <bpmn:extensionElements>} block
+     * carries a {@code <bpmn:multiInstanceLoopCharacteristics>} the parser does not bind —
+     * i.e. every host kind except serviceTask/userTask/subProcess. Document order,
+     * de-duplicated. The {@code extensionElements} elements themselves are never hosts
+     * (the marker's own inner block would otherwise self-report).
+     */
+    private static List<String> idsOfNestedMultiInstanceOnUnboundHosts(Document document) {
+        Set<String> seen = new LinkedHashSet<>();
+        collectNestedMultiInstance(document.getDocumentElement(), seen);
+        return List.copyOf(seen);
+    }
+
+    private static void collectNestedMultiInstance(Element element, Set<String> ids) {
+        String name = localName(element);
+        if (!"extensionElements".equals(name)
+            && !NESTED_MULTI_INSTANCE_BOUND_HOSTS.contains(name)
+            && hasNestedMultiInstanceMarker(element)) {
+            ids.add(label(element));
+        }
+        // recurse through everything (containers, extension blocks, the marker's own
+        // inner block): a task nested in a subProcess must be found exactly like a
+        // top-level one, and the guard above keeps extensionElements from self-reporting.
+        NodeList children = element.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node child = children.item(i);
+            if (child.getNodeType() != Node.ELEMENT_NODE || !isBpmn((Element) child)) {
+                continue;
+            }
+            collectNestedMultiInstance((Element) child, ids);
+        }
+    }
+
+    /**
+     * True when the element's OWN direct {@code <bpmn:extensionElements>} child block
+     * carries a {@code <bpmn:multiInstanceLoopCharacteristics>} element. Only the first
+     * (direct-child) extension block counts — an extension block deeper inside belongs
+     * to a nested element and is visited on its own when the walk reaches it.
+     */
+    private static boolean hasNestedMultiInstanceMarker(Element host) {
+        NodeList children = host.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node child = children.item(i);
+            if (child.getNodeType() != Node.ELEMENT_NODE || !isBpmn((Element) child)) {
+                continue;
+            }
+            Element childElement = (Element) child;
+            if (!"extensionElements".equals(localName(childElement))) {
+                continue;
+            }
+            NodeList inner = childElement.getChildNodes();
+            for (int j = 0; j < inner.getLength(); j++) {
+                Node grand = inner.item(j);
+                if (grand.getNodeType() == Node.ELEMENT_NODE
+                    && isBpmn((Element) grand)
+                    && "multiInstanceLoopCharacteristics".equals(localName((Element) grand))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Ids of every BPMN element of one of {@code hostNames} that carries a {@code childName} child
      * (null = any host). Document order, de-duplicated: a stable answer keeps the 400 message
      * deterministic for the same model.
@@ -613,6 +709,7 @@ public final class BpmnSupportScanner {
         UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_CONTAINER,
         UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_TASK,
         UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE,
+        UnsupportedBpmnConstructCodes.UNSUPPORTED_MULTI_INSTANCE_SHAPE,
         UnsupportedBpmnConstructCodes.UNSUPPORTED_CONDITIONAL_START_EVENT,
         UnsupportedBpmnConstructCodes.UNRESOLVED_SEQUENCE_FLOW_REF);
 
@@ -635,6 +732,15 @@ public final class BpmnSupportScanner {
          * ever be false about the case it is now shown for.
          */
         public static final String UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE = "UNSUPPORTED_MULTI_INSTANCE_XSI_TYPE";
+        /**
+         * WO-C8-50: multi-instance nested inside the host's own
+         * {@code <bpmn:extensionElements>} on an element kind the parser does not bind
+         * it on (anything but serviceTask/userTask/subProcess) — the element would run
+         * once instead of creating one instance per item. Separate from the container
+         * and task codes so the message names the real case (nested spelling, not the
+         * host kind being unsupported for MI as such).
+         */
+        public static final String UNSUPPORTED_MULTI_INSTANCE_SHAPE = "UNSUPPORTED_MULTI_INSTANCE_SHAPE";
         public static final String UNSUPPORTED_CONDITIONAL_START_EVENT = "UNSUPPORTED_CONDITIONAL_START_EVENT";
         public static final String UNRESOLVED_SEQUENCE_FLOW_REF = "UNRESOLVED_SEQUENCE_FLOW_REF";
 
