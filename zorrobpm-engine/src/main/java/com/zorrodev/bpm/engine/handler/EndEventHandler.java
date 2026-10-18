@@ -102,6 +102,13 @@ public class EndEventHandler {
             Token token = dbService.findToken(ctx.tokenId()).orElse(null);
             if (token == null || token.getScopeActivityId() == null) {
                 dbService.cancelActiveActivities(ctx.processInstanceId());
+                // WO-C8-49: terminate — это kill (как cancel), а не нормальное
+                // завершение: гасим ERROR-активности и закрываем открытые
+                // инциденты ДО completedAt. Нормальный end event так НЕ делает —
+                // там ERROR падшего compensation-хендлера — видимый результат
+                // (WO-C8-34), и финализация на completeProcessInstance была
+                // регрессией (maintainer HOLD раунда 2).
+                dbService.finalizeFinishedInstance(ctx.processInstanceId());
                 dbService.completeProcessInstance(ctx.processInstanceId());
                 return;
             }

@@ -182,6 +182,9 @@ public class ErrorEscalationThrower {
 
             // the error escapes this child instance regardless of whether the parent catches it
             dbService.cancelActiveActivities(processInstanceId);
+            // WO-C8-49: дочерний инстанс КИЛЛИРУЕТСЯ — та же финализация, что и cancel
+            // (ERROR→CANCELLED + закрыть инциденты), до пометки completion.
+            dbService.finalizeFinishedInstance(processInstanceId);
             dbService.completeProcessInstance(processInstanceId);
 
             if (boundary != null) {
@@ -408,6 +411,9 @@ public class ErrorEscalationThrower {
                 if (isInterrupting(boundary)) {
                     // interrupting escalation on a call activity cancels the child instance
                     dbService.cancelActiveActivities(processInstanceId);
+                    // WO-C8-49: дочерний инстанс КИЛЛИРУЕТСЯ — та же финализация, что и cancel
+                    // (ERROR→CANCELLED + закрыть инциденты), до пометки completion.
+                    dbService.finalizeFinishedInstance(processInstanceId);
                     dbService.completeProcessInstance(processInstanceId);
                     dbService.cancelActivity(callActivity.getId());
                     log.info("{}: escalation '{}' caught (interrupting) by boundary {} on call activity {}", parentInstanceId, escalationCode, boundary.getId(), callActivity.getBpmnElementId());

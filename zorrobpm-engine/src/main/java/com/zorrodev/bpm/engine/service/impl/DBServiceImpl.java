@@ -526,9 +526,14 @@ public class DBServiceImpl implements DBService {
 
     @Override
     public void completeProcessInstance(UUID processInstanceId) {
-        // WO-C8-49: финализация — часть завершения (terminate/normal end/event),
-        // не только отмены: иначе завершение оставляет открытый инцидент + ERROR.
-        finalizeFinishedInstance(processInstanceId);
+        // WO-C8-49 (раунд 2, maintainer HOLD): нормальный выход (end event) — НЕ kill.
+        // Падший compensation-хендлер оставляет ERROR-строку + открытый инцидент как
+        // ВИДИМЫЙ РЕЗУЛЬТАТ (merged-семантика WO-C8-34 security review B2: "That IS the
+        // outcome the operator sees"; инстанс завершается штатно, thrower отпущен).
+        // Финализация здесь переводила ту ERROR в CANCELLED — регрессия
+        // CompensationWaitIntegrationTests.waitForCompletionTrue_failedHandlerReleasesTheThrower.
+        // Финализация живёт в kill-путях: cancelProcessInstance, terminate (root),
+        // kill дочерних инстансов в EventTrigger.
         processInstanceDbOperations.completeProcessInstance(processInstanceId);
     }
 

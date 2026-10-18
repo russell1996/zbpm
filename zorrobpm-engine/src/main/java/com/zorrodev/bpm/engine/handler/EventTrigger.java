@@ -331,6 +331,9 @@ public class EventTrigger {
         dbService.cancelActivity(hostActivityId);
         for (UUID childInstanceId : dbService.findRunningChildInstanceIds(hostActivityId)) {
             dbService.cancelActiveActivities(childInstanceId);
+            // WO-C8-49: дочерний инстанс КИЛЛИРУЕТСЯ вместе со scope — та же
+            // финализация, что и cancel (ERROR→CANCELLED + закрыть инциденты).
+            dbService.finalizeFinishedInstance(childInstanceId);
             dbService.completeProcessInstance(childInstanceId);
         }
         log.info("{}/{}: Boundary interrupting scope container {} — cancelled {} in-scope activities",
@@ -545,6 +548,9 @@ public class EventTrigger {
                 }
                 for (UUID childInstanceId : dbService.findRunningChildInstanceIds(scopeActivityId)) {
                     dbService.cancelActiveActivities(childInstanceId);
+                    // WO-C8-49: дочерний инстанс КИЛЛИРУЕТСЯ вместе со scope — та же
+                    // финализация, что и cancel (ERROR→CANCELLED + закрыть инциденты).
+                    dbService.finalizeFinishedInstance(childInstanceId);
                     dbService.completeProcessInstance(childInstanceId);
                 }
             }
