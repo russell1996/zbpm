@@ -373,4 +373,46 @@ describe('buildDiagnosticJson', () => {
     expect(result.instance.status).toBe('running')
     expect(result.diagnostics.activeTokenCount).toBe(1)
   })
+
+  // ──────────────────────────────────────────────
+  // WO-C8-49 (п.4): cancelled отличается от completed
+  // ──────────────────────────────────────────────
+  it('WO-C8-49: cancelled instance reports status=cancelled with flag', () => {
+    const instance = makeInstance({
+      completedAt: '2026-01-02T00:00:00Z',
+      cancelled: true,
+    })
+    const result = buildDiagnosticJson({
+      instance,
+      activities: [],
+      variables: [],
+      userTasks: [],
+      serviceTasks: [],
+      incidents: [],
+      bpmnXml: '',
+    })
+
+    expect(result.instance.status).toBe('cancelled')
+    expect(result.instance.cancelled).toBe(true)
+    expect(result.instance.completedAt).toBe('2026-01-02T00:00:00Z')
+  })
+
+  it('WO-C8-49: completed-but-not-cancelled stays completed', () => {
+    const instance = makeInstance({
+      completedAt: '2026-01-02T00:00:00Z',
+      cancelled: false,
+    })
+    const result = buildDiagnosticJson({
+      instance,
+      activities: [],
+      variables: [],
+      userTasks: [],
+      serviceTasks: [],
+      incidents: [],
+      bpmnXml: '',
+    })
+
+    expect(result.instance.status).toBe('completed')
+    expect(result.instance.cancelled).toBe(false)
+  })
 })

@@ -53,6 +53,10 @@ public class ProcessInstanceMapper {
         pi.setParentActivityId(entity.getParentActivityId());
         pi.setStartedAt(entity.getStartedAt());
         pi.setCompletedAt(entity.getCompletedAt());
+        // WO-C8-49: cancelled не маппился (DTO всегда false) — из-за этого guard
+        // resolve на закрытом инстансе и cancel-путь видели «не отменён» всегда
+        // (по cancelled), спасало только completedAt. Маппим побайтово.
+        pi.setCancelled(entity.isCancelled());
         pi.setProcessDefinitionId(entity.getProcessDefinitionId());
         // resolve the definition's name/key/version so lists/detail can show a human label
         if (pd != null) {

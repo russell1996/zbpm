@@ -163,6 +163,8 @@ class IncidentServiceTest {
 
         when(dbService.getIncident(incidentId)).thenReturn(incident);
         when(dbService.getActivity(activityId)).thenReturn(activity);
+        // WO-C8-49: guard читает состояние инстанса только для ОТКРЫТОГО
+        // инцидента — здесь инцидент уже закрыт, инстанс не читается.
 
         TokenExecutor executor = org.mockito.Mockito.mock(TokenExecutor.class);
 

@@ -95,6 +95,11 @@ public class StuckServiceTaskWatchdogScheduledPgIT extends PostgresIT {
                 }
 
                 @Override
+                public void completeOpenIncidentsByProcessInstanceId(UUID processInstanceId) {
+                    delegate.completeOpenIncidentsByProcessInstanceId(processInstanceId);
+                }
+
+                @Override
                 public List<Incident> findOpenIncidentsByActivityIds(List<UUID> activityIds) {
                     return delegate.findOpenIncidentsByActivityIds(activityIds);
                 }

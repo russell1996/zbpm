@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c849_terminate" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-C8-49 (п.1б): вилка — ветвь svc падает в инцидент (fail retries=0),
+       ветвь taskB идёт в terminate end event. На master terminate гасит только
+       CREATED/IN_PROGRESS и завершает инстанс, оставляя открытый инцидент
+       и ERROR-активность (ожидание: оба закрыты финализацией). -->
+  <bpmn:process id="test-c849-terminate-with-open-incident" name="test-c849-terminate-with-open-incident" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="pfork" />
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>fSvc</bpmn:outgoing>
+      <bpmn:outgoing>fTask</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fSvc" name="fSvc" sourceRef="pfork" targetRef="svc" />
+    <bpmn:sequenceFlow id="fTask" name="fTask" sourceRef="pfork" targetRef="taskB" />
+
+    <bpmn:serviceTask id="svc" name="svc">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="flaky" retries="2" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fSvc</bpmn:incoming>
+      <bpmn:outgoing>fSvcEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="fSvcEnd" name="fSvcEnd" sourceRef="svc" targetRef="endA" />
+    <bpmn:endEvent id="endA" name="endA">
+      <bpmn:incoming>fSvcEnd</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:userTask id="taskB" name="taskB">
+      <bpmn:incoming>fTask</bpmn:incoming>
+      <bpmn:outgoing>fTaskTerm</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="fTaskTerm" name="fTaskTerm" sourceRef="taskB" targetRef="termEnd" />
+    <bpmn:endEvent id="termEnd" name="termEnd">
+      <bpmn:incoming>fTaskTerm</bpmn:incoming>
+      <bpmn:terminateEventDefinition id="TerminateDef_c849" />
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

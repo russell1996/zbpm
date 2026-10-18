@@ -53,6 +53,25 @@ public interface DBService {
     /** Close all open incidents linked to the given activity IDs (auto-close stale). */
     void completeIncidentsByActivityIds(List<UUID> activityIds);
 
+    /**
+     * WO-C8-49: единая точка финализации КИЛЛИРОВАННОГО инстанса — вызывается из
+     * {@link #cancelProcessInstance}, из {@code EndEventHandler.TerminateEndEvent}
+     * (root-scope), из kill-путей дочерних инстансов в {@code EventTrigger}
+     * (interrupting boundary / interrupting event-subprocess) и в
+     * {@code ErrorEscalationThrower} (вылет error/escalation из дочернего инстанса
+     * через call activity) — в каждом ДО проставления completedAt: гасит
+     * ERROR-активности (тем же путём, что отмена остальных) и закрывает открытые
+     * инциденты инстанса. Без неё отмена/terminate оставляли открытый инцидент +
+     * ERROR-активность (прод-инстанс 9dcdd13e: 70 таких инцидентов на завершённых).
+     *
+     * <p>Намеренно НЕ вызывается из {@link #completeProcessInstance}: нормальный
+     * выход с открытым инцидентом достижим (failed compensation handler —
+     * WO-C8-34 security review B2), и merged-семантика C8-34 требует, чтобы ERROR-строка
+     * и инцидент пережили такое завершение как видимый результат для оператора.
+     * Финализация на этом пути была регрессией (maintainer HOLD раунда 2).
+     */
+    void finalizeFinishedInstance(UUID processInstanceId);
+
     /** Completed activities of an instance — used to compensate them (in reverse completion order). */
     List<Activity> getCompletedActivities(UUID processInstanceId);
 

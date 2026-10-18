@@ -27,6 +27,14 @@ public interface ActivityDbOperations {
 
     void cancelActiveActivitiesForToken(UUID tokenId);
 
+    /**
+     * WO-C8-49: гасит ERROR-активности инстанса тем же путём, что {@link #cancelActivity}
+     * (CANCELLED + consume подписок C37-3), — часть единой финализации инстанса
+     * (см. {@code DBService.finalizeFinishedInstance}). Обычные cancelActiveActivities
+     * ERROR не трогают (парковка инцидента — не «активность»).
+     */
+    void cancelErrorActivities(UUID processInstanceId);
+
     List<Activity> getActiveActivities(UUID processInstanceId);
 
     /**
