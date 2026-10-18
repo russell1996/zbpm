@@ -1,89 +1,32 @@
-/* WO-C8-41 oracle runner — RAW gRPC against live Zeebe 8.5.0 (zbpm-cmp-zeebe).
+/* WO-C8-41 / WO-OPS-30 oracle runner — raw gRPC against live Zeebe 8.5.0 (zbpm-cmp-zeebe).
  *
- * Why raw: @camunda8/sdk 8.5.9 lossless parser CRASHES on job.variables that
- * contain arrays with null (e.g. pre-created outputCollection [null,null,null]):
- * "An unsafe number value was received for results ... Cannot read properties
- * of null". Raw strings are also more faithful for an oracle log.
+ * Self-contained: the gRPC client + gateway proto come from THIS directory's node_modules
+ * (installed via `npm ci`) through lib/oracle.js — no absolute /tmp scratchpad paths.
  *
- * Usage: node run-oracle.js s1|s2a|...|all
- * Env: none needed (plaintext localhost:36500).
+ * Usage:
+ *   npm ci                 # one-time: install @camunda8/sdk@8.5.9 + @grpc/*
+ *   node run-oracle.js s1|s2a|s2b|s3|s4|s5|s6|s7|s8a|s8b|s9|all|cleanup
+ *
+ * The Zeebe stack must be up (see README.md / stack/docker-compose.yml); the gateway is
+ * reached at localhost:36500 by default (override with C8_ORACLE_GW=<host:port>).
  *
  * Output is the raw oracle log quoted in docs/analysis/c8-recon-mi-subprocess-2026-10-13.md.
  */
 'use strict';
-const fs = require('fs');
 const path = require('path');
-const grpc = require('/tmp/claude-1000/-home-russell-crowe-projects-zorro/e3cad831-2892-481c-a93b-453baacb2ad3/scratchpad/zeebe-cmp/node_modules/@grpc/grpc-js');
-const protoLoader = require('/tmp/claude-1000/-home-russell-crowe-projects-zorro/e3cad831-2892-481c-a93b-453baacb2ad3/scratchpad/zeebe-cmp/node_modules/@grpc/proto-loader');
+const O = require('./lib/oracle');
 
-const PROTO = '/tmp/claude-1000/-home-russell-crowe-projects-zorro/e3cad831-2892-481c-a93b-453baacb2ad3/scratchpad/zeebe-cmp/node_modules/@camunda8/sdk/dist/proto/zeebe.proto';
-const def = protoLoader.loadSync(PROTO, { keepCase: true, longs: String, enums: String, defaults: true, oneofs: true });
-const client = new (grpc.loadPackageDefinition(def).gateway_protocol.Gateway)('localhost:36500', grpc.credentials.createInsecure());
+const client = O.buildClient();
 const BPMN = path.join(__dirname, 'bpmn');
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function unary(method, req) {
-  return new Promise((resolve, reject) => {
-    client[method](req, (err, resp) => (err ? reject(err) : resolve(resp)));
-  });
-}
-
-function activate(type, max = 100) {
-  return new Promise((resolve, reject) => {
-    const call = client.ActivateJobs({ type, worker: 'c8-oracle', timeout: '30000', maxJobsToActivate: max, requestTimeout: '3000' });
-    const jobs = [];
-    call.on('data', (resp) => { for (const j of resp.jobs || []) jobs.push(j); });
-    call.on('end', () => resolve(jobs));
-    call.on('error', reject);
-  });
-}
-
-async function deploy(file) {
-  const content = fs.readFileSync(path.join(BPMN, file));
-  const res = await unary('DeployResource', { resources: [{ name: file, content }], tenantId: '' });
-  const procs = (res.deployments || []).map((d) => `${d.process?.bpmnProcessId} v${d.process?.version} key=${d.process?.processDefinitionKey}`).join(', ');
-  console.log(`DEPLOY ${file} -> ${procs}`);
-}
-
-async function start(bpmnProcessId) {
-  const res = await unary('CreateProcessInstance', { bpmnProcessId, version: -1, variables: '{}' });
-  console.log(`START ${bpmnProcessId} -> piKey=${res.processInstanceKey}`);
-  return String(res.processInstanceKey);
-}
-
-async function cancelPi(piKey) {
-  await unary('CancelProcessInstance', { processInstanceKey: piKey });
-  console.log(`CANCEL piKey=${piKey}`);
-}
-
-async function poll(type, minCount, tries = 14, piKey) {
-  for (let i = 0; i < tries; i++) {
-    let jobs = await activate(type);
-    if (piKey) jobs = jobs.filter((j) => String(j.processInstanceKey) === String(piKey));
-    if (jobs.length >= minCount) return jobs;
-    await sleep(500);
-  }
-  let jobs = await activate(type);
-  if (piKey) jobs = jobs.filter((j) => String(j.processInstanceKey) === String(piKey));
-  return jobs;
-}
-
-async function complete(job, variables) {
-  await unary('CompleteJob', { jobKey: job.key, variables: JSON.stringify(variables || {}) });
-  console.log(`COMPLETE key=${job.key} type=${job.type} vars=${JSON.stringify(variables || {})}`);
-}
-
-function show(tag, jobs) {
-  console.log(`--- ${tag}: ${jobs.length} job(s) ---`);
-  for (const j of jobs) {
-    console.log(`key=${j.key} type=${j.type} elementId=${j.elementId} piKey=${j.processInstanceKey} vars=${j.variables}`);
-  }
-}
-
-function itemOf(j) {
-  const m = /"item":"([^"]*)"/.exec(j.variables || '');
-  return m ? m[1] : '?';
-}
+// Thin wrappers so the scenario bodies below read exactly like the original runner.
+const deploy = (file) => O.deploy(client, path.join(BPMN, file));
+const start = (id) => O.start(client, id);
+const poll = (type, minCount, tries, piKey) => O.poll(client, type, minCount, tries, piKey);
+const activate = (type) => O.activate(client, type);
+const complete = (job, vars) => O.complete(client, job, vars);
+const cancelPi = (piKey) => O.cancelPi(client, piKey);
+const { show, itemOf, sleep } = O;
 
 const S = {
   async s1() {
@@ -248,11 +191,15 @@ const S = {
     for (const j of d) await complete(j, {});
   },
   async cleanup() {
-    // Cancel leftover instances from the crashed SDK run (piKey ...251) etc.
+    // Cancel leftover instances from a crashed/partial run (stranded active jobs).
     for (const t of ['s1w', 's1w2', 's2aw', 's2bw', 's3w', 's5w', 's6w', 's7w', 's8aw', 's8bw', 's9w']) {
       const jobs = await activate(t);
       for (const j of jobs) {
-        try { await cancelPi(String(j.processInstanceKey)); } catch (e) { /* already gone */ }
+        try {
+          await cancelPi(String(j.processInstanceKey));
+        } catch (e) {
+          /* already gone */
+        }
       }
     }
     console.log('CLEANUP DONE');
@@ -264,7 +211,7 @@ const S = {
   const order = ['s1', 's2a', 's2b', 's3', 's4', 's5', 's6', 's7', 's8a', 's8b', 's9'];
   const list = which === 'all' ? order : [which];
   try {
-    const topo = await unary('Topology', {});
+    const topo = await O.topology(client);
     console.log(`CONNECTED brokers=${topo.brokers.length} gw=${topo.gatewayVersion}`);
     for (const name of list) {
       if (!S[name]) throw new Error(`unknown scenario ${name}`);

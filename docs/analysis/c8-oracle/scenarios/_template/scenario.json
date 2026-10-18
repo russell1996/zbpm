@@ -1,0 +1,25 @@
+{
+  "id": "_template",
+  "title": "TEMPLATE — worker completion var reaches root; dump captures the final state",
+  "bpmn": "process.bpmn",
+  "processId": "tmplProc",
+  "vars": { "greeting": "camunda" },
+  "completeTypes": ["tmplWork"],
+  "completeVars": { "tmplWork": { "result": 42 } },
+  "dumpType": "tmplDump",
+  "expected": { "result": 42, "greeting": "camunda" },
+  "matrix": {
+    "docs89": "Completion variables are written to the containing scope (root here) and visible to subsequent elements; the final dump job therefore carries result=42 and the start var greeting",
+    "ours": ""
+  },
+  "maxRounds": 40,
+  "_help": {
+    "vars": "JSON start variables passed to CreateProcessInstance.",
+    "completeTypes": "Job types compare.js completes while driving toward the dump job.",
+    "completeVars": "Per-type completion variables: completeVars[type] (this is the 'worker result').",
+    "dumpType": "The final job type whose variables are captured as the observed root state.",
+    "expected": "Documented 8.5 behavior; compare.js checks these keys against the observed dump vars (extra observed keys are OK).",
+    "matrix.docs89": "What the 8.9 docs say (free text) — column 1 of the matrix line.",
+    "matrix.ours": "What OUR engine does — column 3; filled manually / in F1+ (empty here = pending)."
+  }
+}
