@@ -143,6 +143,17 @@ public interface VariableRepository extends JpaRepository<ProcessVariableEntity,
     void deleteByProcessInstanceIdAndScopeId(UUID processInstanceId, UUID scopeId);
 
     /**
+     * WO-C8-46: model-free половина зачистки отмены — одним bulk DELETE сносит
+     * ВСЕ scoped-строки инстанса. Корректно, потому что вызывается только из
+     * {@code cancelProcessInstance}, когда живых activity в инстансе уже нет
+     * (все сняты {@code cancelActiveActivities} до пометки cancelled, включая
+     * отложенный canceling-хвост): любой scope_id в этот момент — хвост
+     * мёртвой activity (item/loopCounter MI-инстансов, ioMapping-входы,
+     * scoped-агрегации F3). Root-строки не трогает.
+     */
+    void deleteByProcessInstanceIdAndScopeIdIsNotNull(UUID processInstanceId);
+
+    /**
      * WO-C8-41 (F5): удаление ОДНОЙ переменной по имени в скоупе (null-safe:
      * scopeId null = root). Отмена MI-тела обязана снести предсозданный
      * outputCollection, но не весь root (deleteByProcessInstanceIdAndScopeId

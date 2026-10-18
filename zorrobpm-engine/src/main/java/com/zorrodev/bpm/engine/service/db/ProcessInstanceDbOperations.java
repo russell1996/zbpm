@@ -26,6 +26,16 @@ public interface ProcessInstanceDbOperations {
 
     void cancelProcessInstance(UUID processInstanceId);
 
+    /**
+     * WO-C8-46: единая зачистка скоуп-переменных при отмене инстанса — тем же
+     * механизмом, что хвосты нормального завершения ({@code deleteVariables} по
+     * скоупу каждой отменённой/снятой activity + {@code deleteMiBodyState} по
+     * каждому отменённому MI-телу). Root-переменные не трогает, историю не
+     * пишет (lifecycle-мусор, как {@code deleteVariables}). Вызывается из
+     * {@code cancelProcessInstance} ДО пометки cancelled — та же транзакция.
+     */
+    void clearCancelledScopeState(UUID processInstanceId);
+
     void lockProcessInstance(UUID processInstanceId);
 
     /**

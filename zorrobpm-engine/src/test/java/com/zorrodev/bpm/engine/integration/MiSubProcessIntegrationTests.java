@@ -145,6 +145,9 @@ public class MiSubProcessIntegrationTests {
     private com.zorrodev.bpm.engine.service.DBService dbService;
 
     @Autowired
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+
+    @Autowired
     private com.zorrodev.bpm.engine.handler.ElementSupport elementSupport;
 
     private String userTaskAssignee(UUID activityId) {
@@ -466,6 +469,66 @@ public class MiSubProcessIntegrationTests {
             processInstanceRepository.findById(pi).orElseThrow();
         assertThat(piEntity.isCancelled()).as("instance marked cancelled").isTrue();
         assertThat(piEntity.getCompletedAt()).as("cancel completes the instance").isNotNull();
+    }
+
+    /**
+     * WO-C8-46 RED: операторская отмена процесса с живым MI-подпроцессом обязана
+     * чистить скоуп-переменные инстансов ({@code item}/{@code loopCounter}) и
+     * предсозданный outputCollection — тем же механизмом, что нормальное
+     * завершение ({@code deleteVariables}/{@code deleteMiBodyState}).
+     * До фикса: 6 строк item/loopCounter + results + _mi_batch_ остаются
+     * (G-P LEAK-INVARIANT, кандидат №1 WO-OPS-26 §7).
+     */
+    @Transactional
+    @Test
+    void operatorCancel_cleansMiInstanceScopeVariables() throws Exception {
+        UUID pdId = deploy("test-c840-mi-sub-minimal.bpmn");
+        com.zorrodev.bpm.contract.model.ProcessVariable rootVar =
+            new com.zorrodev.bpm.contract.model.ProcessVariable();
+        rootVar.setName("orderId");
+        rootVar.setValue("o-1");
+        rootVar.setType(com.zorrodev.bpm.contract.model.ProcessVariableType.STRING);
+        UUID pi = start(pdId, List.of(rootVar));
+
+        assertThat(activities(pi, "utProbe", ActivityStatus.CREATED))
+            .as("3 live inner tasks before cancel").hasSize(3);
+
+        // given: мусор существует до отмены (иначе тест вакуумен).
+        List<ProcessVariableEntity> scopedBefore = variableRepository.findByProcessInstanceId(pi)
+            .stream().filter(v -> v.getScopeId() != null).toList();
+        assertThat(scopedBefore).as("scope rows exist before cancel").hasSize(6);
+        assertThat(scopedBefore.stream().map(ProcessVariableEntity::getName).toList())
+            .contains("item", "loopCounter");
+        assertThat(variableRepository.findByNameAndProcessInstanceId("results", pi))
+            .as("precreated outputCollection present before cancel").isPresent();
+        assertThat(variableRepository.findByNameAndProcessInstanceId("_mi_batch_subProbe", pi))
+            .as("batch marker present before cancel").isPresent();
+
+        // Тот же порядок, что операторский путь
+        // {@code ProcessInstanceRuntimeOperationsImpl.cancelProcessInstance}.
+        dbService.cancelActiveActivities(pi);
+        dbService.deleteTimerJobsByProcessInstanceId(pi);
+        dbService.deleteMessageSubscriptionsByProcessInstanceId(pi);
+        dbService.cancelProcessInstance(pi);
+
+        // G-P LEAK-INVARIANT: после отмены ничего живого/висящего.
+        // Считаем JdbcTemplate напрямую, а не сырым JPA: зачистка идёт
+        // JDBC-bulk мимо persistence-контекста, и managed-копии снесённых
+        // строк в той же @Transactional остаются stale для entity-ридеров
+        // (WO-REL-31 CR-1 — тот же класс, что miSubSlotOf выше: там вместо
+        // сырого JPA-ридера взят merge-ридер dbService). COUNT по таблице —
+        // факт БД, не кэша.
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM variables WHERE process_instance_id = ? AND scope_id IS NOT NULL",
+            Long.class, pi))
+            .as("no scope variables left after operator cancel").isZero();
+        assertThat(variableRepository.findByNameAndProcessInstanceId("results", pi))
+            .as("precreated outputCollection dropped").isEmpty();
+        assertThat(variableRepository.findByNameAndProcessInstanceId("_mi_batch_subProbe", pi))
+            .as("batch marker dropped").isEmpty();
+        // Root-переменные процесса не тронуты.
+        assertThat(variableRepository.findByNameAndProcessInstanceId("orderId", pi))
+            .as("root variable preserved").isPresent();
     }
 
     /**

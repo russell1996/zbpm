@@ -23,6 +23,20 @@ public interface VariableDbOperations {
     void deleteVariables(@NonNull UUID processInstanceId, UUID scopeId);
 
     /**
+     * WO-C8-46: model-free половина единой зачистки отмены — одним bulk DELETE
+     * сносит ВСЕ scoped-строки инстанса (тем же DELETE-механизмом, что
+     * {@link #deleteVariables(UUID, UUID)}, без загрузки строк). Root-строки
+     * не трогает, историю не пишет (lifecycle-мусор).
+     */
+    void deleteAllScopedVariables(@NonNull UUID processInstanceId);
+
+    /**
+     * WO-C8-46: scopeId activity-строки (id токена → scopeActivityId токена);
+     * null, если строка/токен на root. Для model-aware половины зачистки.
+     */
+    UUID findScopeOfActivity(@NonNull UUID processInstanceId, @NonNull UUID activityId);
+
+    /**
      * WO-PERF-9 (B-8, full-scan): pinpoint read of a few ROOT variables by
      * name (one indexed SELECT, not the full instance scope). Empty names →
      * empty list without touching the DB (also avoids an {@code IN ()} query).
