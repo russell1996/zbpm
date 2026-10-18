@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-47 (P4): задача с boundary-таймером (PT10M) внутри подпроцесса,
+     внутренний поток заканчивается terminate end. После завершения задачи
+     terminate гасит scope, поток идёт мимо подпроцесса к концу. Проверяется,
+     что после завершения инстанса не остаётся armed-таймера на живой activity. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="defs-c847-term" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c847-terminate" name="C8-47 terminate with timer" isExecutable="true">
+    <bpmn:startEvent id="startEvent"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="startEvent" targetRef="sub1" />
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart"><bpmn:outgoing>subF1</bpmn:outgoing></bpmn:startEvent>
+      <bpmn:sequenceFlow id="subF1" sourceRef="subStart" targetRef="innerTask" />
+      <bpmn:userTask id="innerTask" name="innerTask">
+        <bpmn:incoming>subF1</bpmn:incoming>
+        <bpmn:outgoing>subF2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="subF2" sourceRef="innerTask" targetRef="subTerm" />
+      <bpmn:endEvent id="subTerm" name="subTerm">
+        <bpmn:incoming>subF2</bpmn:incoming>
+        <bpmn:terminateEventDefinition id="TerminateDef_sub" />
+      </bpmn:endEvent>
+      <bpmn:boundaryEvent id="innerTimeout" name="innerTimeout" attachedToRef="innerTask" cancelActivity="true">
+        <bpmn:outgoing>subFlowTimeout</bpmn:outgoing>
+        <bpmn:timerEventDefinition id="tmrDef">
+          <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT10M</bpmn:timeDuration>
+        </bpmn:timerEventDefinition>
+      </bpmn:boundaryEvent>
+      <bpmn:sequenceFlow id="subFlowTimeout" sourceRef="innerTimeout" targetRef="subTimeoutEnd" />
+      <bpmn:endEvent id="subTimeoutEnd" name="subTimeoutEnd">
+        <bpmn:incoming>subFlowTimeout</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" sourceRef="sub1" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
