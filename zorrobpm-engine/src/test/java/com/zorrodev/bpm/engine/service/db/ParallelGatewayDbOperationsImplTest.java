@@ -81,6 +81,20 @@ class ParallelGatewayDbOperationsImplTest {
         verify(parallelGatewayRepository).deleteArrivalsByProcessInstanceId(pi);
     }
 
+    /**
+     * WO-C8-48: терминальная зачистка — отдельный запрос БЕЗ фильтра маркеров
+     * ({@code expectedCount IS NULL}): у завершённого инстанса marker-строки
+     * (MI-batch, ad-hoc joinKey, inclusive expected) тоже никто не прочтёт.
+     * Мутация «перевести на deleteArrivalsByProcessInstanceId» (arrivals-only)
+     * краснит сквозные IT, где marker остаётся.
+     */
+    @Test
+    void clearInstanceBookkeeping_deletesAllRowsIncludingMarkers() {
+        UUID pi = UUID.randomUUID();
+        db.clearInstanceBookkeeping(pi);
+        verify(parallelGatewayRepository).deleteBookkeepingByProcessInstanceId(pi);
+    }
+
     @Test
     void recordInclusiveExpected_savesMarker() {
         UUID pi = UUID.randomUUID();

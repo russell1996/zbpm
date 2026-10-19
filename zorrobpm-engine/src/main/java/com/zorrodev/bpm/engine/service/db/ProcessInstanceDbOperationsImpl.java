@@ -39,6 +39,16 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
      * construction-цикл BpmnService ↔ репозитории.
      */
     private final CancelledScopeStateCleaner cancelledScopeStateCleaner;
+    /**
+     * WO-C8-48: терминальный переход стирает bookkeeping join'ов инстанса (MI/ad-hoc
+     * marker-строки и arrivals). Оба терминальных перехода ниже (complete/cancel)
+     * проходят ТОЛЬКО через этот класс — единственная точка, где инстанс становится
+     * завершённым (см. DBServiceImpl.completeProcessInstance/cancelProcessInstance);
+     * отдельные хвостовые kill-пути (EventTrigger/ErrorEscalationThrower/EndEventHandler)
+     * завершают ДОЧЕРНИЕ инстансы через тот же completeProcessInstance, а корневой —
+     * через FlowNavigator → DBServiceImpl, то есть покрыты здесь же.
+     */
+    private final ParallelGatewayDbOperations parallelGatewayDbOperations;
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
@@ -100,6 +110,13 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
     @Override
     public void completeProcessInstance(UUID processInstanceId) {
         ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
+        // WO-C8-48: завершённый инстанс не оставляет bookkeeping-строк join'ов
+        // (arrival + marker). Именно здесь, а не в kill-хуке
+        // finalizeFinishedInstance: нормальное завершение ad-hoc/MI-скоупов
+        // (cancel-end, error-walk, terminate внутри скоупа) терминирует инстанс
+        // ЭТИМ путём, и marker-строки их join'ов после этого не читает никто.
+        // Та же транзакция, что и терминальная пометка, — атомарно.
+        parallelGatewayDbOperations.clearInstanceBookkeeping(processInstanceId);
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
         domainEventEmitter.emitProcessInstanceCompleted(processInstanceId, pi.getProcessDefinitionId());
         // WO-OBS-1: single choke for every completion path (normal end, escalation end).
@@ -113,6 +130,9 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
         // та же зачистка, что хвосты завершения (item/loopCounter MI-инстансов,
         // предсозданный outputCollection, batch-маркеры входа).
         clearCancelledScopeState(processInstanceId);
+        // WO-C8-48: bookkeeping join'ов (arrival + marker) — в той же транзакции,
+        // что терминальная пометка (отмена = kill всех хвостов, читать некому).
+        parallelGatewayDbOperations.clearInstanceBookkeeping(processInstanceId);
         ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
         processInstanceRepository.setCancelled(processInstanceId, true);
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());

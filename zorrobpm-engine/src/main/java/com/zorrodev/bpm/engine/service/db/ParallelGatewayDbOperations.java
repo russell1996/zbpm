@@ -22,6 +22,16 @@ public interface ParallelGatewayDbOperations {
      */
     void clearAllParallelGatewayArrivals(UUID processInstanceId);
 
+    /**
+     * WO-C8-48: terminal-instance bookkeeping cleanup — every row of the instance,
+     * arrivals AND markers (MI/ad-hoc/inclusive bookkeeping). Called only from the
+     * terminal transitions of {@code ProcessInstanceDbOperations} (complete/cancel):
+     * after them the instance never touches this table again. Sets the leak invariant
+     * "a finished instance owns no parallel-gateway bookkeeping rows" (WO-OPS-26 §7,
+     * WO-кандидат №3) at the choke point, so no per-path cleanup is needed.
+     */
+    void clearInstanceBookkeeping(UUID processInstanceId);
+
     Set<String> getParallelGatewayArrivedFlows(UUID processInstanceId, String gatewayElementId);
 
     void recordParallelGatewayArrival(UUID processInstanceId, String gatewayElementId, String enteredFlowId);

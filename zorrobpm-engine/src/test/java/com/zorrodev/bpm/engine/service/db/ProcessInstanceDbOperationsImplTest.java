@@ -36,6 +36,7 @@ class ProcessInstanceDbOperationsImplTest {
     @Mock private DomainEventEmitter domainEventEmitter;
     @Mock private com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
     @Mock private CancelledScopeStateCleaner cancelledScopeStateCleaner;
+    @Mock private ParallelGatewayDbOperations parallelGatewayDbOperations;
     @InjectMocks private ProcessInstanceDbOperationsImpl db;
 
     @Test
@@ -81,6 +82,36 @@ class ProcessInstanceDbOperationsImplTest {
         db.completeProcessInstance(id);
         verify(processInstanceRepository).setCompletedAt(eq(id), any(java.time.Instant.class));
         verify(domainEventEmitter).emitProcessInstanceCompleted(eq(id), eq(pdId));
+    }
+
+    /**
+     * WO-C8-48: завершение стирает bookkeeping join'ов инстанса (arrival + marker)
+     * ДО терминальной пометки, в той же транзакции. Мутация «убрать вызов» краснит
+     * и здесь, и сквозные FinishedInstanceArrivalCleanupIntegrationTests.
+     */
+    @Test
+    void completeProcessInstance_clearsInstanceBookkeepingBeforeMarkingCompleted() {
+        UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
+        ProcessInstanceEntity e = new ProcessInstanceEntity(); e.setId(id); e.setProcessDefinitionId(pdId);
+        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(e));
+        db.completeProcessInstance(id);
+        verify(parallelGatewayDbOperations).clearInstanceBookkeeping(id);
+        var inOrder = org.mockito.Mockito.inOrder(
+            parallelGatewayDbOperations, processInstanceRepository);
+        inOrder.verify(parallelGatewayDbOperations).clearInstanceBookkeeping(id);
+        inOrder.verify(processInstanceRepository).setCompletedAt(eq(id), any(java.time.Instant.class));
+    }
+
+    /**
+     * WO-C8-48: отмена стирает bookkeeping join'ов инстанса в той же транзакции.
+     */
+    @Test
+    void cancelProcessInstance_clearsInstanceBookkeeping() {
+        UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
+        ProcessInstanceEntity e = new ProcessInstanceEntity(); e.setId(id); e.setProcessDefinitionId(pdId);
+        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(e));
+        db.cancelProcessInstance(id);
+        verify(parallelGatewayDbOperations).clearInstanceBookkeeping(id);
     }
 
     @Test
