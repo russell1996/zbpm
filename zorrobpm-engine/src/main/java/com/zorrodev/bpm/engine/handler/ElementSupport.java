@@ -775,33 +775,18 @@ public class ElementSupport {
      * Лексический контейнер маппится на runtime scope activity через
      * {@link #enclosingScopeChain} (совпадение по bpmnElementId — тот же приём,
      * что {@link #filterActivitiesInScope}).
+     *
+     * <p>WO-C8-53: оценка — через единый ordered-механизм
+     * {@link #applyOrderedOutputs} (target виден последующим маппингам,
+     * live Zeebe 8.5); write scope прежний.
      */
     public void applyScopedOutputs(UUID processInstanceId, UUID activityId,
             BpmnElementModel element, BpmnProcessDefinitionModel bpmn) {
-        UUID miScope = nearestMiSubProcessScope(processInstanceId, activityId, element, bpmn);
-        if (miScope == null) {
-            applyIoMappings(processInstanceId, activityId, element, false);
+        if (!hasOutputMappings(element)) {
             return;
         }
-        IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getIoMappingExtension)
-            .orElse(null);
-        if (io == null || io.getOutputs() == null || io.getOutputs().isEmpty()) {
-            return;
-        }
-        List<ProcessVariable> variables = visibleVariables(processInstanceId, activityId);
-        List<ProcessVariable> results = new ArrayList<>();
-        for (IoMappingExtensionModel.Mapping mapping : io.getOutputs()) {
-            ProcessVariable result = evaluateMapping(mapping, variables);
-            if (result != null) {
-                results.add(result);
-            }
-        }
-        if (!results.isEmpty()) {
-            dbService.setVariables(processInstanceId, miScope, results);
-            log.info("{}: Applied {} output mapping(s) at {} (MI scope {})",
-                processInstanceId, results.size(), element.getId(), miScope);
-        }
+        applyOrderedOutputs(processInstanceId, activityId, element,
+            nearestMiSubProcessScope(processInstanceId, activityId, element, bpmn), null);
     }
 
     /**
@@ -863,6 +848,168 @@ public class ElementSupport {
             .map(BpmnElementExtensionModel::getIoMappingExtension)
             .orElse(null);
         return io != null && io.getOutputs() != null && !io.getOutputs().isEmpty();
+    }
+
+    /**
+     * WO-C8-53 (F1 корень 5, live Zeebe 8.5.0): ЕДИНЫЙ ordered-механизм
+     * output-mapping'ов. Каждый маппинг оценивается ПО ПОРЯДКУ декларации,
+     * и его target становится виден ПОСЛЕДУЮЩИМ маппингам того же элемента
+     * (live 8.5: output-other-output → o3 читает o1, записанный маппингом выше;
+     * фиксированный снапшот контекста давал strict-инцидент на o1 / lenient "").
+     * В записывающий скоуп уходят ТОЛЬКО mapped target'ы — сырые
+     * completion-переменные в parent не сливаются (live 8.5: output-completion
+     * → c не доходит до root).
+     *
+     * <p>Параметризация — три точки входа, одно ядро:
+     * {@link #applyScopedOutputs} (write = ближайший MI-scope, иначе root),
+     * {@link #applyScopedOutputsWithExtra} (тот же write + overlay сырых
+     * completion-переменных, S2b) и {@link #applyIoMappings}(…, false)
+     * (write = root: не-MI-контейнеры/топ-уровень).
+     *
+     * <p>Ошибка оценки (strict-missing / hard FEEL failure) пробрасывает
+     * {@code FeelEvaluationException} — как и в прежнем пути (инцидент
+     * поднимает вызывающий хвост CompletionService, ENG-29/30-семантика
+     * {@link #evaluateMapping} не меняется).
+     */
+    public void applyOrderedOutputs(UUID processInstanceId, UUID activityId,
+            BpmnElementModel element, UUID writeScope, List<ProcessVariable> overlay) {
+        IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
+            .map(BpmnElementExtensionModel::getIoMappingExtension)
+            .orElse(null);
+        if (io == null || io.getOutputs() == null || io.getOutputs().isEmpty()) {
+            return;
+        }
+        List<ProcessVariable> variables = visibleVariables(processInstanceId, activityId);
+        if (overlay != null && !overlay.isEmpty()) {
+            // S2b: сырые completion-переменные НЕ persist'ятся (маппинг —
+            // проекция), но обязаны быть видны оценке — overlay побеждает
+            // (свежее значение завершения).
+            Map<String, ProcessVariable> merged = new java.util.LinkedHashMap<>();
+            for (ProcessVariable v : variables) {
+                merged.put(v.getName(), v);
+            }
+            for (ProcessVariable v : overlay) {
+                merged.put(v.getName(), v);
+            }
+            variables = new ArrayList<>(merged.values());
+        }
+        List<ProcessVariable> results = new ArrayList<>();
+        for (IoMappingExtensionModel.Mapping mapping : io.getOutputs()) {
+            ProcessVariable result = evaluateMapping(mapping, variables);
+            if (result != null) {
+                results.add(result);
+                // Ordered: target немедленно виден последующим маппингам
+                // (замена существующего имени — не дубль).
+                List<ProcessVariable> next = new ArrayList<>(variables);
+                boolean replaced = false;
+                for (int i = 0; i < next.size(); i++) {
+                    if (result.getName().equals(next.get(i).getName())) {
+                        next.set(i, result);
+                        replaced = true;
+                        break;
+                    }
+                }
+                if (!replaced) {
+                    next.add(result);
+                }
+                variables = next;
+            }
+        }
+        if (!results.isEmpty()) {
+            if (writeScope == null) {
+                dbService.setVariables(processInstanceId, results);
+            } else {
+                dbService.setVariables(processInstanceId, writeScope, results);
+            }
+            log.info("{}: Applied {} ordered output mapping(s) at {} (write scope {})",
+                processInstanceId, results.size(), element.getId(),
+                writeScope == null ? "root" : writeScope);
+        }
+    }
+
+    /**
+     * WO-C8-53 (F1 корень 6, регрессия MiReenter, 2026-10-19): куда писать
+     * СЫРЫЕ completion-переменные элемента, когда overlay-проекция
+     * (MI-подпроцесс + маппинги) не применяется. Позиция на ПЕРЕМЕННУЮ, не
+     * на элемент:
+     * <ul>
+     *  <li>внутри MI-подпроцесса — ВСЁ в скоуп инстанса (C8-41 S1, измерено —
+     *      поведение не меняется);</li>
+     *  <li>элемент несёт output-маппинги — ВСЁ в собственный activity scope:
+     *      element-local, сырьё в parent не течёт (live 8.5: output-completion
+     *      → c не в root); удаляется в конце хвоста (deleteVariables);</li>
+     *  <li>элемент — инстанс МИ без маппингов — ТОЛЬКО переменная
+     *      {@code outputElement} (простой FEEL-идентификатор) в собственный
+     *      activity scope (live 8.5: r не в следующем job и не в dump,
+     *      складывается в outputCollection); ОСТАЛЬНОЕ сырьё — в root:
+     *      поведение «сырьё завершения MI-задачи видно downstream после
+     *      join» НЕ зондировалось в кампании Ф1 и держит работающие прод-
+     *      паттерны (gwDecision по {@code action} в controlProcess —
+     *      MiReenterIntegrationTests); в Zeebe оно было бы instance-local —
+     *      зафиксировано как остаточное расхождение (отчёт, ВЛИЯНИЕ НА ПРОД);</li>
+     *  <li>иначе — ВСЁ в root (историческое S0, не меняется).</li>
+     * </ul>
+     */
+    public record RawPlacement(UUID localScope, boolean allLocal, java.util.Set<String> localNames) {
+        public boolean rootOnly() {
+            return localScope == null && localNames.isEmpty();
+        }
+    }
+
+    public RawPlacement completionRawPlacement(UUID processInstanceId, UUID activityId,
+            BpmnElementModel element, BpmnProcessDefinitionModel bpmn) {
+        UUID miScope = nearestMiSubProcessScope(processInstanceId, activityId, element, bpmn);
+        if (miScope != null) {
+            return new RawPlacement(miScope, true, java.util.Set.of());
+        }
+        if (hasOutputMappings(element)) {
+            return new RawPlacement(activityId, true, java.util.Set.of());
+        }
+        if (element.getExtensions() != null
+            && element.getExtensions().getMultiInstanceExtension() != null) {
+            String out = element.getExtensions().getMultiInstanceExtension().getOutputElement();
+            if (out != null && !out.isBlank() && out.matches("^[A-Za-z_][A-Za-z0-9_]*$")) {
+                return new RawPlacement(activityId, false, java.util.Set.of(out));
+            }
+        }
+        return new RawPlacement(null, false, java.util.Set.of());
+    }
+
+    /**
+     * Раскладывает сырые completion-переменные по позициям
+     * {@link #completionRawPlacement}: allLocal → одна запись в localScope
+     * (null = root), иначе раздельно: localNames → localScope, остальное →
+     * root. Единая точка записи для обоих хвостов (user/service task).
+     */
+    public void writeCompletionRaw(UUID processInstanceId, UUID activityId,
+            BpmnElementModel element, BpmnProcessDefinitionModel bpmn, List<ProcessVariable> variables) {
+        RawPlacement raw = completionRawPlacement(processInstanceId, activityId, element, bpmn);
+        if (variables == null || variables.isEmpty()) {
+            return;
+        }
+        if (raw.allLocal()) {
+            if (raw.localScope() == null) {
+                dbService.setVariables(processInstanceId, variables);
+            } else {
+                dbService.setVariables(processInstanceId, raw.localScope(), variables);
+            }
+            return;
+        }
+        List<ProcessVariable> local = new ArrayList<>();
+        List<ProcessVariable> rest = new ArrayList<>();
+        for (ProcessVariable v : variables) {
+            if (raw.localNames().contains(v.getName())) {
+                local.add(v);
+            } else {
+                rest.add(v);
+            }
+        }
+        if (!local.isEmpty() && raw.localScope() != null) {
+            dbService.setVariables(processInstanceId, raw.localScope(), local);
+        }
+        if (!rest.isEmpty()) {
+            dbService.setVariables(processInstanceId, rest);
+        }
     }
 
     /**
@@ -1056,54 +1203,34 @@ public class ElementSupport {
      * завершения). Запись — туда же, куда applyScopedOutputs (скоуп MI-инстанса
      * внутри MI-подпроцесса, иначе root). Без маппингов не вызывается
      * (сырьё идёт persist'ом в скоуп напрямую, S1).
+     *
+     * <p>WO-C8-53: оценка — через единый ordered-механизм
+     * {@link #applyOrderedOutputs} (overlay как extra-слой, write scope прежний).
      */
     public void applyScopedOutputsWithExtra(UUID processInstanceId, UUID activityId,
             BpmnElementModel element, BpmnProcessDefinitionModel bpmn, List<ProcessVariable> extra) {
-        UUID miScope = nearestMiSubProcessScope(processInstanceId, activityId, element, bpmn);
-        IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
-            .map(BpmnElementExtensionModel::getIoMappingExtension)
-            .orElse(null);
-        if (io == null || io.getOutputs() == null || io.getOutputs().isEmpty()) {
+        if (!hasOutputMappings(element)) {
             return;
         }
-        List<ProcessVariable> variables = visibleVariables(processInstanceId, activityId);
-        if (extra != null && !extra.isEmpty()) {
-            Map<String, ProcessVariable> merged = new java.util.LinkedHashMap<>();
-            for (ProcessVariable v : variables) {
-                merged.put(v.getName(), v);
-            }
-            for (ProcessVariable v : extra) {
-                merged.put(v.getName(), v);
-            }
-            variables = new ArrayList<>(merged.values());
-        }
-        List<ProcessVariable> results = new ArrayList<>();
-        for (IoMappingExtensionModel.Mapping mapping : io.getOutputs()) {
-            ProcessVariable result = evaluateMapping(mapping, variables);
-            if (result != null) {
-                results.add(result);
-            }
-        }
-        if (!results.isEmpty()) {
-            if (miScope == null) {
-                dbService.setVariables(processInstanceId, results);
-            } else {
-                dbService.setVariables(processInstanceId, miScope, results);
-            }
-            log.info("{}: Applied {} output mapping(s) at {} (MI scope {}, overlay {})",
-                processInstanceId, results.size(), element.getId(),
-                miScope == null ? "root" : miScope, extra == null ? 0 : extra.size());
-        }
+        applyOrderedOutputs(processInstanceId, activityId, element,
+            nearestMiSubProcessScope(processInstanceId, activityId, element, bpmn), extra);
     }
 
     public void applyIoMappings(UUID processInstanceId, UUID activityId, BpmnElementModel element, boolean inputs) {
+        if (!inputs) {
+            // WO-C8-53: выходы — через единый ordered-механизм (target виден
+            // последующим маппингам, live Zeebe 8.5); write scope — root, как
+            // исторически (не-MI-контейнеры/топ-уровень, WO-DIFF-1/C8-40).
+            applyOrderedOutputs(processInstanceId, activityId, element, null, null);
+            return;
+        }
         IoMappingExtensionModel io = Optional.ofNullable(element.getExtensions())
             .map(BpmnElementExtensionModel::getIoMappingExtension)
             .orElse(null);
         if (io == null) {
             return;
         }
-        List<IoMappingExtensionModel.Mapping> mappings = inputs ? io.getInputs() : io.getOutputs();
+        List<IoMappingExtensionModel.Mapping> mappings = io.getInputs();
         if (mappings == null || mappings.isEmpty()) {
             return;
         }
@@ -1118,8 +1245,8 @@ public class ElementSupport {
             }
         }
         if (!results.isEmpty()) {
-            dbService.setVariables(processInstanceId, inputs ? activityId : null, results);
-            log.info("{}: Applied {} {} mapping(s) at {} (scope {})", processInstanceId, results.size(), inputs ? "input" : "output", element.getId(), inputs ? activityId : "root");
+            dbService.setVariables(processInstanceId, activityId, results);
+            log.info("{}: Applied {} input mapping(s) at {} (scope {})", processInstanceId, results.size(), element.getId(), activityId);
         }
     }
 

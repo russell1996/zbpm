@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_c853_mi_output_gateway" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c853-mi-output-and-gateway" name="test-c853-mi-output-and-gateway" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="startEvent" targetRef="miTask" />
+
+    <bpmn:serviceTask id="miTask" name="miTask">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c853Mi" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=items" inputElement="item" outputCollection="results" outputElement="=r" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="f2" sourceRef="miTask" targetRef="gwDecision" />
+    <bpmn:exclusiveGateway id="gwDecision" name="gwDecision">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>fClose</bpmn:outgoing>
+      <bpmn:outgoing>fOther</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:sequenceFlow id="fClose" sourceRef="gwDecision" targetRef="srvClose">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=action = "CLOSE"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="fOther" sourceRef="gwDecision" targetRef="srvOther">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=action = "OTHER"</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+
+    <bpmn:serviceTask id="srvClose" name="srvClose">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c853Close" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fClose</bpmn:incoming>
+      <bpmn:outgoing>fEnd</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="srvOther" name="srvOther">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c853Other" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fOther</bpmn:incoming>
+      <bpmn:outgoing>fEnd2</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="fEnd" sourceRef="srvClose" targetRef="endEvent" />
+    <bpmn:sequenceFlow id="fEnd2" sourceRef="srvOther" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fEnd</bpmn:incoming>
+      <bpmn:incoming>fEnd2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

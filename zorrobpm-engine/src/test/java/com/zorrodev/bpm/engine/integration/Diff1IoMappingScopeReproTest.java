@@ -140,8 +140,12 @@ public class Diff1IoMappingScopeReproTest {
     void finding1_s006_inputMappingIsAppliedThenWiped_outputMappingReachesRoot() throws Exception {
         // Raxon S-006: input =orderId -> orderIdCopy, output =workResult -> finalResult,
         // start {orderId: "123"}, worker returns {workResult: done}.
-        // Oracle final: {orderId, orderIdCopy, workResult, finalResult}.
-        // Reported Zorro: {orderId, workResult, finalResult} — no orderIdCopy.
+        // Raxon-оракел DIFF-1: {orderId, orderIdCopy, workResult, finalResult};
+        // Reported Zorro (тогда): {orderId, workResult, finalResult} — no orderIdCopy.
+        // WO-C8-53 (F1 корень 5, live Zeebe 8.5.0 — базовый оракул по WO): у элемента
+        // с output-маппингами сырая completion-переменная ЭЛЕМЕНТ-ЛОКАЛЬНА — в parent
+        // уходят только target'ы (live output-completion: dump {"o":"C"}, без c).
+        // Итог по live-8.5: {orderId, finalResult}.
         String bpmn = Files.readString(Paths.get("src/test/files/test-diff1-s006.bpmn"));
         ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
 
@@ -167,10 +171,13 @@ public class Diff1IoMappingScopeReproTest {
 
         assertThat(queryService.getProcessInstance(processInstanceId).getCompletedAt()).isNotNull();
 
-        // REPRODUCED №1: harness-visible set lacks orderIdCopy (matches the reported Zorro set exactly).
+        // №1 по-прежнему в силе: harness-visible set не содержит input-local orderIdCopy.
+        // WO-C8-53 (F1 корень 5, live 8.5): сырая completion-переменная workResult больше
+        // НЕ протекает в root (элемент несёт output-маппинги → сырьё элемент-локально,
+        // снимается deleteVariables в хвосте) — в root ушёл только mapped target.
         assertThat(rootVars(processInstanceId).keySet())
-            .containsExactlyInAnyOrder("orderId", "workResult", "finalResult");
-        // ...while the output mapping provably reached root.
+            .containsExactlyInAnyOrder("orderId", "finalResult");
+        // ...и output mapping доказуемо дошёл до root.
         assertThat(rootVars(processInstanceId)).containsEntry("finalResult", "done");
         // And the input-local is wiped from the DB entirely (not just hidden by the read API).
         assertThat(variableRepository.findByNameAndProcessInstanceId("orderIdCopy", processInstanceId))
@@ -184,13 +191,16 @@ public class Diff1IoMappingScopeReproTest {
         // inner input =subLocal -> innerSeen, inner output =noSuchVar -> nullOut;
         // after input =subLocal -> lateRead. Start {parentVar: parent},
         // inner worker returns {innerOut: done}, after worker returns {workResult: done}.
-        // Oracle final (8): {parentVar, subLocal, innerSeen, innerOut, nullOut, subOut, lateRead, workResult}.
+        // Raxon-orakel DIFF-1 final (8): {parentVar, subLocal, innerSeen, innerOut, nullOut, subOut, lateRead, workResult}.
         // Reported Zorro (4): {parentVar, innerOut, nullOut, workResult}.
         // Fixed Zorro (5): reported 4 + subOut promoted from the sub scope to root.
         // Residual DIFFER vs the oracle (documented, WO-DIFF-1 п.3): subLocal/innerSeen/lateRead
         // stay out of root — the oracle unions every VARIABLE record of the trace (including dead
         // task-local scopes), while the harness reads the live root slice and the standing
         // task-local-deletion decision (WO-ENG-14 characterization) is preserved.
+        // WO-C8-53 (F1 корень 5, live 8.5): raw-completion-переменная innerOut (элемент inner
+        // несёт output-маппинги) теперь элемент-локальна и НЕ в live-root — только target'ы.
+        // workResult остаётся в root: у after output-маппингов НЕТ (S0).
         String bpmn = Files.readString(Paths.get("src/test/files/test-diff1-s027.bpmn"));
         ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
 
@@ -281,8 +291,10 @@ public class Diff1IoMappingScopeReproTest {
         // NOTE: subLocal IS in root here — supplied by the operator at resolve time
         // (resolveIncident variables are written at ROOT scope by design), not
         // promoted from the cleaned sub scope. innerSeen (never re-supplied) stays out.
+        // WO-C8-53: innerOut (raw-completion элемента inner с output-маппингами) — элемент-локальна,
+        // live-root её не видит; workResult (after без маппингов) — в root как раньше (S0).
         assertThat(rootVars(processInstanceId).keySet())
-            .containsExactlyInAnyOrder("parentVar", "innerOut", "nullOut", "workResult", "subOut",
+            .containsExactlyInAnyOrder("parentVar", "nullOut", "workResult", "subOut",
                 "noSuchVar", "subLocal");
         assertThat(rootVars(processInstanceId)).containsEntry("subOut", "parent");
         // Residual DIFFER (п.3, by decision): dead-scope locals stay out of root —
@@ -366,8 +378,11 @@ public class Diff1IoMappingScopeReproTest {
 
         // Both levels' outputs promoted to root on scope close (inner first, then outer —
         // outer's source still resolves because the outer scope is alive at its own close).
+        // WO-C8-53 (F1 корень 5, live 8.5): raw workResult (work несёт output-маппинг
+        // =innerLocal -> workPromoted) — элемент-локальна, НЕ в live-root; в root ушли
+        // только mapped-тагеты workPromoted/innerOut/outerOut + стартовый outerRoot.
         assertThat(rootVars(processInstanceId).keySet())
-            .containsExactlyInAnyOrder("outerRoot", "workResult", "workPromoted", "innerOut", "outerOut");
+            .containsExactlyInAnyOrder("outerRoot", "workPromoted", "innerOut", "outerOut");
         assertThat(rootVars(processInstanceId))
             .containsEntry("workPromoted", "r")
             .containsEntry("innerOut", "r")

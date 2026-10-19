@@ -397,18 +397,24 @@ public class CompletionService {
         // mappings сырьё не persist'ится, но маппинг видит его через overlay
         // (проекция: S2b не показывает сырой tu, =tu читает tu-c); вне MI —
         // root как раньше (S0-контроль).
-        UUID completionScope = elementSupport.miCompletionScopeOrNull(
-            processInstanceId, userTaskId, bpmnElement, bpmn);
-        boolean outputsAppliedWithOverlay = false;
-        if (completionScope != null && elementSupport.hasOutputMappings(bpmnElement)) {
-            elementSupport.applyScopedOutputsWithExtra(processInstanceId, userTaskId,
-                bpmnElement, bpmn, variables);
-            outputsAppliedWithOverlay = true;
-        } else if (completionScope != null) {
-            dbService.setVariables(processInstanceId, completionScope, variables);
-        } else {
-            dbService.setVariables(processInstanceId, variables);
-        }
+         // WO-C8-53 (F1 корни 5/6, live Zeebe 8.5.0): единый резолвер
+         // completionRawPlacement/writeCompletionRaw — сырьё элемента с
+         // output-маппингами ВСЁ в его собственный activity scope (element-
+         // local, c не в root); сырьё инстанса MI без маппингов — только
+         // переменная outputElement локально (r не в следующем job и не в
+         // dump), остальное в root как раньше (downstream-паттерны, см.
+         // javadoc резолвера); deleteVariables ниже локальное снимает.
+         UUID completionScope = elementSupport.miCompletionScopeOrNull(
+             processInstanceId, userTaskId, bpmnElement, bpmn);
+         boolean outputsAppliedWithOverlay = false;
+         if (completionScope != null && elementSupport.hasOutputMappings(bpmnElement)) {
+             elementSupport.applyScopedOutputsWithExtra(processInstanceId, userTaskId,
+                 bpmnElement, bpmn, variables);
+             outputsAppliedWithOverlay = true;
+         } else {
+             elementSupport.writeCompletionRaw(processInstanceId, userTaskId,
+                 bpmnElement, bpmn, variables);
+         }
         dbService.completeActivity(userTaskId);
         dbService.completeUserTask(userTaskId);
 
@@ -1328,18 +1334,22 @@ public class CompletionService {
         // WO-C8-41 (F1, oracle S1/S2b): как в user-task хвосте выше — скоуп
         // инстанса внутри MI-подпроцесса, проекция при маппингах (overlay),
         // root вне MI.
-        UUID completionScope = elementSupport.miCompletionScopeOrNull(
-            processInstanceId, serviceTaskId, bpmnElement, bpmn);
-        boolean outputsAppliedWithOverlay = false;
-        if (completionScope != null && elementSupport.hasOutputMappings(bpmnElement)) {
-            elementSupport.applyScopedOutputsWithExtra(processInstanceId, serviceTaskId,
-                bpmnElement, bpmn, variables);
-            outputsAppliedWithOverlay = true;
-        } else if (completionScope != null) {
-            dbService.setVariables(processInstanceId, completionScope, variables);
-        } else {
-            dbService.setVariables(processInstanceId, variables);
-        }
+         // WO-C8-53 (F1 корни 5/6, live Zeebe 8.5.0): тот же единый резолвер,
+         // что в user-task хвосте — writeCompletionRaw (маппинги → всё
+         // локально; MI без маппингов → локально только outputElement,
+         // остальное в root; S0 → root). Локальное снимает deleteVariables
+         // ниже.
+         UUID completionScope = elementSupport.miCompletionScopeOrNull(
+             processInstanceId, serviceTaskId, bpmnElement, bpmn);
+         boolean outputsAppliedWithOverlay = false;
+         if (completionScope != null && elementSupport.hasOutputMappings(bpmnElement)) {
+             elementSupport.applyScopedOutputsWithExtra(processInstanceId, serviceTaskId,
+                 bpmnElement, bpmn, variables);
+             outputsAppliedWithOverlay = true;
+         } else {
+             elementSupport.writeCompletionRaw(processInstanceId, serviceTaskId,
+                 bpmnElement, bpmn, variables);
+         }
         dbService.completeActivity(serviceTaskId);
         dbService.completeServiceTask(serviceTaskId);
 

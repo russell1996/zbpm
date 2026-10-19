@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c853_output_ordered" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="test-c853-output-ordered" name="test-c853-output-ordered" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="startEvent" targetRef="work" />
+
+    <bpmn:serviceTask id="work" name="work">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c853Work" />
+        <zeebe:ioMapping>
+          <zeebe:output source="=&quot;a&quot;" target="o1" />
+          <zeebe:output source="=&quot;b&quot;" target="o2" />
+          <zeebe:output source="=o1" target="o3" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="f2" sourceRef="work" targetRef="dump" />
+    <bpmn:serviceTask id="dump" name="dump">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c853Dump" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="f3" sourceRef="dump" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
