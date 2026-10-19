@@ -54,7 +54,7 @@ const elementCounts = computed(() => {
 function groupLabel(group: VariableScopeGroup): string {
   if (!group.scope) return t('processRootGroup')
   const scope = group.scope
-  const name = scope.bpmnElementId ?? scope.activityId.slice(0, 8) ?? scope.activityId.slice(0, 8)
+  const name = scope.bpmnElementId ?? scope.activityId.slice(0, 8)
   if (scope.bpmnElementId) {
     const total = elementCounts.value.get(scope.bpmnElementId) ?? 1
     if (total > 1) {
