@@ -165,7 +165,7 @@ describe('follower retry не создаёт EventSource (WO-AUDIT-16, F-13)', (
       leader.connect()
       await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
       // Здоровое рукопожатие лидера.
-      FakeEventSource.instances[0].onopen?.()
+      FakeEventSource.instances[0].onopen?.(new Event('open'))
       expect(leader.isConnected.value).toBe(true)
 
       follower = useRealtimeEvents()
@@ -207,22 +207,25 @@ describe('follower retry не создаёт EventSource (WO-AUDIT-16, F-13)', (
     try {
       leader.connect()
       await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
-      FakeEventSource.instances[0].onopen?.()
+      FakeEventSource.instances[0].onopen?.(new Event('open'))
 
       follower = useRealtimeEvents()
+      // const-алиас с narrowed-типом: `let follower: ... | undefined` не
+      // сужается внутри замыканий (vi.waitFor ниже).
+      const follow = follower
       follower.connect()
       await waitFollowerSettled()
-      expect(follower.isLeaderTab()).toBe(false)
+      expect(follow.isLeaderTab()).toBe(false)
       expect(FakeEventSource.instances).toHaveLength(1)
 
       // Retry на follower-вкладке (кнопка «Повторить сейчас»).
-      follower.retryConnection()
+      follow.retryConnection()
 
       // Смерть лидера: disconnect закрывает его ES и отпускает лок — ждущий
       // в очереди лока follower повышен (onPromoted → openSource).
       leader.disconnect()
       releaseLockForTest()
-      await vi.waitFor(() => expect(follower.isLeaderTab()).toBe(true))
+      await vi.waitFor(() => expect(follow.isLeaderTab()).toBe(true))
       await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2))
 
       // Ровно ОДИН открытый источник — ES повышенного лидера. Первый закрыт
