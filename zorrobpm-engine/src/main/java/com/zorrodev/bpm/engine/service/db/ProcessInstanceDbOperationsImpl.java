@@ -127,7 +127,7 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
 
     @Override
     public List<UUID> findRunningChildInstanceIdsByParentInstance(UUID processInstanceId) {
-        return processInstanceRepository.findRunningChildrenByParentInstanceId(processInstanceId).stream()
+        return processInstanceRepository.findRunningChildrenByParentInstanceIdForUpdateSkipLocked(processInstanceId).stream()
             .map(ProcessInstanceEntity::getId)
             .toList();
     }

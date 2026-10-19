@@ -91,11 +91,21 @@ public interface ProcessInstanceRepository extends JpaRepository<ProcessInstance
      * «дети инстанса» = инстансы, чья parent-строка принадлежит этому
      * инстансу. Один запрос вместо «перебрать активности инстанса и для
      * каждой спросить findByParentActivityId» (N+1 на пути отмены).
+     *
+     * <p>{@code FOR UPDATE SKIP LOCKED} — не косметика: путь завершения ребёнка
+     * держит instance-lock РЕБЁНКА и потом просит instance-lock РОДИТЕЛЯ
+     * (child→parent), а отмена родителя держит lock родителя и берёт строки
+     * детей (parent→child). Без SKIP LOCKED эти два порядка образуют ABBA:
+     * взаимное ожидание → PostgreSQL рвёт одну транзакцию (40P01). SKIP LOCKED
+     * не ждёт занятую строку: ребёнок, который прямо сейчас завершается, будет
+     * добил собственным хвостом (его завершение подавлено guard'ом
+     * «родитель терминален»), а ребёнок в покое (часы/дни — сам сценарий F-02)
+     * убивается каскадом как обычно.
      */
-    @Query("SELECT pi FROM ProcessInstanceEntity pi WHERE pi.parentActivityId IN "
-        + "(SELECT a.id FROM ActivityEntity a WHERE a.processInstanceId = :processInstanceId) "
-        + "AND pi.completedAt IS NULL")
-    List<ProcessInstanceEntity> findRunningChildrenByParentInstanceId(UUID processInstanceId);
+    @Query(value = "SELECT pi.* FROM process_instances pi WHERE pi.parent_activity_id IN "
+        + "(SELECT a.id FROM activities a WHERE a.process_instance_id = :processInstanceId) "
+        + "AND pi.completed_at IS NULL FOR UPDATE SKIP LOCKED", nativeQuery = true)
+    List<ProcessInstanceEntity> findRunningChildrenByParentInstanceIdForUpdateSkipLocked(UUID processInstanceId);
 
     /**
      * WO-REL-31 CR-4: definition key in one join query instead of instance→definition

@@ -79,6 +79,8 @@ class DBServiceImplCharacterizationTest {
     @Mock private TimerDbOperations timerDbOperations;
     @Mock private SignalSubscriptionDbOperations signalSubscriptionDbOperations;
     @Mock private ActivityDbOperations activityDbOperations;
+    /** WO-AUDIT-12 (F-02): каскадная отмена дочерних инстансов call activity. */
+    @Mock private com.zorrodev.bpm.engine.service.InstanceCancellationService instanceCancellationService;
 
     @InjectMocks
     private DBServiceImpl dbService;
@@ -584,6 +586,8 @@ class DBServiceImplCharacterizationTest {
         UUID id = UUID.randomUUID();
         dbService.cancelProcessInstance(id);
         verify(processInstanceDbOperations).cancelProcessInstance(id);
+        // WO-AUDIT-12 (F-02): отмена каскадит на дочерние инстансы call activity.
+        verify(instanceCancellationService).cancelDescendants(id);
     }
 
     // ─── Gateway state ────────────────────────────────────────

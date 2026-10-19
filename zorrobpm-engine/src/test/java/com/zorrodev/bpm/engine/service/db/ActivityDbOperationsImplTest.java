@@ -27,6 +27,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -71,11 +72,37 @@ class ActivityDbOperationsImplTest {
         when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
         ServiceTaskEntity st = new ServiceTaskEntity(); st.setId(activityId); st.setJob("draftCreate");
         when(serviceTaskRepository.findById(activityId)).thenReturn(Optional.of(st));
+        // WO-AUDIT-12 (F-02): переход в COMPLETED условный — строка должна быть активной.
+        when(activityRepository.setStatusAndCompletedAtIfStatusIn(eq(activityId), eq(ActivityStatus.COMPLETED),
+            any(java.time.Instant.class), any())).thenReturn(1);
         db.completeActivity(activityId);
-        verify(activityRepository).setStatusAndCompletedAt(eq(activityId), eq(ActivityStatus.COMPLETED), any(java.time.Instant.class));
+        verify(activityRepository).setStatusAndCompletedAtIfStatusIn(eq(activityId), eq(ActivityStatus.COMPLETED),
+            any(java.time.Instant.class), eq(List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS)));
         // WO-C8-37 (C37-3): the completion closes the host's own subscriptions too.
         verify(messageSubscriptionRepository).consumeByActivityIds(eq(piId), eq(List.of(activityId)));
         verify(domainEventEmitter).emitActivityCompleted(eq(piId), any(UUID.class), eq("Activity_7f3"), eq("draftCreate"));
+    }
+
+    /**
+     * WO-AUDIT-12 (F-02): позднее завершение УЖЕ ОТМЕНЁННОЙ активности не
+     * переписывает её статус и не эмитит activity.completed — иначе история
+     * отменённого инстанса искажалась (CANCELLED → COMPLETED).
+     */
+    @Test
+    void completeActivity_onTerminalRow_refusesToFlipAndEmitsNothing() {
+        UUID activityId = UUID.randomUUID(); UUID piId = UUID.randomUUID();
+        ActivityEntity act = new ActivityEntity(); act.setId(activityId); act.setProcessInstanceId(piId);
+        act.setBpmnElementId("call"); act.setStatus(ActivityStatus.CANCELLED);
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(act));
+        // 0 обновлённых строк = строка неактивна (уже терминальна).
+        when(activityRepository.setStatusAndCompletedAtIfStatusIn(eq(activityId), eq(ActivityStatus.COMPLETED),
+            any(java.time.Instant.class), any())).thenReturn(0);
+
+        db.completeActivity(activityId);
+
+        verify(activityRepository, never()).setStatusAndCompletedAt(any(), any(), any());
+        verify(messageSubscriptionRepository, never()).consumeByActivityIds(any(), any());
+        verify(domainEventEmitter, never()).emitActivityCompleted(any(), any(), any(), any());
     }
 
     @Test

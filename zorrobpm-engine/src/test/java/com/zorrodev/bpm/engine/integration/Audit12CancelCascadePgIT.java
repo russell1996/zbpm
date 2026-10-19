@@ -7,6 +7,8 @@ import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
+import com.zorrodev.bpm.engine.service.ActivityService;
+import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
@@ -51,6 +53,8 @@ class Audit12CancelCascadePgIT extends PostgresIT {
     @Autowired private ProcessDefinitionService processDefinitionService;
     @Autowired private RuntimeService runtimeService;
     @Autowired private DBService dbService;
+    @Autowired private ActivityService activityService;
+    @Autowired private BpmnService bpmnService;
     @Autowired private ActivityRepository activityRepository;
     @Autowired private ProcessInstanceRepository processInstanceRepository;
     @Autowired private JdbcTemplate jdbc;
@@ -249,6 +253,54 @@ class Audit12CancelCascadePgIT extends PostgresIT {
             Long.class, child))
             .as("no activity.completed event for a refused completion")
             .isEqualTo(eventsBefore);
+    }
+
+    /**
+     * F-02 (b), третий слой: guard «родитель терминален» в хвосте ребёнка.
+     *
+     * <p>Сценарий — ОКНО ГОНКИ между завершением ребёнка и отменой родителя:
+     * ребёнок успел дойти до конца своей ветви (его хвост
+     * {@code FlowNavigator.finishBranch} — прод-путь, тот же, что зовёт
+     * end-event handler), а родитель к этому моменту уже отменён. Хвост ребёнка
+     * НЕ должен продолжать поток отменённого родителя.
+     *
+     * <p>Гонку воспроизвести детерминированно нельзя (окно — миллисекунды), но
+     * САМ хвост вызывается прод-методом {@code ActivityService.finishBranch} —
+     * ровно тем, который зовёт end-event handler. Тест вызывает его на
+     * дочернем токене после отмены родителя.
+     *
+     * <p>RED без фикса: без guard'а родительская call-activity строка
+     * переписывается, а поток отменённого родителя продолжается (в нём
+     * появляется живая activity-строка — нарушение инварианта утечек, G-P).
+     */
+    @Test
+    @Transactional
+    void childBranchTail_afterParentCancel_doesNotContinueTheParent() throws Exception {
+        UUID parent = start(deployParent());
+        UUID child = childOf(parent);
+        UUID childToken = activitiesOf(child).stream()
+            .map(ActivityEntity::getToken)
+            .filter(java.util.Objects::nonNull)
+            .findFirst().orElseThrow();
+        UUID parentCallActivity = activitiesOf(parent).stream()
+            .filter(a -> "call".equals(a.getBpmnElementId()))
+            .map(ActivityEntity::getId)
+            .findFirst().orElseThrow();
+
+        operatorCancel(parent);
+
+        // Хвост дочерней ветви — прод-путь end-event handler'а.
+        var childPi = dbService.getProcessInstance(child);
+        var childBpmn = bpmnService.getProcessDefinitionModelById(childPi.getProcessDefinitionId());
+        activityService.finishBranch(child, childToken, childBpmn);
+
+        assertThat(activityRepository.findById(parentCallActivity).orElseThrow().getStatus())
+            .as("cancelled parent call activity must stay CANCELLED")
+            .isEqualTo(ActivityStatus.CANCELLED);
+        assertThat(activitiesOf(parent))
+            .as("cancelled parent must not continue its flow")
+            .noneMatch(a -> a.getStatus() == ActivityStatus.CREATED
+                || a.getStatus() == ActivityStatus.IN_PROGRESS);
     }
 
     /**
