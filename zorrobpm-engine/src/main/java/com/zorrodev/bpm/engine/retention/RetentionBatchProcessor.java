@@ -262,7 +262,11 @@ public class RetentionBatchProcessor {
         // правильно: родителя больше нет, и его завершение не должно
         // продолжать удалённый поток (иначе — исключение по отсутствующей
         // строке).
-        total += jdbc.update(
+        //
+        // Число обновлённых строк НЕ идёт в total: total — это «сколько
+        // строк удалено» (метрика аудита F-11 просит именно «rows deleted»),
+        // а здесь строки не удаляются, а обезвличиваются. Считаем отдельно.
+        int severed = jdbc.update(
             "UPDATE process_instances SET parent_activity_id = NULL WHERE parent_activity_id IN "
                 + "(SELECT id FROM activities WHERE process_instance_id IN (:ids))", params);
         total += jdbc.update("DELETE FROM activities WHERE process_instance_id IN (:ids)", params);
@@ -272,7 +276,8 @@ public class RetentionBatchProcessor {
         }
         total += jdbc.update("DELETE FROM process_instances WHERE id IN (:ids)", params);
 
-        log.info("Retention: deleted {} rows for {} instances (incl. {} tokens)", total, instanceIds.size(), tokenIds.size());
+        log.info("Retention: deleted {} rows for {} instances (incl. {} tokens, {} severed parent links)",
+            total, instanceIds.size(), tokenIds.size(), severed);
         return total;
     }
 
