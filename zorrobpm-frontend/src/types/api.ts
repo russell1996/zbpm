@@ -121,6 +121,31 @@ export interface ProcessVariable {
   activityId?: string | null
 }
 
+// WO-C8-51 (часть A) / WO-UI-37 (часть B): описание скоупа-активности из
+// ответа GET /process-instances/{id}/variables-by-scope (забегает вперёд
+// на backend-DTO com.zorrodev.bpm.contract.model.VariableScopeInfo 1:1).
+export interface VariableScopeInfo {
+  /** id activity-строки исполнения, чей скоуп описывается (не bpmn-элемента). */
+  activityId: string
+  /** bpmn id элемента (как в схеме), null — если activity-строка уже удалена. */
+  bpmnElementId: string | null
+  /** Тип BPMN-элемента (значения BpmnElementType, например SUB_PROCESS). */
+  elementType: string | null
+  /** Статус activity-строки (CREATED/IN_PROGRESS/ERROR/COMPLETED/CANCELLED). */
+  status: string | null
+  /** Скоуп-владелец самой этой активности, null — если она в root-скоупе. */
+  parentScopeActivityId: string | null
+}
+
+/**
+ * Группа переменных одного скоупа инстанса. `scope == null` — root-скоуп
+ * инстанса (первая группа ответа всегда root).
+ */
+export interface VariableScopeGroup {
+  scope: VariableScopeInfo | null
+  variables: ProcessVariable[]
+}
+
 export interface BpmnNode {
   id: string
   name: string | null

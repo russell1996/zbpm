@@ -14,8 +14,9 @@ import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
 import * as processService from '@/services/processService'
 import * as variableService from '@/services/variableService'
 import { cancelProcessInstance } from '@/services/instanceService'
-import type { ProcessVariable, BpmnNode, BpmnFlow } from '@/types/api'
+import type { ProcessVariable, BpmnNode, BpmnFlow, VariableScopeGroup } from '@/types/api'
 import { isTaskActive, processInstanceStatus, isProcessInstanceActive, errorMessage } from '@/shared/lib/utils'
+import { isLongVariableValue, formatVariableValue } from '@/shared/lib/variableDisplay'
 import { RefreshCw, ArrowRight, ArrowLeft, Download, Calendar, OctagonX, Copy, Check } from 'lucide-vue-next'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import TruncatedText from '@/widgets/shared/TruncatedText.vue'
@@ -29,6 +30,8 @@ import VariableRowMenu from '@/widgets/presets/VariableRowMenu.vue'
 import { onCtrlEnter, usePresetModal } from '@/composables/usePresetModal'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
+import VariablesByScope from '@/widgets/processes/VariablesByScope.vue'
 import { buildDiagnosticJson } from '@/shared/lib/diagnostic'
 import { useInstanceLiveUpdates } from '@/composables/useInstanceLiveUpdates'
 import { useInstanceViewState, type InstanceTabId } from '@/composables/useInstanceViewState'
@@ -487,29 +490,85 @@ async function confirmCancel() {
   }
 }
 
-// WO-UI-23: разворачиваемое полное значение переменной. Ячейка таблицы режет
-// max-w-xs + truncate (title-only страховка: hover-only, не работает на таче,
-// не даёт скопировать). Длинным считается значение длиннее видимой ячейки
-// (порог 120 символов — консервативно над ~45 видимыми) или ЛЮБОЕ JSON
-// (даже короткое — его стоит показать отформатированным). Короткие — как
-// раньше, truncate + title, без лишних кнопок.
-const VALUE_PREVIEW_LIMIT = 120
+// WO-UI-23: разворачиваемое полное значение переменной. Правила «длинное/JSON
+// → кнопка инспектора» и «JSON → pretty» вынесены в shared/lib/variableDisplay
+// (WO-UI-37 часть B): их разделяют root-таблица, инспектор и панель
+// переменных по скоупам — одна логика, не три копии (P-24).
 
-function isLongVariableValue(v: { type: string; value: string }): boolean {
-  return v.type === 'JSON' || (v.value?.length ?? 0) > VALUE_PREVIEW_LIMIT
+// ──────────────────────────────────────────────
+// WO-UI-37 (часть B): переменные по скоупам
+// ──────────────────────────────────────────────
+// Режим «Показать переменные скоупов» на вкладке «Переменные»: включён →
+// данные тянутся из GET /process-instances/{id}/variables-by-scope (WO-C8-51
+// часть A) и рендерятся группами (root + по группе на скоуп). Режим
+// переживает перезагрузку (localStorage, try/catch — в private-режиме просто
+// не сохраняется). Обновление — вместе с UI-32: открытие вкладки, живые
+// события и полный тихий refetch перечитывают группы ТАКЖЕ тихо (без
+// loading-мигания). Завершённые скоупы/инстансы своих переменных не имеют
+// (движок сводит outputCollection в root, C8-51: instanceFinished_onlyRootGroupRemains)
+// — UI рендерит то, что пришло: у финального инстанса только root.
+
+const SCOPE_VARS_STORAGE_KEY = 'zbpm.instance.variables-by-scope'
+
+function readScopeVariablesMode(): boolean {
+  try {
+    return window.localStorage.getItem(SCOPE_VARS_STORAGE_KEY) === '1'
+  } catch {
+    return false
+  }
 }
 
-// JSON — красиво отформатирован, с защитой на не-валидный (fallback — сырая
-// строка, не исключение в шаблоне).
-function formatVariableValue(v: { type: string; value: string }): string {
-  if (v.type === 'JSON') {
-    try {
-      return JSON.stringify(JSON.parse(v.value), null, 2)
-    } catch {
-      return v.value
-    }
+function writeScopeVariablesMode(on: boolean): void {
+  try {
+    window.localStorage.setItem(SCOPE_VARS_STORAGE_KEY, on ? '1' : '0')
+  } catch {
+    // нет доступа к localStorage — режим просто не сохранится
   }
-  return v.value
+}
+
+const showScopeVariables = ref(readScopeVariablesMode())
+const scopeGroups = ref<VariableScopeGroup[]>([])
+const scopeGroupsRefreshing = ref(false)
+
+let scopeRefreshingCount = 0
+function withScopeRefreshing<T>(p: Promise<T>): Promise<T> {
+  scopeRefreshingCount++
+  scopeGroupsRefreshing.value = true
+  return p.finally(() => {
+    scopeRefreshingCount--
+    if (scopeRefreshingCount <= 0) {
+      scopeRefreshingCount = 0
+      scopeGroupsRefreshing.value = false
+    }
+  })
+}
+
+async function fetchScopeVariables(): Promise<void> {
+  const pi = processStore.currentInstance
+  if (!pi) return
+  try {
+    scopeGroups.value = await withScopeRefreshing(
+      variableService.getVariablesByScope(pi.id),
+    )
+  } catch {
+    // скоуп-переменные — best-effort панель-деталь, не ошибка страницы
+    // (та же политика, что selectedActivityVariables выше)
+  }
+}
+
+async function quietScopeVariables(): Promise<void> {
+  if (!showScopeVariables.value) return
+  await fetchScopeVariables()
+}
+
+async function onScopeVariablesToggle(on: boolean): Promise<void> {
+  showScopeVariables.value = on
+  writeScopeVariablesMode(on)
+  if (on) {
+    await fetchScopeVariables()
+  } else {
+    scopeGroups.value = []
+  }
 }
 
 const inspectedVariable = ref<{ name: string; type: string; value: string } | null>(null)
@@ -553,6 +612,8 @@ async function loadTabData() {
       processStore.fetchVariables({ processInstanceId: pi.id }),
       loadActivitiesWithPages(pi.id),
       processStore.fetchSubprocesses(pi.id),
+      // WO-UI-37 (часть B): в режиме скоупов первичная загрузка берёт и группы
+      quietScopeVariables(),
     ])
   } finally {
     tabLoading.value = false
@@ -590,7 +651,9 @@ async function onTabChange() {
     // один запрос этой сущности — первичную загрузку страницы (loadTabData в
     // init) лишними запросами не дублируем.
     if (activeTab.value === 'variables') {
-      await quietVariables()
+      // WO-UI-37 (часть B): в режиме скоупов вкладка перечитывает и группы
+      // (quietScopeVariables сам выходит, когда режим выключен).
+      await Promise.all([quietVariables(), quietScopeVariables()])
     } else if (activeTab.value === 'tasks') {
       await quietUserTasks()
     } else if (activeTab.value === 'serviceTasks') {
@@ -702,6 +765,7 @@ async function refreshLiveQuiet(): Promise<void> {
       quietIncidents(),
       quietVariables(),
       quietSubprocesses(),
+      quietScopeVariables(), // WO-UI-37 (часть B)
     ])
   })())
 }
@@ -718,6 +782,11 @@ async function refreshLiveQuiet(): Promise<void> {
 function scheduleVariablesIfLoaded(key: string): void {
   if (activeTab.value !== 'variables' && processStore.currentVariables.length === 0) return
   scheduleListRefresh(`${key}:variables`, () => void quietVariables())
+  // WO-UI-37 (часть B): в режиме скоупов события освежают и группы (отдельный
+  // ключ планировщика — свой склеенный refetch, не дубль запроса).
+  if (showScopeVariables.value) {
+    scheduleListRefresh(`${key}:variablesByScope`, () => void quietScopeVariables())
+  }
 }
 
 /**
@@ -865,9 +934,20 @@ async function loadMoreActivities() {
   }
 }
 
-function downloadDiagnostic() {
+async function downloadDiagnostic() {
   const pi = processStore.currentInstance
   if (!pi) return
+  // WO-UI-37 (часть B): группы скоупов — свежий fetch при экспорте (консьюмер
+  // обязан видеть ТЕКУЩЕЕ состояние, а не кэш режима просмотра). Сбой —
+  // понятная ошибка и экспорт БЕЗ файла: «диагностика без скоупов» солгала бы
+  // о содержимом инстанса.
+  let groups: VariableScopeGroup[]
+  try {
+    groups = await variableService.getVariablesByScope(pi.id)
+  } catch {
+    toast.error(t('loadError'))
+    return
+  }
   const json = buildDiagnosticJson({
     instance: pi,
     activities: processStore.currentActivities,
@@ -876,6 +956,7 @@ function downloadDiagnostic() {
     serviceTasks: taskStore.serviceTasks?.data || [],
     incidents: incidentStore.incidents?.data || [],
     bpmnXml: bpmnXml.value,
+    variablesByScope: groups,
   })
   const blob = new Blob([JSON.stringify(json, null, 2)], {
     type: 'application/json;charset=utf-8;',
@@ -1241,6 +1322,25 @@ watch(activeTab, onTabChange)
         </div>
 
         <div v-if="activeTab === 'variables'" class="space-y-4">
+        <!-- WO-UI-37 (часть B): режим «Показать переменные скоупов» — shadcn
+             Switch (G24), по умолчанию выключен, режим в localStorage
+             (try/catch). Включён — выше root-таблицы рендерятся группы. -->
+        <div class="flex items-center gap-2" data-testid="scope-variables-toggle">
+          <!-- reka-ui v2: SwitchRoot управляется через modelValue (checked
+               проп в v2 не существует — v1-биндинг :checked молча мёртв). -->
+          <Switch
+            :model-value="showScopeVariables"
+            :aria-label="t('showScopeVariables')"
+            data-testid="scope-variables-switch"
+            @update:model-value="onScopeVariablesToggle"
+          />
+          <span class="text-sm text-muted-foreground">{{ t('showScopeVariables') }}</span>
+        </div>
+        <VariablesByScope
+          v-if="showScopeVariables"
+          :groups="scopeGroups"
+          @inspect="openVariableInspector"
+        />
         <div class="border border-border rounded-lg overflow-hidden">
           <table class="w-full text-sm">
             <thead class="bg-muted">
