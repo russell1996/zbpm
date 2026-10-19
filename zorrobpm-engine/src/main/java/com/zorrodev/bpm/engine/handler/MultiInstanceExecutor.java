@@ -617,6 +617,29 @@ public class MultiInstanceExecutor {
         loopCounter.setType(ProcessVariableType.LONG);
         loopCounter.setValue(Long.toString(index + 1L));
         locals.add(loopCounter);
+        // WO-C8-53 (F1 корень 6, live Zeebe 8.5.0): outputElement — ЛОКАЛЬНАЯ
+        // переменная инстанса: её несёт job payload КАЖДОГО инстанса (typed null
+        // до завершения воркером со значением), а протечки в следующий инстанс
+        // и в root нет (r из инстанса a не виден инстансу b и не виден dump).
+        // Значение — JSON-тип со строкой "null": скалярный null строкой не
+        // персистится (оба upsert-пути коэрсят null→"", WO-C8-41 F2-бис), а
+        // JSON "null" читается как честная null и в FEEL-контексте, и в
+        // job payload. Предобъявляется только простой FEEL-идентификатор
+        // (парсер хранит выражение без ведущего "=", BpmnParseServiceImpl):
+        // сложные выражения ({"decision": decision, ...}) переменную не
+        // создают. Имя, занятое inputElement/loopCounter, не перезаписываем
+        // (upsert в locals — последнее wins, входной байнд ушёл бы в null).
+        String outputElement = mi.getOutputElement();
+        if (outputElement != null && !outputElement.isBlank()
+            && outputElement.matches("^[A-Za-z_][A-Za-z0-9_]*$")
+            && !outputElement.equals("loopCounter")
+            && (mi.getInputElement() == null || !outputElement.equals(mi.getInputElement()))) {
+            ProcessVariable outputElementVar = new ProcessVariable();
+            outputElementVar.setName(outputElement);
+            outputElementVar.setType(ProcessVariableType.JSON);
+            outputElementVar.setValue("null");
+            locals.add(outputElementVar);
+        }
         // WO-C8-41 (F2-бис): скалярные null-предобъявления (tu:null в oracle
         // S1-1/S5-1) строкой НЕ persist'ятся: оба upsert-пути (PG+H2) коэрсят
         // null→"" и =neverSet давал бы "" вместо null (S5 ["",""] вместо
