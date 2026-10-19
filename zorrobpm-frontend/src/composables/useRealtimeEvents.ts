@@ -656,6 +656,22 @@ export function useRealtimeEvents() {
 
   function retryConnection() {
     reconnectAttempts = 0
+    if (!isLeaderTab) {
+      // WO-AUDIT-16 (F-13): у follower НЕТ своего EventSource — и retry не
+      // обязан создавать его: без гварда `openSource()` открывал ВТОРОЙ
+      // realtime-канал на браузер (двойная обработка событий, конфликтующие
+      // health-патчи), а при последующем promotion переменная `eventSource`
+      // перезаписывалась, и первый источник оставался висеть незакрытым
+      // (утечка слотов HTTP/1.1 — ровно то, что уходило в WO-UI-26 Доп.5).
+      // Смысленное действие follower — спросить лидера о НАСТОЯЩЕМ состоянии:
+      // лидер отвечает полным health-патчем (ветка 'health-request' в
+      // onFanoutMessage); если лидер мёртв — его Web Locks-холд отпущен,
+      // авто-повышение (onPromoted) поднимет канал само, retry не нужен.
+      // ЛОКАЛЬНО follower ничего не сбрасывает и в общий фан-аут не пишет:
+      // чужой «down» снимает только лидер (свой retry, ветка ниже).
+      publishFanout({ kind: 'health-request', tabId: getSseTabId() })
+      return
+    }
     realtimeDown.value = false
     error.value = null
     mirrorHealth({ realtimeDown: false })
