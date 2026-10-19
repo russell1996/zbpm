@@ -112,7 +112,7 @@ public class MiOutputScopeLeakIntegrationTests {
             .as("MI job payload must carry typed-null outputElement 'r'")
             .containsEntry("r", null));
 
-        completeByItem(pi, jobs, "r!");
+        completeByItem(pi, jobs, "!");
         completeDump(pi);
         assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
 
@@ -251,7 +251,7 @@ public class MiOutputScopeLeakIntegrationTests {
         assertThat(jobs.stream().map(job -> String.valueOf(normalized(payload(pi, job.getId())).get("item")))
             .toList()).containsExactlyInAnyOrder("a", "b");
 
-        completeByItem(pi, jobs, "r!", Map.of("extra", "raw"));
+        completeByItem(pi, jobs, "!", Map.of("extra", "raw"));
         completeDump(pi);
         assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
 
