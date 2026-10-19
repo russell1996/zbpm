@@ -114,6 +114,30 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         return val.trim();
     }
 
+    /**
+     * F-08 (WO-AUDIT-10): is this response safe to persist and replay on
+     * a retry with the same key?
+     *
+     * <p>Cacheable: 2xx (the successful effect — the whole point of
+     * idempotency) and the deterministic client errors 400/413: retrying
+     * with the SAME body produces the SAME result (validation/boundary
+     * depends only on the body), so replaying is correct and saves the
+     * re-validation.
+     *
+     * <p>NOT cacheable: 401/403/429 (token/quota may have changed since),
+     * 404/409/422 (the resource or state may now be different — e.g. the
+     * instance created elsewhere in between, the conflict resolved), and
+     * 5xx (the transaction rolled back, nothing happened — replaying a
+     * transient 500 would hang the client on it forever; the retry must
+     * re-execute).
+     */
+    static boolean isCacheableStatus(int status) {
+        if (status >= 200 && status < 300) {
+            return true;
+        }
+        return status == 400 || status == 413;
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws IOException, jakarta.servlet.ServletException {
@@ -210,7 +234,14 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                     byte[] responseBody = cachedResponse.getContentAsByteArray();
                     String contentType = cachedResponse.getContentType();
                     String bodyStr = new String(responseBody, StandardCharsets.UTF_8);
-                    if (responseStatus == 401 || responseStatus == 403 || responseStatus == 429) {
+                    if (!isCacheableStatus(responseStatus)) {
+                        // F-08 (WO-AUDIT-10): 401/403/404/409/422/429/5xx не
+                        // персистим — состояние могло измениться (токен обновлён,
+                        // ресурс создан между запросами, конфликт разрешён, transient
+                        // сбой откатил транзакцию), повтор с тем же key обязан
+                        // переисполнить запрос, а не получать закэшированную ошибку
+                        // вечно (было: только 401/403/429, любой 5xx персистился
+                        // и replay'ился — аудит F-08). Ответ клиенту уходит как есть.
                         buffered.set(new Buffered(responseStatus, bodyStr, contentType));
                         return;
                     }
