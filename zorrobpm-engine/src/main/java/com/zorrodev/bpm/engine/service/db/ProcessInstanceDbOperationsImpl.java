@@ -11,6 +11,8 @@ import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Instant;
 import java.util.LinkedList;
@@ -47,6 +49,8 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
      * отдельные хвостовые kill-пути (EventTrigger/ErrorEscalationThrower/EndEventHandler)
      * завершают ДОЧЕРНИЕ инстансы через тот же completeProcessInstance, а корневой —
      * через FlowNavigator → DBServiceImpl, то есть покрыты здесь же.
+     * Зачистка идёт в фазе КОММИТА этой же транзакции — после хвостовых перепроверок
+     * припаркованных join'ов (см. {@link #clearInstanceBookkeepingAtCommit}).
      */
     private final ParallelGatewayDbOperations parallelGatewayDbOperations;
 
@@ -115,8 +119,9 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
         // finalizeFinishedInstance: нормальное завершение ad-hoc/MI-скоупов
         // (cancel-end, error-walk, terminate внутри скоупа) терминирует инстанс
         // ЭТИМ путём, и marker-строки их join'ов после этого не читает никто.
-        // Та же транзакция, что и терминальная пометка, — атомарно.
-        parallelGatewayDbOperations.clearInstanceBookkeeping(processInstanceId);
+        // Зачистка — в фазе коммита этой же транзакции, НЕ до хвостовых
+        // перепроверок припаркованных join'ов (см. clearInstanceBookkeepingAtCommit).
+        clearInstanceBookkeepingAtCommit(processInstanceId);
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
         domainEventEmitter.emitProcessInstanceCompleted(processInstanceId, pi.getProcessDefinitionId());
         // WO-OBS-1: single choke for every completion path (normal end, escalation end).
@@ -130,9 +135,10 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
         // та же зачистка, что хвосты завершения (item/loopCounter MI-инстансов,
         // предсозданный outputCollection, batch-маркеры входа).
         clearCancelledScopeState(processInstanceId);
-        // WO-C8-48: bookkeeping join'ов (arrival + marker) — в той же транзакции,
-        // что терминальная пометка (отмена = kill всех хвостов, читать некому).
-        parallelGatewayDbOperations.clearInstanceBookkeeping(processInstanceId);
+        // WO-C8-48: bookkeeping join'ов (arrival + marker) — в фазе коммита той же
+        // транзакции, единым с complete-путём механизмом (любой будущий резюм после
+        // отмены в этой транзакции ещё увидит строки; наружу инстанс уходит без них).
+        clearInstanceBookkeepingAtCommit(processInstanceId);
         ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
         processInstanceRepository.setCancelled(processInstanceId, true);
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
@@ -144,5 +150,48 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
     @Override
     public void clearCancelledScopeState(UUID processInstanceId) {
         cancelledScopeStateCleaner.clear(processInstanceId);
+    }
+
+    /**
+     * WO-C8-48 раунд 2: зачистка bookkeeping-строк join'ов — в фазе КОММИТА
+     * терминальной транзакции, а не в её середине.
+     *
+     * <p>Почему не сразу: терминальная пометка — СЕРЕДИНА хвоста деактивации, а не его
+     * конец. В той же транзакции после неё ещё работают штатные перепроверки
+     * припаркованных inclusive-join'ов (шаг 3/B2 WO-C8-35), и arrival-строки — их
+     * источник кандидатов: interrupting boundary доводит поток границы
+     * ({@code EventTrigger.fireBoundary} → {@code proceedToOutgoing} → …
+     * → {@code FlowNavigator.finishBranch}, который и вызывает
+     * complete/cancelProcessInstance) и только ЗАТЕМ зовёт
+     * {@code resumeParkedInclusiveJoins}; отложенный canceling-хвост
+     * {@code CompletionService.advanceOrFinishCanceling} устроен тем же порядком.
+     * На base резюм видел строки и доставлял припаркованный join ПОСЛЕ терминальной
+     * пометки — это закреплено матрицей C8-35 (241/241). Ранний DELETE в самой пометке
+     * съедал кандидатов резюма ({@code getGatewaysWithOpenArrivals}), и join тихо терял
+     * продолжение: 60/241 комбинаций матрицы и живой wakeup-тест падали (RED дословно —
+     * в отчёте WO-C8-48). Резюм — живой потребитель строк, поэтому «без изменения
+     * поведения живых join'ов» означает: строки обязаны дожить до конца хвоста
+     * деактивации.
+     *
+     * <p>Коммит — единственная точка, где хвост деактивации гарантированно закончен:
+     * любой последователь в той же транзакции (резюм, диагностика, тест) видит
+     * состояние как на base, а наружу терминальный инстанс уходит без единой строки.
+     * Откат транзакции зачистку не выполняет — и это верно: откатывается и сама
+     * терминальная пометка, инстанс не завершён и строки ему ещё нужны.
+     *
+     * <p>Транзакционной синхронизации нет (прямой вызов вне Spring-транзакции —
+     * юнит-тесты, аварийные пути без tx): чистим немедленно, как раньше.
+     */
+    private void clearInstanceBookkeepingAtCommit(UUID processInstanceId) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            parallelGatewayDbOperations.clearInstanceBookkeeping(processInstanceId);
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void beforeCommit(boolean readOnly) {
+                parallelGatewayDbOperations.clearInstanceBookkeeping(processInstanceId);
+            }
+        });
     }
 }

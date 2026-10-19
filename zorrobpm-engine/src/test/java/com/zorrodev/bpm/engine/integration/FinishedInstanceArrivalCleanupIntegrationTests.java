@@ -65,10 +65,17 @@ import static org.assertj.core.api.Assertions.assertThat;
  * MI-путь даёт mirror-случай: cancel посреди MI оставляет marker-строку
  * {@code miId::batchUuid} ({@code MultiInstanceExecutor:248}).
  *
+ * <p>Проверки — ПОСЛЕ КОММИТА: терминальная зачистка (WO-C8-48) выполняется в фазе
+ * коммита той же транзакции — ПОСЛЕ хвостовых перепроверок припаркованных join'ов,
+ * которым arrival-строки нужны живыми (матрица C8-35, 241/241). Поэтому сценарии
+ * этого класса НЕ оборачиваются в тестовую {@code @Transactional}: откат тестовой
+ * транзакции не выполнил бы фазу коммита, и проверка доказывала бы поведение,
+ * которого в прод-пути не существует. Каждый шаг идёт прод-транзакцией
+ * ({@code RuntimeService}/операторская последовательность в TransactionTemplate),
+ * наружу утверждается наблюдаемое состояние БД после коммита.
+ *
  * <p>Счёт — JdbcTemplate-ом, не JPA: зачистка идёт bulk-запросом мимо
- * persistence-контекста, и managed-копии снесённых строк в той же
- * {@code @Transactional} остаются stale для entity-ридеров (WO-C8-46, «COUNT по
- * таблице — факт БД, не кэша»).
+ * persistence-контекста (WO-C8-46, «COUNT по таблице — факт БД, не кэша»).
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
@@ -137,6 +144,16 @@ public class FinishedInstanceArrivalCleanupIntegrationTests {
             pi).toString();
     }
 
+    /** Операторская отмена — та же последовательность, что в RuntimeOperations, в одной tx. */
+    private void operatorCancel(UUID pi) {
+        new TransactionTemplate(txManager).executeWithoutResult(s -> {
+            dbService.cancelActiveActivities(pi);
+            dbService.deleteTimerJobsByProcessInstanceId(pi);
+            dbService.deleteMessageSubscriptionsByProcessInstanceId(pi);
+            dbService.cancelProcessInstance(pi);
+        });
+    }
+
     private void assertTerminalWithNoBookkeeping(UUID pi, String scenario) {
         assertThat(queryService.getProcessInstance(pi).getCompletedAt())
             .as("[%s] instance reached a terminal state", scenario).isNotNull();
@@ -160,25 +177,21 @@ public class FinishedInstanceArrivalCleanupIntegrationTests {
         assertTerminalWithNoBookkeeping(pi, fixture);
     }
 
-    @Transactional
     @Test
     void adhocErrorScopeWalk_instanceCompletes_withoutBookkeeping() throws Exception {
         driveAdhocCancelScenario("test-c838-adhoc-errwalk-holds-neighbour-join.bpmn");
     }
 
-    @Transactional
     @Test
     void adhocInterruptingEscalation_instanceCompletes_withoutBookkeeping() throws Exception {
         driveAdhocCancelScenario("test-c838-adhoc-escalate-holds-neighbour-join.bpmn");
     }
 
-    @Transactional
     @Test
     void adhocTerminateInScope_instanceCompletes_withoutBookkeeping() throws Exception {
         driveAdhocCancelScenario("test-c838-adhoc-terminate-holds-neighbour-join.bpmn");
     }
 
-    @Transactional
     @Test
     void adhocCancelEnd_instanceCompletes_withoutBookkeeping() throws Exception {
         driveAdhocCancelScenario("test-c838-adhoc-cancelend-holds-neighbour-join.bpmn");
@@ -190,7 +203,6 @@ public class FinishedInstanceArrivalCleanupIntegrationTests {
      * marker-строка MI ({@code miId::batchUuid}, {@code expected_count} set) и
      * arrival-строка уже завершившейся копии обязаны исчезнуть.
      */
-    @Transactional
     @Test
     void operatorCancel_miSubprocessMidFlight_withoutBookkeeping() throws Exception {
         UUID pi = startFixture("test-c840-mi-sub-minimal.bpmn");
@@ -201,10 +213,7 @@ public class FinishedInstanceArrivalCleanupIntegrationTests {
             .as("premise: MI bookkeeping rows exist before the cancel; rows: %s", bookkeepingDump(pi))
             .isGreaterThan(0L);
 
-        dbService.cancelActiveActivities(pi);
-        dbService.deleteTimerJobsByProcessInstanceId(pi);
-        dbService.deleteMessageSubscriptionsByProcessInstanceId(pi);
-        dbService.cancelProcessInstance(pi);
+        operatorCancel(pi);
 
         assertTerminalWithNoBookkeeping(pi, "operator cancel of MI subprocess mid-flight");
     }
@@ -214,7 +223,6 @@ public class FinishedInstanceArrivalCleanupIntegrationTests {
      * вложенный подпроцесс и держит живой ВНУТРЕННИЙ MI ({@code miTaskA} ×3 внутри
      * двух внешних инстансов) — bookkeeping-строки обоих уровней обязаны исчезнуть.
      */
-    @Transactional
     @Test
     void operatorCancel_nestedMiSubprocessMidFlight_withoutBookkeeping() throws Exception {
         ProcessVariable routeToMi = new ProcessVariable();
@@ -233,10 +241,7 @@ public class FinishedInstanceArrivalCleanupIntegrationTests {
             .as("premise: nested MI bookkeeping rows exist before the cancel; rows: %s", bookkeepingDump(pi))
             .isGreaterThan(0L);
 
-        dbService.cancelActiveActivities(pi);
-        dbService.deleteTimerJobsByProcessInstanceId(pi);
-        dbService.deleteMessageSubscriptionsByProcessInstanceId(pi);
-        dbService.cancelProcessInstance(pi);
+        operatorCancel(pi);
 
         assertTerminalWithNoBookkeeping(pi, "operator cancel of a nested MI subprocess mid-flight");
     }
@@ -246,7 +251,6 @@ public class FinishedInstanceArrivalCleanupIntegrationTests {
      * arrival-строки joinMain/joinIn и ad-hoc bookkeeping (joinKey) обязаны
      * исчезнуть вместе с терминальным состоянием.
      */
-    @Transactional
     @Test
     void operatorCancel_adhocWithParkedJoins_withoutBookkeeping() throws Exception {
         UUID pi = startFixture("test-c838-adhoc-errwalk-holds-neighbour-join.bpmn");
@@ -256,16 +260,12 @@ public class FinishedInstanceArrivalCleanupIntegrationTests {
             .as("premise: parked joins hold arrival rows; rows: %s", bookkeepingDump(pi))
             .isGreaterThan(0L);
 
-        dbService.cancelActiveActivities(pi);
-        dbService.deleteTimerJobsByProcessInstanceId(pi);
-        dbService.deleteMessageSubscriptionsByProcessInstanceId(pi);
-        dbService.cancelProcessInstance(pi);
+        operatorCancel(pi);
 
         assertTerminalWithNoBookkeeping(pi, "operator cancel of an ad-hoc scope with parked joins");
     }
 
     /** Регресс нормального пути: MI завершается сам — строк не остаётся. */
-    @Transactional
     @Test
     void miSubprocessNormalCompletion_withoutBookkeeping() throws Exception {
         UUID pi = startFixture("test-c840-mi-sub-minimal.bpmn");
@@ -280,7 +280,6 @@ public class FinishedInstanceArrivalCleanupIntegrationTests {
      * previous), marker-строка батча живёт всю последовательность и обязана исчезнуть
      * вместе с терминальным состоянием.
      */
-    @Transactional
     @Test
     void miSubprocessSequentialNormalCompletion_withoutBookkeeping() throws Exception {
         UUID pi = startFixture("test-c840-mi-sub-sequential.bpmn");
@@ -297,7 +296,6 @@ public class FinishedInstanceArrivalCleanupIntegrationTests {
      * исчезнуть при завершении инстанса. Тот же ход, что
      * {@code MiSubProcessIntegrationTests#nested_plainSubSeesOuterLoopVar_innerMiTaskSeesBoth}.
      */
-    @Transactional
     @Test
     void nestedMiSubprocess_normalCompletion_withoutBookkeeping() throws Exception {
         ProcessVariable routeToMi = new ProcessVariable();

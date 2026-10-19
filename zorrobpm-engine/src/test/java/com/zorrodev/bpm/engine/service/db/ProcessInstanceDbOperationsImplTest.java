@@ -14,6 +14,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.Optional;
@@ -22,6 +24,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -85,12 +88,13 @@ class ProcessInstanceDbOperationsImplTest {
     }
 
     /**
-     * WO-C8-48: завершение стирает bookkeeping join'ов инстанса (arrival + marker)
-     * ДО терминальной пометки, в той же транзакции. Мутация «убрать вызов» краснит
-     * и здесь, и сквозные FinishedInstanceArrivalCleanupIntegrationTests.
+     * WO-C8-48: БЕЗ активной транзакционной синхронизации (прямой вызов вне
+     * Spring-транзакции — unit/аварийные пути) зачистка выполняется немедленно,
+     * как единственно возможное поведение. В транзакции прод-пути она уходит
+     * в фазу коммита — см. {@link #completeProcessInstance_defersBookkeepingCleanupToCommitPhase}.
      */
     @Test
-    void completeProcessInstance_clearsInstanceBookkeepingBeforeMarkingCompleted() {
+    void completeProcessInstance_withoutTransaction_clearsInstanceBookkeepingImmediately() {
         UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
         ProcessInstanceEntity e = new ProcessInstanceEntity(); e.setId(id); e.setProcessDefinitionId(pdId);
         when(processInstanceRepository.findById(id)).thenReturn(Optional.of(e));
@@ -103,15 +107,97 @@ class ProcessInstanceDbOperationsImplTest {
     }
 
     /**
-     * WO-C8-48: отмена стирает bookkeeping join'ов инстанса в той же транзакции.
+     * WO-C8-48: отмена БЕЗ транзакционной синхронизации чистит немедленно
+     * (fallback; в транзакции — фаза коммита).
      */
     @Test
-    void cancelProcessInstance_clearsInstanceBookkeeping() {
+    void cancelProcessInstance_withoutTransaction_clearsInstanceBookkeepingImmediately() {
         UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
         ProcessInstanceEntity e = new ProcessInstanceEntity(); e.setId(id); e.setProcessDefinitionId(pdId);
         when(processInstanceRepository.findById(id)).thenReturn(Optional.of(e));
         db.cancelProcessInstance(id);
         verify(parallelGatewayDbOperations).clearInstanceBookkeeping(id);
+    }
+
+    /**
+     * WO-C8-48 раунд 2: в АКТИВНОЙ транзакции зачистка НЕ выполняется в середине
+     * хвоста деактивации — она регистрируется на фазу коммита. Терминальная пометка —
+     * СЕРЕДИНА хвоста, а не конец: после неё в той же транзакции перепроверки
+     * припаркованных join'ов ({@code EventTrigger.fireBoundary} → resume,
+     * отложенный canceling-хвост {@code CompletionService.advanceOrFinishCanceling})
+     * читают arrival-строки как кандидатов резюма; ранний DELETE терял их — 60/241
+     * комбинаций матрицы C8-35 и живой wakeup-тест падали. Мутация «чистить сразу
+     * в пометке» краснит этот тест (и сквозные классы).
+     */
+    @Test
+    void completeProcessInstance_defersBookkeepingCleanupToCommitPhase() {
+        UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
+        ProcessInstanceEntity e = new ProcessInstanceEntity(); e.setId(id); e.setProcessDefinitionId(pdId);
+        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(e));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            db.completeProcessInstance(id);
+
+            verify(parallelGatewayDbOperations, never()).clearInstanceBookkeeping(id);
+            List<TransactionSynchronization> synchronizations =
+                TransactionSynchronizationManager.getSynchronizations();
+            assertThat(synchronizations)
+                .as("терминальный переход регистрирует ровно одну зачистку в фазе коммита")
+                .hasSize(1);
+
+            synchronizations.get(0).beforeCommit(false);
+            verify(parallelGatewayDbOperations).clearInstanceBookkeeping(id);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    /** WO-C8-48 раунд 2: отмена — тот же механизм фазы коммита. */
+    @Test
+    void cancelProcessInstance_defersBookkeepingCleanupToCommitPhase() {
+        UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
+        ProcessInstanceEntity e = new ProcessInstanceEntity(); e.setId(id); e.setProcessDefinitionId(pdId);
+        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(e));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            db.cancelProcessInstance(id);
+
+            verify(parallelGatewayDbOperations, never()).clearInstanceBookkeeping(id);
+            List<TransactionSynchronization> synchronizations =
+                TransactionSynchronizationManager.getSynchronizations();
+            assertThat(synchronizations).hasSize(1);
+            synchronizations.get(0).beforeCommit(false);
+            verify(parallelGatewayDbOperations).clearInstanceBookkeeping(id);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    /**
+     * WO-C8-48 раунд 2: откат транзакции зачистку не выполняет — откатывается и сама
+     * терминальная пометка; инстанс не завершён, и строки ему ещё нужны. Гвардия
+     * против реализации «чистить в afterCompletion без проверки статуса».
+     */
+    @Test
+    void terminalTransition_rollback_doesNotClearBookkeeping() {
+        UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
+        ProcessInstanceEntity e = new ProcessInstanceEntity(); e.setId(id); e.setProcessDefinitionId(pdId);
+        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(e));
+
+        TransactionSynchronizationManager.initSynchronization();
+        try {
+            db.completeProcessInstance(id);
+            List<TransactionSynchronization> synchronizations =
+                TransactionSynchronizationManager.getSynchronizations();
+            assertThat(synchronizations).hasSize(1);
+
+            synchronizations.get(0).afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK);
+            verify(parallelGatewayDbOperations, never()).clearInstanceBookkeeping(id);
+        } finally {
+            TransactionSynchronizationManager.clearSynchronization();
+        }
     }
 
     @Test
