@@ -6,6 +6,7 @@ import type {
   ServiceTask,
   Incident,
 } from '@/types/api'
+import { processInstanceStatus } from './utils'
 
 // ──────────────────────────────────────────────
 // Public types exported for tests (P-28 gate)
@@ -18,6 +19,8 @@ export interface DiagnosticInstance {
   version: number | null
   // WO-C8-49 (п.4): cancelled ≠ completed — по JSON должно быть видно,
   // что инстанс отменён (прод-диагностика 9dcdd13e выглядела как completed).
+  // WO-UI-37 (часть A): значение приходит из общего дериватора
+  // `processInstanceStatus` (utils.ts) в нижнем регистре — одна логика с UI.
   status: 'running' | 'completed' | 'cancelled'
   startedAt: string
   completedAt: string | null
@@ -132,9 +135,14 @@ export function buildDiagnosticJson(input: DiagnosticInput): DiagnosticJson {
   } = input
 
   const generatedAt = new Date().toISOString()
-  const isCompleted = instance.completedAt !== null
-  // WO-C8-49 (п.4): отмена — отдельное состояние (не «completed»).
-  const isCancelled = instance.cancelled === true
+  // WO-UI-37 (часть A): статус — из ТОГО ЖЕ дериватора, что UI (utils.ts),
+  // без второй копии логики. Дериватор отдаёт uppercase; в экспорте — lowercase.
+  const instanceStatus = processInstanceStatus(instance).toLowerCase() as
+    | 'running'
+    | 'completed'
+    | 'cancelled'
+  const isCompleted = instanceStatus === 'completed'
+  const isCancelled = instanceStatus === 'cancelled'
 
   // ── Active tokens ──
   const activeActivities = activities.filter(
@@ -156,18 +164,30 @@ export function buildDiagnosticJson(input: DiagnosticInput): DiagnosticJson {
 
   // ── Anomalies ──
   const anomalies: string[] = []
-  if (isCompleted && activeTokenCount > 0) {
-    anomalies.push(
-      `Instance status=COMPLETED, but active elements: ${activeTokenCount}`,
-    )
-  }
-  if (openIncidentCount > 0) {
-    anomalies.push(`Open incidents: ${openIncidentCount}`)
-  }
-  if (isCompleted && activeTokenCount > 0) {
-    anomalies.push(
-      `Active tokens: ${activeTokenCount} for completed instance`,
-    )
+  if (isCancelled) {
+    // WO-UI-37 (часть A): отмена — ДРУГАЯ ситуация, чем обычное завершение.
+    // После отмены живых элементов/открытых инцидентов быть не должно
+    // (WO-C8-49 их и закрывает), поэтому остатки — это аномалия отмены,
+    // и формулировка «COMPLETED, but …» здесь была бы ложью.
+    if (activeTokenCount > 0 || openIncidentCount > 0) {
+      anomalies.push(
+        `Instance cancelled; open incidents: ${openIncidentCount}, active elements: ${activeTokenCount}`,
+      )
+    }
+  } else {
+    if (isCompleted && activeTokenCount > 0) {
+      anomalies.push(
+        `Instance status=COMPLETED, but active elements: ${activeTokenCount}`,
+      )
+    }
+    if (openIncidentCount > 0) {
+      anomalies.push(`Open incidents: ${openIncidentCount}`)
+    }
+    if (isCompleted && activeTokenCount > 0) {
+      anomalies.push(
+        `Active tokens: ${activeTokenCount} for completed instance`,
+      )
+    }
   }
 
   // ── Tokens (derived from activities) ──
@@ -264,14 +284,18 @@ export function buildDiagnosticJson(input: DiagnosticInput): DiagnosticJson {
 
   // ── Build result ──
   return {
-    schemaVersion: 1,
+    // WO-UI-37 (часть A): v1 → v2. Изменение аддитивное для потребителей:
+    // `instance.status` остаётся строкой, но получает третье значение
+    // 'cancelled'; `instance.cancelled` уже присутствовал с WO-C8-49 и
+    // сохраняет смысл. Потребители, читающие только completedAt, не ломаются.
+    schemaVersion: 2,
     generatedAt,
     instance: {
       id: instance.id,
       processKey: instance.processKey,
       processName: instance.processName,
       version: instance.processVersion,
-      status: isCancelled ? 'cancelled' : isCompleted ? 'completed' : 'running',
+      status: instanceStatus,
       startedAt: instance.startedAt,
       completedAt: instance.completedAt,
       cancelled: isCancelled,

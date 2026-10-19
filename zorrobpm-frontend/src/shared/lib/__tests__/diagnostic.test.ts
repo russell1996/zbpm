@@ -1,6 +1,16 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+import * as utils from '../utils'
 import { buildDiagnosticJson } from '../diagnostic'
+
+// WO-UI-37 (часть A): экспорт обязан брать статус из ТОГО ЖЕ дериватора
+// `processInstanceStatus` (shared/lib/utils.ts), а не из второй копии логики.
+// Пасущий мок доказывает ФАКТ вызова: если диагностика считает статус сама,
+// подмена возврата дериватора на результат не влияет — тест краснеет.
+vi.mock('../utils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils')>()
+  return { ...actual, processInstanceStatus: vi.fn(actual.processInstanceStatus) }
+})
 import type {
   ProcessInstance,
   ActivityInstance,
@@ -237,8 +247,8 @@ describe('buildDiagnosticJson', () => {
       bpmnXml: '<definitions id="test" />',
     })
 
-    // Schema version
-    expect(result.schemaVersion).toBe(1)
+    // Schema version (WO-UI-37 часть A: v1 → v2, добавлено значение 'cancelled')
+    expect(result.schemaVersion).toBe(2)
     expect(result.generatedAt).toBeTruthy()
 
     // Instance
@@ -414,5 +424,155 @@ describe('buildDiagnosticJson', () => {
 
     expect(result.instance.status).toBe('completed')
     expect(result.instance.cancelled).toBe(false)
+  })
+
+  // ──────────────────────────────────────────────
+  // WO-UI-37 часть A (бывшая WO-UI-36): статус — через общий дериватор
+  // ──────────────────────────────────────────────
+  it('WO-UI-37-A: status is derived by shared processInstanceStatus (same source as the UI)', () => {
+    vi.mocked(utils.processInstanceStatus).mockClear()
+
+    const instance = makeInstance({
+      completedAt: '2026-01-02T00:00:00Z',
+      cancelled: true,
+    })
+    const result = buildDiagnosticJson({
+      instance,
+      activities: [],
+      variables: [],
+      userTasks: [],
+      serviceTasks: [],
+      incidents: [],
+      bpmnXml: '',
+    })
+
+    // 1) дериватор реально вызван — не вторая копия тернарника
+    expect(utils.processInstanceStatus).toHaveBeenCalledTimes(1)
+    // 2) его ответ реально управляет полем status (uppercase → lowercase)
+    expect(result.instance.status).toBe('cancelled')
+  })
+
+  it('WO-UI-37-A: status follows the shared deriver, not local completedAt logic (mutation guard)', () => {
+    // Если диагностика начнёт считать статус сама, подмена дериватора не сработает.
+    vi.mocked(utils.processInstanceStatus).mockReturnValueOnce('RUNNING')
+
+    const instance = makeInstance({ completedAt: '2026-01-02T00:00:00Z' })
+    const result = buildDiagnosticJson({
+      instance,
+      activities: [],
+      variables: [],
+      userTasks: [],
+      serviceTasks: [],
+      incidents: [],
+      bpmnXml: '',
+    })
+
+    expect(result.instance.status).toBe('running')
+  })
+
+  // ──────────────────────────────────────────────
+  // WO-UI-37 часть A: аномалии отменённого инстанса
+  // ──────────────────────────────────────────────
+  it('WO-UI-37-A: cancelled with leftover open incidents gets its own anomaly, not COMPLETED wording', () => {
+    const instance = makeInstance({
+      completedAt: '2026-01-02T00:00:00Z',
+      cancelled: true,
+    })
+    const activities: ActivityInstance[] = [
+      makeActivity({ id: 'act-open', status: 'CREATED', completedAt: null }),
+    ]
+    const incidents: Incident[] = [makeIncident({ id: 'inc-1', completedAt: null })]
+
+    const result = buildDiagnosticJson({
+      instance,
+      activities,
+      variables: [],
+      userTasks: [],
+      serviceTasks: [],
+      incidents,
+      bpmnXml: '',
+    })
+
+    expect(result.instance.status).toBe('cancelled')
+    // WO-C8-49: после отмены живых элементов быть не должно — это и есть аномалия
+    expect(result.diagnostics.anomalies).toEqual([
+      'Instance cancelled; open incidents: 1, active elements: 1',
+    ])
+    // Старая формулировка про COMPLETED не должна просачиваться
+    expect(result.diagnostics.anomalies.join(' ')).not.toContain('status=COMPLETED')
+  })
+
+  it('WO-UI-37-A: cancelled with no leftovers reports no anomalies', () => {
+    const instance = makeInstance({
+      completedAt: '2026-01-02T00:00:00Z',
+      cancelled: true,
+    })
+    const result = buildDiagnosticJson({
+      instance,
+      activities: [],
+      variables: [],
+      userTasks: [],
+      serviceTasks: [],
+      incidents: [],
+      bpmnXml: '',
+    })
+
+    expect(result.diagnostics.anomalies).toEqual([])
+  })
+
+  it('WO-UI-37-A: completed instance keeps the COMPLETED wording (no regression)', () => {
+    const instance = makeInstance({ completedAt: '2026-01-02T00:00:00Z' })
+    const activities: ActivityInstance[] = [
+      makeActivity({ status: 'CREATED', completedAt: null }),
+    ]
+    const result = buildDiagnosticJson({
+      instance,
+      activities,
+      variables: [],
+      userTasks: [],
+      serviceTasks: [],
+      incidents: [],
+      bpmnXml: '',
+    })
+
+    expect(result.diagnostics.anomalies).toContain(
+      'Instance status=COMPLETED, but active elements: 1',
+    )
+  })
+
+  // ──────────────────────────────────────────────
+  // WO-UI-37 часть A: схема экспорта v2
+  // ──────────────────────────────────────────────
+  it('WO-UI-37-A: schemaVersion is 2 and the instance block keeps its documented shape', () => {
+    const instance = makeInstance({
+      completedAt: '2026-01-02T00:00:00Z',
+      cancelled: true,
+    })
+    const result = buildDiagnosticJson({
+      instance,
+      activities: [],
+      variables: [],
+      userTasks: [],
+      serviceTasks: [],
+      incidents: [],
+      bpmnXml: '',
+    })
+
+    expect(result.schemaVersion).toBe(2)
+    expect(Object.keys(result.instance).sort()).toEqual(
+      [
+        'businessKeyIfAny',
+        'cancelled',
+        'completedAt',
+        'id',
+        'processKey',
+        'processName',
+        'startedAt',
+        'status',
+        'version',
+      ].sort(),
+    )
+    // Совместимость: status остаётся строкой, появляется новое значение
+    expect(typeof result.instance.status).toBe('string')
   })
 })
