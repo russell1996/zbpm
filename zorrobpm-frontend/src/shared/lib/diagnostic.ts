@@ -5,6 +5,7 @@ import type {
   UserTask,
   ServiceTask,
   Incident,
+  VariableScopeGroup,
 } from '@/types/api'
 import { processInstanceStatus } from './utils'
 
@@ -62,6 +63,22 @@ export interface DiagnosticExportVariable {
   value: string
 }
 
+// WO-UI-37 (часть B): группы переменных по скоупам в экспорте — та же форма,
+// что у GET /process-instances/{id}/variables-by-scope (WO-C8-51 часть A).
+export interface DiagnosticVariableScopeInfo {
+  activityId: string
+  bpmnElementId: string | null
+  elementType: string | null
+  status: string | null
+  parentScopeActivityId: string | null
+}
+
+export interface DiagnosticVariableScopeGroup {
+  /** null — root-скоуп инстанса (первая группа). */
+  scope: DiagnosticVariableScopeInfo | null
+  variables: DiagnosticExportVariable[]
+}
+
 export interface DiagnosticExportIncident {
   id: string
   activityId: string
@@ -103,6 +120,9 @@ export interface DiagnosticJson {
   tokens: DiagnosticToken[]
   timeline: DiagnosticTimelineEntry[]
   variables: DiagnosticExportVariable[]
+  // WO-UI-37 (часть B): группы по скоупам (root первой) — добавлено в v2.
+  // schemaVersion НЕ поднимается: часть A уже подняла 1→2 один раз за пакет.
+  variablesByScope: DiagnosticVariableScopeGroup[]
   incidents: DiagnosticExportIncident[]
   userTasks: DiagnosticExportUserTask[]
   serviceTasks: DiagnosticExportServiceTask[]
@@ -117,6 +137,12 @@ export interface DiagnosticInput {
   serviceTasks: ServiceTask[]
   incidents: Incident[]
   bpmnXml: string
+  /**
+   * WO-UI-37 (часть B): группы переменных по скоупам
+   * (getVariablesByScope). Опционально: вход части A без этого поля
+   * продолжает работать (экспорт получит пустой массив).
+   */
+  variablesByScope?: VariableScopeGroup[]
 }
 
 // ──────────────────────────────────────────────
@@ -132,6 +158,7 @@ export function buildDiagnosticJson(input: DiagnosticInput): DiagnosticJson {
     serviceTasks,
     incidents,
     bpmnXml,
+    variablesByScope,
   } = input
 
   const generatedAt = new Date().toISOString()
@@ -313,6 +340,24 @@ export function buildDiagnosticJson(input: DiagnosticInput): DiagnosticJson {
       name: v.name,
       type: v.type,
       value: v.value,
+    })),
+    // WO-UI-37 (часть B): переменные скоупов побайто от бэкенда (root первой);
+    // caller не передал группы → пустой массив, а не undefined.
+    variablesByScope: (variablesByScope ?? []).map((g) => ({
+      scope: g.scope
+        ? {
+            activityId: g.scope.activityId,
+            bpmnElementId: g.scope.bpmnElementId,
+            elementType: g.scope.elementType,
+            status: g.scope.status,
+            parentScopeActivityId: g.scope.parentScopeActivityId,
+          }
+        : null,
+      variables: g.variables.map((v) => ({
+        name: v.name,
+        type: v.type,
+        value: v.value,
+      })),
     })),
     incidents: incidents.map((inc) => ({
       id: inc.id,

@@ -48,6 +48,9 @@ vi.mock('@/services/instanceService', () => ({
 
 vi.mock('@/services/variableService', () => ({
   getVariables: vi.fn().mockResolvedValue({ data: [] }),
+  // WO-UI-37 (часть B): экспорт «Диагностика JSON» теперь берёт и скоупы —
+  // без мока downloadDiagnostic упирался в undefined до createObjectURL.
+  getVariablesByScope: vi.fn().mockResolvedValue([]),
 }))
 
 const stubs = { teleport: true, BpmnViewer: { template: '<div class="bpmn-stub" />' } }
