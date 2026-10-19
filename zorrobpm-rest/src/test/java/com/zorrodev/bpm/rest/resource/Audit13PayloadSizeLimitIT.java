@@ -156,7 +156,9 @@ class Audit13PayloadSizeLimitIT {
         }
         // findAllMeta() is a projection WITHOUT the @Lob `dmn` column — loading the blob
         // outside a transaction fails on PostgreSQL ("Large Objects may not be used in
-        // auto-commit mode"), so the rows are addressed by id and deleted without the XML.
+        // auto-commit mode"), so the QUERY that finds the rows is a projection. The delete
+        // itself runs inside the repository's own transaction (deleteById loads the entity
+        // there, where the blob is readable), so it is safe on PostgreSQL as well.
         List<UUID> dmnRowIds = dmnRepository.findAllMeta().stream()
             .filter(meta -> CREATED_DMN_DECISION_IDS.contains(meta.getDecisionId()))
             .map(DmnDefinitionRepository.DmnDecisionMeta::getId)
