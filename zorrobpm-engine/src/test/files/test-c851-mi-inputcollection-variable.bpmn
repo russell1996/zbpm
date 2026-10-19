@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-c851-mi" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-C8-51 (B): inputCollection — ССЫЛКА НА ПЕРЕМЕННУЮ (не литерал):
+       типы/пустоты/отсутствие проверяются на реальном содержимом скоупа,
+       как в прод-модели потребителя. -->
+  <bpmn:process id="c851MiCollection" name="MI inputCollection from variable" isExecutable="true">
+    <bpmn:startEvent id="start">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="utMi" />
+    <bpmn:userTask id="utMi" name="mi task">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:assignmentDefinition assignee="=item" />
+      </bpmn:extensionElements>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=activities" inputElement="item" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="utMi" targetRef="end" />
+    <bpmn:endEvent id="end">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

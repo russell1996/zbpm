@@ -323,10 +323,11 @@ public class AdHocSubProcessHandler implements ElementHandler, TypedElementHandl
      */
     private List<String> resolveActivatedIds(UUID processInstanceId, UUID activityId,
             BpmnElementModel bpmnElement, AdHocSubProcessExtensionModel ext, String raw) {
+        List<ProcessVariable> variables = dbService.getVariables(processInstanceId);
         Object evaluated;
         try {
             // '='-stripped at parse (like the MI inputCollection); straight to the engine.
-            evaluated = scriptService.evaluateExpression(raw, dbService.getVariables(processInstanceId));
+            evaluated = scriptService.evaluateExpression(raw, variables);
         } catch (Exception e) {
             raiseIncident(processInstanceId, activityId, bpmnElement.getId(),
                 "Ad-hoc subprocess '" + bpmnElement.getId() + "' activeElementsCollection failed to evaluate: " + e.getMessage());
@@ -335,7 +336,8 @@ public class AdHocSubProcessHandler implements ElementHandler, TypedElementHandl
         Object javaValue = elementSupport.toJavaStructure(evaluated);
         if (!(javaValue instanceof List<?> list)) {
             raiseIncident(processInstanceId, activityId, bpmnElement.getId(),
-                "Ad-hoc subprocess '" + bpmnElement.getId() + "' activeElementsCollection did not evaluate to a list: " + evaluated);
+                "Ad-hoc subprocess '" + bpmnElement.getId() + "' activeElementsCollection did not evaluate to a list: "
+                    + CollectionNotAListDiagnosis.describe(raw, evaluated, variables));
             return null;
         }
         List<String> activated = new ArrayList<>();
