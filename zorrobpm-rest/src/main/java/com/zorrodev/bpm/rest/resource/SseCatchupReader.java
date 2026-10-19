@@ -89,23 +89,36 @@ public final class SseCatchupReader {
             boolean hasMore = envelopes.size() > 100;
             List<Map<String, Object>> page = hasMore ? envelopes.subList(0, 100) : envelopes;
             for (Map<String, Object> envelope : page) {
+                // WO-REL-38: SSE id и граница — позиция курсора (feedPosition;
+                // fallback — sequence, см. cursorOf). Браузер шлёт её назад
+                // как Last-Event-ID — тот же домен, что since у REST.
+                long cursor = cursorOf(envelope, boundary);
                 try {
-                    // WO-REL-38: SSE id и граница — позиция курсора (feedPosition;
-                    // fallback — sequence, см. cursorOf). Браузер шлёт её назад
-                    // как Last-Event-ID — тот же домен, что since у REST.
-                    long cursor = cursorOf(envelope, boundary);
                     SseEmitter.SseEventBuilder sseEvent = SseEmitter.event()
                         .id(String.valueOf(cursor))
                         .name((String) envelope.get("type"))
                         .data(envelope)
                         .reconnectTime(3000);
                     emitter.send(sseEvent);
-                    if (cursor > boundary) {
-                        boundary = cursor;
-                    }
                 } catch (Exception e) {
-                    // F12: одна битая запись не обрывает остаток backlog (было break).
-                    log.error("Error sending catchup event, continuing with the rest", e);
+                    if (isTransportFailure(e)) {
+                        // F-04 (WO-AUDIT-10): устойчивый транспортный сбой (мёртвое
+                        // соединение / закрытый emitter) — фатален: без этого boundary
+                        // не двигается, hasMore остаётся true и цикл перечитывает ту же
+                        // страницу вечно — hot-loop в потоке Tomcat + 100
+                        // ERROR-стектрейсов на страницу. Останавливаем catch-up и
+                        // возвращаем управление (контроллер доделает регистрацию/слив).
+                        log.error("SSE transport failed during catch-up at boundary {}; stopping catch-up",
+                            boundary, e);
+                        return boundary;
+                    }
+                    // F12: одна битая запись (сбой сериализации) не обрывает остаток
+                    // backlog — но курсор двигается НАД ней (F-04): иначе следующая
+                    // страница читается с той же позиции и запись повторяется вечно.
+                    log.error("Skipping catchup event (send/serialization failure), continuing with the rest", e);
+                }
+                if (cursor > boundary) {
+                    boundary = cursor;
                 }
             }
             if (!hasMore) {
@@ -113,6 +126,21 @@ public final class SseCatchupReader {
             }
         }
         return boundary;
+    }
+
+    /**
+     * F-04 (WO-AUDIT-10): сбой send, который убивает весь catch-up.
+     *
+     * <p>Транспортные сбои: {@link java.io.IOException} (мёртвое соединение —
+     * broken pipe / клиент отвалился; в Spring 7 приходит из flush()
+     * {@code DefaultSseEmitterHandler}) и {@link IllegalStateException}
+     * закрытого emitter'а («ResponseBodyEmitter has already completed»).
+     * Сбой сериализации одной записи — {@code HttpMessageNotWritableException}
+     * (unchecked, из converter.write в том же handler'е, НЕ IOException) —
+     * транспортным НЕ считается: запись пропускается, курсор движется.
+     */
+    static boolean isTransportFailure(Exception e) {
+        return e instanceof java.io.IOException || e instanceof IllegalStateException;
     }
 
     /** null = unrestricted; пересечение "see all" с key-фильтром даёт key-фильтр. */
