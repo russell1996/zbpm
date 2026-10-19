@@ -12,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.jpa.JpaSystemException;
+import org.springframework.validation.BindingResult;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -48,6 +49,32 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidationErrors(MethodArgumentNotValidException ex) {
+        // WO-AUDIT-13 (F-07): the two upload DTOs carry their own size caps, and each cap
+        // has its OWN contract (the submission path has always answered 400 BPMN_TOO_LARGE
+        // with 256 KiB; the DMN path answers 400 DMN_TOO_LARGE with 5 MB — maintainer decision,
+        // 2026-10-19). The DTO being validated decides the contract, NOT the field name:
+        // "bpmn" is a size-limited field on THREE DTOs (submission 256 KiB, definition 5 MB,
+        // batch item 5 MB) and they do not share a status or a limit.
+        //
+        // Everything else keeps the old behaviour: the BPMN deploy path and the batch
+        // deploy path answer 413 BPMN_TOO_LARGE (WO-SEC-62), every other field error
+        // keeps the 400 VALIDATION_ERROR contract.
+        BindingResult binding = ex.getBindingResult();
+        Object target = binding.getTarget();
+        if (target instanceof com.zorrodev.bpm.contract.dto.SubmitProcessSubmissionDTO
+                && hasSizeViolation(binding, "bpmn")) {
+            return tooLarge(HttpStatus.BAD_REQUEST, "BPMN_TOO_LARGE",
+                "BPMN XML exceeds the 256 KB submission limit",
+                com.zorrodev.bpm.contract.dto.SubmitProcessSubmissionDTO.MAX_BPMN_LENGTH,
+                actualLength(binding, "bpmn"));
+        }
+        if (target instanceof com.zorrodev.bpm.contract.dto.DeployDmnDTO
+                && hasSizeViolation(binding, "dmn")) {
+            return tooLarge(HttpStatus.BAD_REQUEST, "DMN_TOO_LARGE",
+                "DMN XML exceeds the 5 MB limit",
+                com.zorrodev.bpm.contract.dto.DeployDmnDTO.MAX_DMN_LENGTH,
+                actualLength(binding, "dmn"));
+        }
         // WO-SEC-62: an oversized BPMN upload is a 413, not a 400 — same code/params
         // shape as the service-level BPMN_TOO_LARGE below. Only the bpmn @Size
         // violation maps here; every other field error keeps the old 400 contract.
@@ -57,12 +84,12 @@ public class GlobalExceptionHandler {
         // test matches the exact nested Bean Validation path shape Spring emits
         // for a cascaded List element ("resources[<i>].content"), never a bare
         // "content" (that shape cannot occur: content exists only inside the list).
-        boolean bpmnTooLarge = ex.getBindingResult().getFieldErrors().stream()
+        boolean bpmnTooLarge = binding.getFieldErrors().stream()
             .anyMatch(fe -> ("bpmn".equals(fe.getField())
                     || (fe.getField() != null && fe.getField().matches("resources\\[\\d+\\]\\.content")))
                 && fe.getCode() != null && fe.getCode().contains("Size"));
         if (bpmnTooLarge) {
-            int actualLength = ex.getBindingResult().getFieldErrors().stream()
+            int actualLength = binding.getFieldErrors().stream()
                 .filter(fe -> "bpmn".equals(fe.getField())
                     || (fe.getField() != null && fe.getField().matches("resources\\[\\d+\\]\\.content")))
                 .map(fe -> fe.getRejectedValue())
@@ -79,7 +106,7 @@ public class GlobalExceptionHandler {
         }
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("code", "VALIDATION_ERROR");
-        List<Map<String, String>> fieldErrors = ex.getBindingResult().getFieldErrors().stream()
+        List<Map<String, String>> fieldErrors = binding.getFieldErrors().stream()
             .map(fe -> {
                 Map<String, String> error = new LinkedHashMap<>();
                 error.put("field", fe.getField());
@@ -90,6 +117,34 @@ public class GlobalExceptionHandler {
         body.put("errors", fieldErrors);
         body.put("message", "Validation failed");
         return ResponseEntity.badRequest().body(body);
+    }
+
+    /** A {@code @Size} violation on exactly this field (the code Spring reports is "Size.*"). */
+    private static boolean hasSizeViolation(BindingResult binding, String field) {
+        return binding.getFieldErrors().stream()
+            .anyMatch(fe -> field.equals(fe.getField())
+                && fe.getCode() != null && fe.getCode().contains("Size"));
+    }
+
+    /** Length of the rejected value of the first field error carrying a String. */
+    private static int actualLength(BindingResult binding, String field) {
+        return binding.getFieldErrors().stream()
+            .filter(fe -> field.equals(fe.getField()))
+            .map(fe -> fe.getRejectedValue())
+            .filter(String.class::isInstance)
+            .mapToInt(v -> ((String) v).length())
+            .max().orElse(-1);
+    }
+
+    /** The {code, params, message} shape of the size-cap errors (same as the service guard). */
+    private static ResponseEntity<Map<String, Object>> tooLarge(HttpStatus status, String code,
+                                                                String message, int maxLength,
+                                                                int actualLength) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("code", code);
+        body.put("params", Map.of("maxLength", maxLength, "actualLength", actualLength));
+        body.put("message", message);
+        return ResponseEntity.status(status).body(body);
     }
 
     @ExceptionHandler(BpmnParseException.class)

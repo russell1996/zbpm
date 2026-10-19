@@ -1,5 +1,7 @@
 package com.zorrodev.bpm.engine.service.impl;
 
+import com.zorrodev.bpm.contract.dto.DeployDmnDTO;
+import com.zorrodev.bpm.contract.exception.ApiException;
 import com.zorrodev.bpm.contract.exception.EngineException;
 import com.zorrodev.bpm.contract.model.DmnDecision;
 import com.zorrodev.bpm.contract.model.DmnInput;
@@ -25,6 +27,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.zorrodev.bpm.engine.service.FeelBudget;
 import lombok.extern.slf4j.Slf4j;
 import org.camunda.feel.api.EvaluationResult;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
@@ -110,6 +113,17 @@ public class DmnServiceImpl implements DmnService {
     @Override
     @org.springframework.transaction.annotation.Transactional
     public void deploy(String dmnXml, UUID processDefinitionId, UUID deploymentId) {
+        // WO-AUDIT-13 (F-07): fail fast on an oversized DMN BEFORE the XML parser touches
+        // it — before this, the DMN path had no cap at all and every byte went straight
+        // into SecureXmlParser.unmarshal (and into the DB). The DTO cap
+        // (DeployDmnDTO.MAX_DMN_LENGTH) covers the HTTP path; this guard covers direct
+        // service callers (batch deploys, internal code) that bypass bean validation.
+        if (dmnXml != null && dmnXml.length() > DeployDmnDTO.MAX_DMN_LENGTH) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "DMN_TOO_LARGE",
+                "DMN XML exceeds the 5 MB limit",
+                Map.of("maxLength", DeployDmnDTO.MAX_DMN_LENGTH,
+                    "actualLength", dmnXml.length()));
+        }
         DmnDefinitionsModel model = SecureXmlParser.unmarshal(dmnXml, DmnDefinitionsModel.class);
         if (model.getDecisions() == null || model.getDecisions().isEmpty()) {
             throw new EngineException("DMN resource has no decisions");

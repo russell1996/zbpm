@@ -60,6 +60,20 @@ import java.util.Set;
  *
  * <p>Cluster-safe: rate-limit state is stored in PostgreSQL via {@code PgRateLimiter}
  * (WO-SCALE-2), not in per-instance Caffeine caches.
+ *
+ * <p>WO-AUDIT-13 (F-06): which bucket a request belongs to is resolved from
+ * {@link RateLimitRoutes} — the single matrix that also produces the servlet
+ * registration patterns. The old hand-maintained guard ({@code isDataEndpoint})
+ * is gone: it was the second half of the bug, because it had to be kept in sync
+ * with the registration patterns by hand and had drifted (half of the mutating
+ * surface was in neither list). What the old list did cover, and how the matrix
+ * reproduces it: WO-SEC-64 (S-16) — all mutating methods share the data bucket
+ * (PUT/PATCH/DELETE used to bypass the limit entirely); WO-API-4 (Finding #2,
+ * High) — the admin/aux paths join the SAME data bucket (no new key, no new
+ * fail-fast surface — P-41); and the {@code contains("/members")} hack is
+ * replaced by the explicit {@code /processes} and {@code /me} prefixes of the
+ * matrix — a superset of the old coverage (POST /processes/{key}/archive was
+ * NOT limited before).
  */
 @Slf4j
 public class RateLimitFilter extends OncePerRequestFilter {
@@ -140,6 +154,19 @@ public class RateLimitFilter extends OncePerRequestFilter {
      * но N пользователей за одним IP друг друга не блокируют.
      */
     private int refreshIpCapacity = 60;
+    /**
+     * WO-AUDIT-13 (F-06): capacity of the AUTH_LINK bucket — the public,
+     * unauthenticated password-link endpoints (register / forgot-password /
+     * reset-password / accept-invitation / verify-email). Separate from the
+     * data bucket on purpose: these routes are reachable without any
+     * credential, so sharing the data budget would let a flood of them eat
+     * the quota of every legitimate API client behind the same address
+     * (P-63 class of bug). Fail-closed on a non-positive capacity, exactly
+     * like the neighbouring buckets (PgRateLimiter rejects when capacity <= 0).
+     */
+    private int authLinkCapacity = 60;
+    /** WO-AUDIT-13: window of the auth-link bucket in seconds. Default 60, as the neighbours. */
+    private int authLinkWindowSeconds = 60;
     /** WO-SEC-44: trusted proxy IPs/CIDRs. Empty = ignore XFF (current behavior). */
     private Set<String> trustedProxies = Set.of();
 
@@ -177,6 +204,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
     void setRefreshCapacity(int refreshCapacity) { this.refreshCapacity = refreshCapacity; }
     void setRefreshWindowSeconds(int refreshWindowSeconds) { this.refreshWindowSeconds = refreshWindowSeconds; }
     void setRefreshIpCapacity(int refreshIpCapacity) { this.refreshIpCapacity = refreshIpCapacity; }
+    void setAuthLinkCapacity(int authLinkCapacity) { this.authLinkCapacity = authLinkCapacity; }
+    void setAuthLinkWindowSeconds(int authLinkWindowSeconds) { this.authLinkWindowSeconds = authLinkWindowSeconds; }
     void setTrustedProxies(Set<String> trustedProxies) { this.trustedProxies = trustedProxies; }
 
     void setApiKeyRepository(ApiKeyRepository apiKeyRepository) { this.apiKeyRepository = apiKeyRepository; }
@@ -204,128 +233,36 @@ public class RateLimitFilter extends OncePerRequestFilter {
         String method = request.getMethod();
         String clientIp = getClientIp(request);
 
-        // Login endpoint: per-IP + per-account throttling
-        if ("POST".equalsIgnoreCase(method) && "/auth/login".equals(path)) {
-            // STEP 1: per-IP check — CHEAP, no body read, no memory allocation.
-            // This MUST run before any body buffering (HOLD-fix: memory-exhaustion DoS).
-            String ipKey = "login:ip:" + clientIp;
-            long ipRetryAfter = pgRateLimiter.tryConsume(ipKey, capacity, windowSeconds);
-            if (ipRetryAfter > 0) {
-                send429(response, ipRetryAfter);
-                return;
-            }
-
-            // STEP 2: reject oversized declared bodies BEFORE reading (413, no buffering).
-            // Defense in depth: an attacker declaring a 1 GB body is rejected by
-            // Content-Length alone, without a single byte allocated.
-            long declaredLength = request.getContentLengthLong();
-            if (declaredLength > MAX_LOGIN_BODY_BYTES) {
-                log.warn("Login body declared {} bytes, cap is {} — rejecting 413", declaredLength, MAX_LOGIN_BODY_BYTES);
-                send413(response);
-                return;
-            }
-
-            // STEP 3: buffer body (capped) for per-account extraction.
-            CachingRequestWrapper wrappedRequest = new CachingRequestWrapper(request);
-
-            // STEP 3b: chunked/no-Content-Length body that exceeded the cap in-flight → 413.
-            // The wrapper only buffered READ_CAP bytes; without this rejection the stream
-            // would carry a truncated body (length/stream desync), so we refuse instead.
-            if (wrappedRequest.isOversized()) {
-                log.warn("Login body exceeds {} bytes (chunked) — rejecting 413", MAX_LOGIN_BODY_BYTES);
-                send413(response);
-                return;
-            }
-
-            // STEP 4: per-account bucket (disabled when accountCapacity == 0).
-            String username = extractUsername(wrappedRequest);
-            if (accountCapacity > 0 && username != null && !username.isBlank()) {
-                String acctKey = "login:account:" + username.toLowerCase(java.util.Locale.ROOT);
-                long acctRetryAfter = pgRateLimiter.tryConsume(acctKey, accountCapacity, windowSeconds);
-                if (acctRetryAfter > 0) {
-                    // Rollback IP bucket token — request rejected by account limit, not IP limit
-                    pgRateLimiter.rollback(ipKey, capacity);
-                    send429(response, acctRetryAfter);
-                    return;
-                }
-            }
-
-            chain.doFilter(wrappedRequest, response);
-            return;
-        }
-
-        // WO-SEC-58: self-service password change — brute-force on the CURRENT
-        // password must hit a login-strength limit.
-        // HOLD-fix (P-63/P-65 class): the bucket is keyed on the USER resolved from
-        // the access JWT, NOT on client IP. This filter runs before JwtAuthFilter,
-        // so identity comes from verifying the token directly (same sources as
-        // JwtAuthFilter: Bearer header, then access cookie). Behind the shared
-        // prod proxy every visitor presents the same address — an IP key here is ONE
-        // bucket for the whole installation, and since this check runs BEFORE auth,
-        // an anonymous flood would lock every user out of escaping
-        // forcePasswordChange. With a user key a flood burns only the attacker's own
-        // budget; requests without a valid token fall back to the IP key (they 401
-        // downstream regardless).
-        if ("PUT".equalsIgnoreCase(method) && "/me/password".equals(path)) {
-            String userId = extractUserIdFromAccessJwt(request);
-            // Authenticated → per-user bucket (real prod identity). Anonymous → one
-            // shared bucket: without a valid JWT there is no per-client identity to
-            // key on, and without trusted-proxies clientIp is the proxy's address
-            // for everyone anyway — "anon" makes the shared-bucket nature explicit
-            // and keeps G13 honest (no hidden per-IP bucket behind a proxy).
-            String key = (userId != null) ? "me-password:user:" + userId : "me-password:anon";
-            long retryAfter = pgRateLimiter.tryConsume(key, capacity, windowSeconds);
-            if (retryAfter > 0) {
-                send429(response, retryAfter);
-                return;
-            }
+        // WO-AUDIT-13 (F-06): the bucket is resolved from the single route
+        // matrix (RateLimitRoutes) — the same matrix the filter is registered
+        // with. Before the matrix the answer was hand-maintained in two places
+        // (registration patterns + isDataEndpoint) and half of the mutating
+        // surface was in neither of them.
+        RateLimitRoutes.Bucket bucket = RateLimitRoutes.resolve(method, path);
+        if (bucket == null) {
             chain.doFilter(request, response);
             return;
         }
 
-        // Refresh endpoint: per-IP bucket FIRST (mirror of the login path),
-        // then the per-user bucket. WO-SEC-79 (NEW-10): the old code throttled
-        // ONLY a per-"user" bucket keyed on the first 16 chars of the
-        // UNVERIFIED cookie — a fresh random cookie per request meant a fresh
-        // bucket every time, so the limit never fired for anonymous floods
-        // (and each request INSERTed a new bucket row). The IP bucket below
-        // fires regardless of whether the token exists; the per-user bucket
-        // still contains a single heavy legitimate user behind a shared proxy
-        // address (P-63: one bucket for the whole installation would self-DoS
-        // every user the moment one of them refreshes in a loop). When the
-        // per-user bucket rejects after the IP bucket passed, the IP token is
-        // rolled back (same discipline as the login path) — the IP budget
-        // must not pay for another bucket's decision.
-        if ("POST".equalsIgnoreCase(method) && "/auth/refresh".equals(path)) {
-            String ipKey = "refresh:ip:" + clientIp;
-            long ipRetryAfter = pgRateLimiter.tryConsume(ipKey, refreshIpCapacity, windowSeconds);
-            if (ipRetryAfter > 0) {
-                send429(response, ipRetryAfter);
+        switch (bucket) {
+            case LOGIN -> {
+                handleLogin(request, response, chain, clientIp);
                 return;
             }
-            String userHash = extractRefreshCookieHash(request);
-            if (userHash != null) {
-                String refreshKey = "refresh:" + userHash;
-                long retryAfter = pgRateLimiter.tryConsume(refreshKey, refreshCapacity, refreshWindowSeconds);
-                if (retryAfter > 0) {
-                    pgRateLimiter.rollback(ipKey, refreshIpCapacity);
-                    send429(response, retryAfter);
-                    return;
-                }
+            case REFRESH -> {
+                handleRefresh(request, response, chain, clientIp);
+                return;
             }
-            chain.doFilter(request, response);
-            return;
-        }
-
-        // Data endpoints: generous limit
-        if (isDataEndpoint(method, path)) {
-            // WO-REL-57: GET /events/stream — долгоживущий стрим, а не
-            // очередной REST-вызов: у него СВОЙ бакет подключений (ниже),
-            // общий REST-бюджет он не тратит и не съедает. Точное совпадение
-            // нормализованного пути — EventResource GET /events (лист)
-            // остаётся в data-бакете, делится только стрим.
-            // Порядок важен: путь мачится обеими ветками, эта — первая.
-            if ("GET".equalsIgnoreCase(method) && "/events/stream".equals(path)) {
+            case ME_PASSWORD -> {
+                handleMePassword(request, response, chain, clientIp);
+                return;
+            }
+            case SSE -> {
+                // WO-REL-57: GET /events/stream — долгоживущий стрим, а не
+                // очередной REST-вызов: у него СВОЙ бакет подключений (ниже),
+                // общий REST-бюджет он не тратит и не съедает. Точное совпадение
+                // нормализованного пути — EventResource GET /events (лист)
+                // остаётся в data-бакете, делится только стрим.
                 String sseKey = "sse:" + resolveDataBucketIdentity(request, clientIp);
                 long sseRetryAfter = pgRateLimiter.tryConsume(sseKey, sseCapacity, sseWindowSeconds);
                 if (sseRetryAfter > 0) {
@@ -335,17 +272,158 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 chain.doFilter(request, response);
                 return;
             }
-            // WO-INT-4 criterion 8: quota is counted per API KEY, not per IP — an
-            // integration BFF calling from one address must not be throttled by another
-            // BFF on the same address (and must not exhaust the shared per-IP quota).
-            String key = "data:" + resolveDataBucketIdentity(request, clientIp);
-            long retryAfter = pgRateLimiter.tryConsume(key, dataCapacity, dataWindowSeconds);
-            if (retryAfter > 0) {
-                send429(response, retryAfter);
+            case AUTH_LINK -> {
+                // WO-AUDIT-13 (F-06): public, unauthenticated password-link
+                // endpoints. Their own bucket: identity is the client IP only
+                // (the token travels in the body), and the budget must not be
+                // shared with the data bucket — a flood of public password-link
+                // calls would otherwise eat the budget of every legitimate API
+                // client behind the same address (P-63 class of bug).
+                String authLinkKey = "auth-link:ip:" + clientIp;
+                long authLinkRetryAfter = pgRateLimiter.tryConsume(
+                        authLinkKey, authLinkCapacity, authLinkWindowSeconds);
+                if (authLinkRetryAfter > 0) {
+                    send429(response, authLinkRetryAfter);
+                    return;
+                }
+                chain.doFilter(request, response);
+                return;
+            }
+            case DATA -> {
+                // WO-INT-4 criterion 8: quota is counted per API KEY, not per IP — an
+                // integration BFF calling from one address must not be throttled by another
+                // BFF on the same address (and must not exhaust the shared per-IP quota).
+                String key = "data:" + resolveDataBucketIdentity(request, clientIp);
+                long retryAfter = pgRateLimiter.tryConsume(key, dataCapacity, dataWindowSeconds);
+                if (retryAfter > 0) {
+                    send429(response, retryAfter);
+                    return;
+                }
+            }
+            default -> {
+                // unreachable: every bucket above is handled
+            }
+        }
+
+        chain.doFilter(request, response);
+    }
+
+    /**
+     * Login endpoint: per-IP + per-account throttling.
+     *
+     * <p>STEP 1 (per-IP) MUST run before any body buffering (HOLD-fix:
+     * memory-exhaustion DoS); STEP 2 rejects an oversized declared body with
+     * 413 BEFORE reading it; STEP 3 buffers the body (capped) to extract the
+     * username; STEP 4 charges the per-account bucket.
+     */
+    private void handleLogin(HttpServletRequest request, HttpServletResponse response, FilterChain chain,
+                             String clientIp) throws IOException, ServletException {
+        // STEP 1: per-IP check — CHEAP, no body read, no memory allocation.
+        String ipKey = "login:ip:" + clientIp;
+        long ipRetryAfter = pgRateLimiter.tryConsume(ipKey, capacity, windowSeconds);
+        if (ipRetryAfter > 0) {
+            send429(response, ipRetryAfter);
+            return;
+        }
+
+        // STEP 2: reject oversized declared bodies BEFORE reading (413, no buffering).
+        // Defense in depth: an attacker declaring a 1 GB body is rejected by
+        // Content-Length alone, without a single byte allocated.
+        long declaredLength = request.getContentLengthLong();
+        if (declaredLength > MAX_LOGIN_BODY_BYTES) {
+            log.warn("Login body declared {} bytes, cap is {} — rejecting 413", declaredLength, MAX_LOGIN_BODY_BYTES);
+            send413(response);
+            return;
+        }
+
+        // STEP 3: buffer body (capped) for per-account extraction.
+        CachingRequestWrapper wrappedRequest = new CachingRequestWrapper(request);
+
+        // STEP 3b: chunked/no-Content-Length body that exceeded the cap in-flight → 413.
+        // The wrapper only buffered READ_CAP bytes; without this rejection the stream
+        // would carry a truncated body (length/stream desync), so we refuse instead.
+        if (wrappedRequest.isOversized()) {
+            log.warn("Login body exceeds {} bytes (chunked) — rejecting 413", MAX_LOGIN_BODY_BYTES);
+            send413(response);
+            return;
+        }
+
+        // STEP 4: per-account bucket (disabled when accountCapacity == 0).
+        String username = extractUsername(wrappedRequest);
+        if (accountCapacity > 0 && username != null && !username.isBlank()) {
+            String acctKey = "login:account:" + username.toLowerCase(java.util.Locale.ROOT);
+            long acctRetryAfter = pgRateLimiter.tryConsume(acctKey, accountCapacity, windowSeconds);
+            if (acctRetryAfter > 0) {
+                // Rollback IP bucket token — request rejected by account limit, not IP limit
+                pgRateLimiter.rollback(ipKey, capacity);
+                send429(response, acctRetryAfter);
                 return;
             }
         }
 
+        chain.doFilter(wrappedRequest, response);
+    }
+
+    /**
+     * Refresh endpoint: per-IP bucket FIRST (mirror of the login path), then
+     * the per-user bucket. WO-SEC-79 (NEW-10): the old code throttled ONLY a
+     * per-"user" bucket keyed on the first 16 chars of the UNVERIFIED cookie —
+     * a fresh random cookie per request meant a fresh bucket every time, so
+     * the limit never fired for anonymous floods. When the per-user bucket
+     * rejects after the IP bucket passed, the IP token is rolled back (same
+     * discipline as the login path) — the IP budget must not pay for another
+     * bucket's decision.
+     */
+    private void handleRefresh(HttpServletRequest request, HttpServletResponse response, FilterChain chain,
+                                String clientIp) throws IOException, ServletException {
+        String ipKey = "refresh:ip:" + clientIp;
+        long ipRetryAfter = pgRateLimiter.tryConsume(ipKey, refreshIpCapacity, windowSeconds);
+        if (ipRetryAfter > 0) {
+            send429(response, ipRetryAfter);
+            return;
+        }
+        String userHash = extractRefreshCookieHash(request);
+        if (userHash != null) {
+            String refreshKey = "refresh:" + userHash;
+            long retryAfter = pgRateLimiter.tryConsume(refreshKey, refreshCapacity, refreshWindowSeconds);
+            if (retryAfter > 0) {
+                pgRateLimiter.rollback(ipKey, refreshIpCapacity);
+                send429(response, retryAfter);
+                return;
+            }
+        }
+        chain.doFilter(request, response);
+    }
+
+    /**
+     * Self-service password change — brute-force on the CURRENT password must
+     * hit a login-strength limit.
+     *
+     * <p>HOLD-fix (P-63/P-65 class): the bucket is keyed on the USER resolved
+     * from the access JWT, NOT on client IP. This filter runs before
+     * JwtAuthFilter, so identity comes from verifying the token directly (same
+     * sources as JwtAuthFilter: Bearer header, then access cookie). Behind the
+     * shared prod proxy every visitor presents the same address — an IP key here
+     * is ONE bucket for the whole installation, and since this check runs
+     * BEFORE auth, an anonymous flood would lock every user out of escaping
+     * forcePasswordChange. With a user key a flood burns only the attacker's own
+     * budget; requests without a valid token fall back to the IP key (they 401
+     * downstream regardless).
+     */
+    private void handleMePassword(HttpServletRequest request, HttpServletResponse response, FilterChain chain,
+                                   String clientIp) throws IOException, ServletException {
+        String userId = extractUserIdFromAccessJwt(request);
+        // Authenticated → per-user bucket (real prod identity). Anonymous → one
+        // shared bucket: without a valid JWT there is no per-client identity to
+        // key on, and without trusted-proxies clientIp is the proxy's address
+        // for everyone anyway — "anon" makes the shared-bucket nature explicit
+        // and keeps G13 honest (no hidden per-IP bucket behind a proxy).
+        String key = (userId != null) ? "me-password:user:" + userId : "me-password:anon";
+        long retryAfter = pgRateLimiter.tryConsume(key, capacity, windowSeconds);
+        if (retryAfter > 0) {
+            send429(response, retryAfter);
+            return;
+        }
         chain.doFilter(request, response);
     }
 
@@ -370,35 +448,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (key == null || key.getRevokedAt() != null) return clientIp;
         if (key.getExpiresAt() != null && key.getExpiresAt().isBefore(Instant.now())) return clientIp;
         return "key:" + key.getId();
-    }
-
-    private boolean isDataEndpoint(String method, String path) {
-        // WO-SEC-64 (S-16): all mutating methods share the data bucket — PUT/PATCH/DELETE
-        // used to bypass the limit entirely (GET/POST only). Reads stay covered as before.
-        // WO-API-4 (Finding #2, High): the audit whitelist stopped at 7 read-prefixes;
-        // the mutating admin/aux paths below shared NOTHING with any bucket, so one
-        // compromised SUPER_ADMIN key could flood batch deploys unthrottled. They join
-        // the SAME data bucket (no new key, no new fail-fast surface — P-41): these
-        // are admin-UI reads/writes with the same cost profile as the existing reads,
-        // and per-key bucketing (resolveDataBucketIdentity, WO-INT-4, WO-REL-57) already contains a
-        // compromised key without punishing the shared prod proxy address (P-63).
-        if ("GET".equalsIgnoreCase(method) || "POST".equalsIgnoreCase(method)
-                || "PUT".equalsIgnoreCase(method) || "PATCH".equalsIgnoreCase(method)
-                || "DELETE".equalsIgnoreCase(method)) {
-            return path.startsWith("/events") || path.startsWith("/variables")
-                || path.startsWith("/process-instances") || path.startsWith("/user-tasks")
-                || path.startsWith("/service-tasks") || path.startsWith("/incidents")
-                || path.startsWith("/process-definitions")
-                || path.startsWith("/deployments")
-                || path.startsWith("/users")
-                || path.startsWith("/dmn")
-                || path.startsWith("/forms")
-                || path.startsWith("/me/api-key")
-                || path.startsWith("/variable-schemas")
-                || path.startsWith("/admin/")
-                || path.contains("/members");
-        }
-        return false;
     }
 
     private void send429(HttpServletResponse response, long retryAfter) throws IOException {

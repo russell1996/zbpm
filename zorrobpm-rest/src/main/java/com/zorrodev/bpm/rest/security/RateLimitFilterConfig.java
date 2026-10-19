@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 /**
  * WO-SEC-44/45: Registers RateLimitFilter covering auth + data endpoints.
  *
- * Auth endpoints: /auth/login (per-IP + per-account), /auth/refresh (per-user).
+ * <p>Auth endpoints: /auth/login (per-IP + per-account), /auth/refresh (per-user).
  * Data endpoints: /events, /variables, /process-instances, /user-tasks,
  *                 /service-tasks, /incidents (per-IP generous limit).
  * WO-SEC-64 (S-16): the same data paths now cover PUT/PATCH/DELETE, not only
@@ -28,7 +28,17 @@ import java.util.stream.Collectors;
  * (registration is path-based, the in-filter guard alone is dead code
  * for unregistered paths).
  *
- * WO-SCALE-2: rate-limit state is stored in PostgreSQL via {@code PgRateLimiter}
+ * <p>WO-AUDIT-13 (F-06): the route list lives in {@link RateLimitRoutes} —
+ * one matrix, two consumers (this registration and the in-filter bucket
+ * resolution). The hand-maintained pattern list that used to live here had
+ * drifted away from the in-filter guard: half of the mutating surface
+ * ({@code /process-submissions*}, {@code /presets*}, {@code /messages*},
+ * {@code /timer-jobs*}, {@code /message-subscriptions*},
+ * {@code /auth/reset-password}, {@code /auth/accept-invitation},
+ * {@code /auth/verify-email}) was in neither list and therefore had no limit
+ * at all.
+ *
+ * <p>WO-SCALE-2: rate-limit state is stored in PostgreSQL via {@code PgRateLimiter}
  * (cluster-safe), not in per-instance Caffeine caches.
  */
 @Configuration
@@ -78,6 +88,20 @@ public class RateLimitFilterConfig {
     @Value("${zorrobpm.security.rate-limit.refresh-ip-capacity:60}")
     private int refreshIpCapacity;
 
+    // WO-AUDIT-13 (F-06): отдельный бакет публичных password-link-эндпоинтов
+    // (register / forgot-password / reset-password / accept-invitation /
+    // verify-email). Форма та же, что у соседних ключей (P-41): plain @Value
+    // с дефолтом в коде, fail-closed на <=0 из PgRateLimiter. Дефолт 60/мин на
+    // IP: публичные эндпоинты без учётных данных не должны делить бюджет
+    // data-бакета (иначе флуд по ним съедает квоту легитимных клиентов за тем
+    // же адресом — P-63) и не должны упираться в 5/мин логина (это тот же
+    // адрес у всех, кто за общим прокси — один «пароль на сброс» на установку).
+    @Value("${zorrobpm.security.rate-limit.auth-link-capacity:60}")
+    private int authLinkCapacity;
+
+    @Value("${zorrobpm.security.rate-limit.auth-link-window-seconds:60}")
+    private int authLinkWindowSeconds;
+
     @Value("${zorrobpm.security.rate-limit.trusted-proxies:}")
     private String trustedProxiesRaw;
 
@@ -97,6 +121,9 @@ public class RateLimitFilterConfig {
         filter.setRefreshCapacity(refreshCapacity);
         filter.setRefreshWindowSeconds(refreshWindowSeconds);
         filter.setRefreshIpCapacity(refreshIpCapacity);
+        // WO-AUDIT-13 (F-06): public password-link endpoints get their own bucket.
+        filter.setAuthLinkCapacity(authLinkCapacity);
+        filter.setAuthLinkWindowSeconds(authLinkWindowSeconds);
         // WO-INT-4 criterion 8: per-key data quota needs key identity.
         filter.setApiKeyRepository(apiKeyRepository);
         // WO-SEC-58 HOLD-fix: /me/password bucket keyed on the JWT user, not client IP.
@@ -118,48 +145,18 @@ public class RateLimitFilterConfig {
     public FilterRegistrationBean<RateLimitFilter> rateLimitFilterRegistration(RateLimitFilter filter) {
         FilterRegistrationBean<RateLimitFilter> registration = new FilterRegistrationBean<>(filter);
         registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
-        // WO-SEC-44: auth endpoints
-        // WO-SEC-45: data endpoints (isDataEndpoint guard inside filter handles method+path matching)
-        // WO-API-4: admin/aux endpoints join the data bucket — registration must name
-        // every prefix the guard matches (bare path + /* children, mirroring the
-        // IdempotencyFilterConfig precedent for /deployments); the catch-all
-        // /processes/* + /me/* registrations cover the */members* member paths
-        // (/processes/{key}/members*, /me/memberships) — the guard narrows inside.
-        registration.addUrlPatterns(
-            "/auth/login",
-            "/auth/refresh",
-            // WO-SEC-84: /auth/register + /auth/forgot-password — тот же класс
-            // публичных auth-эндпоинтов, что login/refresh: фильтр должен видеть
-            // их РАНЬШЕ ForwardedHeaderFilter, чтобы getClientIp вернул настоящий
-            // адрес (и положил его в CLIENT_IP_ATTRIBUTE для контроллеров).
-            // Без регистрации контроллеры получали уже подделанный XFF-IP.
-            "/auth/register",
-            "/auth/forgot-password",
-            "/me/password",
-            "/events/*",
-            "/variables/*",
-            "/process-instances/*",
-            "/user-tasks/*",
-            "/service-tasks/*",
-            "/incidents/*",
-            "/process-definitions/*",
-            "/deployments",
-            "/deployments/*",
-            "/users",
-            "/users/*",
-            "/dmn",
-            "/dmn/*",
-            "/forms",
-            "/forms/*",
-            "/me/api-key",
-            "/me/api-key/*",
-            "/me/memberships",
-            "/me/memberships/*",
-            "/me/*",
-            "/variable-schemas/*",
-            "/processes/*",
-            "/admin/*"
-        );
+        // WO-AUDIT-13 (F-06): the URL patterns come from the SAME matrix that
+        // decides the bucket inside the filter. Before, the two lists were kept
+        // in sync by hand and had drifted: a route could be guarded but not
+        // registered (dead guard) or — as the audit found — in neither list
+        // (no limit at all). One matrix, two consumers, no drift possible.
+        //
+        // The pattern set is a superset of the pre-matrix one: every prefix
+        // route contributes its bare path AND its "/prefix/*" children (the
+        // servlet spec matches "/prefix" through "/prefix/*" as well, so the
+        // bare form is redundant — but it keeps the historical pattern set
+        // intact, which Api4AdminRateLimitIT pins).
+        registration.addUrlPatterns(RateLimitRoutes.registrationPatterns().toArray(new String[0]));
         registration.setName("rateLimitFilter");
         return registration;
     }

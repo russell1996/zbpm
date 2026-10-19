@@ -3,6 +3,7 @@ package com.zorrodev.bpm.rest.resource;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.rest.security.RateLimitFilter;
+import com.zorrodev.bpm.rest.security.RateLimitRoutes;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -73,21 +74,17 @@ class RateLimitXffFullContextTest {
         // WO-API-4: admin/aux prefixes joined the data bucket — the registration
         // must name every prefix the guard matches (bare + /* children), or the
         // filter never executes for them.
-        assertThat(registration.getUrlPatterns()).containsExactlyInAnyOrder(
-            "/auth/login", "/auth/refresh", "/auth/register", "/auth/forgot-password", "/me/password",
-            "/events/*", "/variables/*",
-            "/process-instances/*", "/user-tasks/*",
-            "/service-tasks/*", "/incidents/*",
-            "/process-definitions/*",
-            "/deployments", "/deployments/*",
-            "/users", "/users/*",
-            "/dmn", "/dmn/*",
-            "/forms", "/forms/*",
-            "/me/api-key", "/me/api-key/*",
-            "/me/memberships", "/me/memberships/*", "/me/*",
-            "/variable-schemas/*",
-            "/processes/*",
-            "/admin/*");
+        //
+        // WO-AUDIT-13 (F-06): the pattern set is no longer pinned by a hand-written
+        // list here — that list IS the drift F-06 was about. The contract is now
+        // set EQUALITY with the single route matrix: the registration bean is built
+        // from RateLimitRoutes.registrationPatterns() and nothing else
+        // (RateLimitFilterConfig), so a pattern that is not in the matrix cannot be
+        // registered, and a matrix line without a pattern cannot be registered
+        // either. (Equality is stronger than the previous `contains(...)` subset:
+        // a subset pin would still let an extra, hand-added pattern through.)
+        assertThat(new java.util.TreeSet<>(registration.getUrlPatterns()))
+            .isEqualTo(new java.util.TreeSet<>(RateLimitRoutes.registrationPatterns()));
     }
 
     private HttpRequest buildLoginRequest(String xffValue) throws Exception {
