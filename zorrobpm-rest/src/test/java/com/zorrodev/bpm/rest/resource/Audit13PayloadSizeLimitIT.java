@@ -7,6 +7,7 @@ import com.zorrodev.bpm.contract.dto.DeployDmnDTO;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.contract.dto.SubmitProcessSubmissionDTO;
 import com.zorrodev.bpm.contract.exception.ApiException;
+import com.zorrodev.bpm.engine.repository.DmnDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessSubmissionRepository;
 import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ProcessSubmissionService;
@@ -123,6 +124,7 @@ class Audit13PayloadSizeLimitIT {
     @Autowired private MockMvc mockMvc;
     @Autowired private Validator validator;
     @Autowired private ProcessSubmissionRepository submissionRepository;
+    @Autowired private DmnDefinitionRepository dmnRepository;
 
     /** Spies: they prove WHERE the oversized payload was rejected (binding layer vs service). */
     @MockitoSpyBean private DmnService dmnService;
@@ -130,6 +132,14 @@ class Audit13PayloadSizeLimitIT {
 
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private final List<UUID> createdSubmissionIds = new ArrayList<>();
+
+    /**
+     * The decision ids this class deploys (the "exactly at the limit" cases really do deploy
+     * the DMN). They are cleaned up after every test — otherwise each run leaves two rows
+     * behind in {@code dmn_definitions}.
+     */
+    private static final List<String> CREATED_DMN_DECISION_IDS =
+        List.of("a13dmnAt", "a13dmnSvcAt");
 
     private String adminToken;
 
@@ -143,6 +153,16 @@ class Audit13PayloadSizeLimitIT {
         if (!createdSubmissionIds.isEmpty()) {
             submissionRepository.deleteAllById(createdSubmissionIds);
             createdSubmissionIds.clear();
+        }
+        // findAllMeta() is a projection WITHOUT the @Lob `dmn` column — loading the blob
+        // outside a transaction fails on PostgreSQL ("Large Objects may not be used in
+        // auto-commit mode"), so the rows are addressed by id and deleted without the XML.
+        List<UUID> dmnRowIds = dmnRepository.findAllMeta().stream()
+            .filter(meta -> CREATED_DMN_DECISION_IDS.contains(meta.getDecisionId()))
+            .map(DmnDefinitionRepository.DmnDecisionMeta::getId)
+            .toList();
+        if (!dmnRowIds.isEmpty()) {
+            dmnRepository.deleteAllById(dmnRowIds);
         }
     }
 
