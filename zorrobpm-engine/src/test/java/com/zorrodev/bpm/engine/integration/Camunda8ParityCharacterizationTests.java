@@ -33,7 +33,9 @@ import com.zorrodev.bpm.engine.repository.ElementListenerPhaseRepository;
 import com.zorrodev.bpm.engine.repository.FormRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
+import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
+import com.zorrodev.bpm.engine.repository.ProcessRepository;
 import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
@@ -43,6 +45,7 @@ import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.DeploymentService;
 import com.zorrodev.bpm.engine.service.DmnService;
+import com.zorrodev.bpm.engine.service.FileService;
 import com.zorrodev.bpm.engine.service.ServiceTaskEnqueueService;
 import com.zorrodev.bpm.engine.service.impl.ServiceTaskEnqueueServiceImpl;
 import com.zorrodev.bpm.engine.service.BpmnParseService;
@@ -157,6 +160,15 @@ public class Camunda8ParityCharacterizationTests {
 
     @Autowired
     private ProcessInstanceRepository processInstanceRepository;
+
+    @Autowired
+    private ProcessDefinitionRepository processDefinitionRepository;
+
+    @Autowired
+    private ProcessRepository processRepository;
+
+    @Autowired
+    private FileService fileService;
 
     /**
      * WO-C8-11: в profile "test" штатный {@code TestServiceTaskEnqueueService} — no-op
@@ -2139,14 +2151,18 @@ public class Camunda8ParityCharacterizationTests {
     void taskSchedule_brokenExpression_storesNullWithoutIncident() throws Exception {
         // WO-C8-8, критерий 5: битый FEEL — не исключение, не инцидент: хранится null,
         // задача паркуется и завершается штатно (информационное поле, не триггер).
+        // WO-C8-56: после deploy-гейта такой деплой невозможен — модель существует только
+        // как «legacy» (задеплоена до гейта), поэтому строки пишутся LegacyDefinitionDeployer
+        // (тот же парсер и репозитории), предмет проверки — RUNTIME-семантика сохранённой модели.
         String key = uniq("c8tsb");
         String xml = bpmn("test-c8-task-schedule.bpmn")
             .replace("c8-task-schedule", key)
             .replace("dueDate=\"2020-01-01T00:00:00Z\" followUpDate=\"2020-01-02T00:00:00Z\"",
                 "dueDate=\"= 1 +\" followUpDate=\"= 1 +\"");
-        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+        UUID modelId = LegacyDefinitionDeployer.deployLegacy(xml, bpmnParseService,
+            processDefinitionRepository, processRepository, fileService);
 
-        UUID piId = start(model.getId(), List.of());
+        UUID piId = start(modelId, List.of());
 
         UserTaskQuery parkedQuery = new UserTaskQuery();
         parkedQuery.setProcessInstanceId(piId);
@@ -2965,13 +2981,17 @@ public class Camunda8ParityCharacterizationTests {
     @Transactional
     void feelProcessId_brokenExpression_parksInformativeIncident() throws Exception {
         // WO-C8-2, критерий 4: синтаксически битый FEEL — тот же явный путь (warn + null).
+        // WO-C8-56: после deploy-гейта такой деплой невозможен — модель существует только
+        // как «legacy» (задеплоена до гейта), поэтому строки пишутся LegacyDefinitionDeployer
+        // (тот же парсер и репозитории), предмет проверки — RUNTIME-инцидент сохранённой модели.
         String key = uniq("c8fpid");
         String xml = bpmn("test-c8-feel-process-id.bpmn")
             .replace("c8-feel-process-id", key)
             .replace("= &quot;c8p-&quot; + suffix", "= 1 +");
-        ProcessDefinition model = processDefinitionService.addProcessDefinition(xml);
+        UUID modelId = LegacyDefinitionDeployer.deployLegacy(xml, bpmnParseService,
+            processDefinitionRepository, processRepository, fileService);
 
-        UUID piId = start(model.getId(), List.of(var("suffix", ProcessVariableType.STRING, "x")));
+        UUID piId = start(modelId, List.of(var("suffix", ProcessVariableType.STRING, "x")));
 
         assertThat(queryService.getProcessInstance(piId).getCompletedAt()).isNull();
         List<IncidentEntity> incidents = incidentsOfInstance(piId);
