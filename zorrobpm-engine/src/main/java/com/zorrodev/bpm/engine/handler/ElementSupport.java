@@ -928,35 +928,88 @@ public class ElementSupport {
     }
 
     /**
-     * WO-C8-53 (F1 корни 5/6, live Zeebe 8.5.0): куда писать СЫРЫЕ
-     * completion-переменные элемента, когда overlay-проекция (MI-подпроцесс
-     * + маппинги) не применяется:
+     * WO-C8-53 (F1 корень 6, регрессия MiReenter, 2026-10-19): куда писать
+     * СЫРЫЕ completion-переменные элемента, когда overlay-проекция
+     * (MI-подпроцесс + маппинги) не применяется. Позиция на ПЕРЕМЕННУЮ, не
+     * на элемент:
      * <ul>
-     *  <li>внутри MI-подпроцесса — скоуп инстанса (C8-41 S1, измерено —
+     *  <li>внутри MI-подпроцесса — ВСЁ в скоуп инстанса (C8-41 S1, измерено —
      *      поведение не меняется);</li>
-     *  <li>сам элемент — инстанс MI (обычная MI-задача) ИЛИ несёт
-     *      output-маппинги — СОБСТВЕННЫЙ activity scope: instance-local /
-     *      element-local, удаляется с элементом в конце хвоста
-     *      ({@code deleteVariables(pi, taskId)}); между инстансами и в root
-     *      сырьё не течёт (live 8.5: r не в следующем job и не в dump; c не
-     *      в root при маппингах);</li>
-     *  <li>иначе — null = root (историческое S0-поведение: без MI и без
-     *      маппингов переменные видны downstream — не зондировалось на
-     *      оракуле, не меняем).</li>
+     *  <li>элемент несёт output-маппинги — ВСЁ в собственный activity scope:
+     *      element-local, сырьё в parent не течёт (live 8.5: output-completion
+     *      → c не в root); удаляется в конце хвоста (deleteVariables);</li>
+     *  <li>элемент — инстанс МИ без маппингов — ТОЛЬКО переменная
+     *      {@code outputElement} (простой FEEL-идентификатор) в собственный
+     *      activity scope (live 8.5: r не в следующем job и не в dump,
+     *      складывается в outputCollection); ОСТАЛЬНОЕ сырьё — в root:
+     *      поведение «сырьё завершения MI-задачи видно downstream после
+     *      join» НЕ зондировалось в кампании Ф1 и держит работающие прод-
+     *      паттерны (gwDecision по {@code action} в controlProcess —
+     *      MiReenterIntegrationTests); в Zeebe оно было бы instance-local —
+     *      зафиксировано как остаточное расхождение (отчёт, ВЛИЯНИЕ НА ПРОД);</li>
+     *  <li>иначе — ВСЁ в root (историческое S0, не меняется).</li>
      * </ul>
      */
-    public UUID completionRawScopeOrNull(UUID processInstanceId, UUID activityId,
+    public record RawPlacement(UUID localScope, boolean allLocal, java.util.Set<String> localNames) {
+        public boolean rootOnly() {
+            return localScope == null && localNames.isEmpty();
+        }
+    }
+
+    public RawPlacement completionRawPlacement(UUID processInstanceId, UUID activityId,
             BpmnElementModel element, BpmnProcessDefinitionModel bpmn) {
         UUID miScope = nearestMiSubProcessScope(processInstanceId, activityId, element, bpmn);
         if (miScope != null) {
-            return miScope;
+            return new RawPlacement(miScope, true, java.util.Set.of());
         }
-        boolean elementIsMi = element.getExtensions() != null
-            && element.getExtensions().getMultiInstanceExtension() != null;
-        if (elementIsMi || hasOutputMappings(element)) {
-            return activityId;
+        if (hasOutputMappings(element)) {
+            return new RawPlacement(activityId, true, java.util.Set.of());
         }
-        return null;
+        if (element.getExtensions() != null
+            && element.getExtensions().getMultiInstanceExtension() != null) {
+            String out = element.getExtensions().getMultiInstanceExtension().getOutputElement();
+            if (out != null && !out.isBlank() && out.matches("^[A-Za-z_][A-Za-z0-9_]*$")) {
+                return new RawPlacement(activityId, false, java.util.Set.of(out));
+            }
+        }
+        return new RawPlacement(null, false, java.util.Set.of());
+    }
+
+    /**
+     * Раскладывает сырые completion-переменные по позициям
+     * {@link #completionRawPlacement}: allLocal → одна запись в localScope
+     * (null = root), иначе раздельно: localNames → localScope, остальное →
+     * root. Единая точка записи для обоих хвостов (user/service task).
+     */
+    public void writeCompletionRaw(UUID processInstanceId, UUID activityId,
+            BpmnElementModel element, BpmnProcessDefinitionModel bpmn, List<ProcessVariable> variables) {
+        RawPlacement raw = completionRawPlacement(processInstanceId, activityId, element, bpmn);
+        if (variables == null || variables.isEmpty()) {
+            return;
+        }
+        if (raw.allLocal()) {
+            if (raw.localScope() == null) {
+                dbService.setVariables(processInstanceId, variables);
+            } else {
+                dbService.setVariables(processInstanceId, raw.localScope(), variables);
+            }
+            return;
+        }
+        List<ProcessVariable> local = new ArrayList<>();
+        List<ProcessVariable> rest = new ArrayList<>();
+        for (ProcessVariable v : variables) {
+            if (raw.localNames().contains(v.getName())) {
+                local.add(v);
+            } else {
+                rest.add(v);
+            }
+        }
+        if (!local.isEmpty() && raw.localScope() != null) {
+            dbService.setVariables(processInstanceId, raw.localScope(), local);
+        }
+        if (!rest.isEmpty()) {
+            dbService.setVariables(processInstanceId, rest);
+        }
     }
 
     /**

@@ -442,7 +442,9 @@ public class MultiInstanceExecutor {
             return;
         }
         UUID activityId = dbService.createActivity(processInstanceId, token, element);
-        bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index);
+        // Job-based (service/user/call-activity): outputElement предобъявляется
+        // в payload каждого инстанса (F1 корень 6).
+        bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index, true);
         if (element.getType() == BpmnElementType.USER_TASK) {
             // WO-IN-4: assignee/кандидатов резолвим в scope инстанса, а не в root:
             // inputElement живёт scope-локально, root-контекст его не видит —
@@ -506,7 +508,10 @@ public class MultiInstanceExecutor {
         UUID activityId = dbService.createActivity(processInstanceId, token, element);
         // Привязка цикла ПЕРВОЙ — chain-bound seed и внутренние элементы видят
         // inputElement/loopCounter с первой строки (порядок WO-DIFF-1 + MI).
-        bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index);
+        // jobBased=false: у MI-подпроцесса job'а нет — outputElement НЕ
+        // предобъявляется (C8-41 F2-бис, oracle S1-1: tu отсутствует при входе;
+        // появляется только на выходе инстанса, при оценке output mapping).
+        bindMiInstanceVariables(processInstanceId, activityId, mi, collection, index, false);
         elementSupport.applyChainedIoInputs(processInstanceId, activityId, element);
         SubProcessHandler sub = subProcessHandlerProvider.getIfAvailable();
         if (sub == null) {
@@ -607,7 +612,15 @@ public class MultiInstanceExecutor {
             chainVariablesFor(processInstanceId, token, mi.getInputCollection()));
     }
 
-    private void bindMiInstanceVariables(UUID processInstanceId, UUID scopeId, MultiInstanceExtensionModel mi, Object collection, int index) {
+    /**
+     * @param jobBased true для MI-элементов с job'ом (service/user/call-activity)
+     *                 — outputElement предобъявляется (F1 корень 6, live 8.5:
+     *                 {@code r:null} в payload каждого инстанса); false для
+     *                 MI-подпроцесса — предобъявления нет (C8-41 F2-бис, oracle
+     *                 S1-1: переменная отсутствует при входе, создаётся на
+     *                 выходе инстанса при оценке output mapping).
+     */
+    private void bindMiInstanceVariables(UUID processInstanceId, UUID scopeId, MultiInstanceExtensionModel mi, Object collection, int index, boolean jobBased) {
         List<ProcessVariable> locals = new ArrayList<>();
         if (collection != null && mi.getInputElement() != null && !mi.getInputElement().isBlank()) {
             locals.add(elementSupport.toProcessVariable(mi.getInputElement(), collectionElement(collection, index)));
@@ -629,8 +642,11 @@ public class MultiInstanceExecutor {
         // сложные выражения ({"decision": decision, ...}) переменную не
         // создают. Имя, занятое inputElement/loopCounter, не перезаписываем
         // (upsert в locals — последнее wins, входной байнд ушёл бы в null).
+        // Только job-based элементы: у MI-подпроцесса job'а нет и переменная
+        // при входе отсутствует (C8-41 F2-бис, oracle S1-1/S5-1 — живые
+        // прогоны на 8.5.0).
         String outputElement = mi.getOutputElement();
-        if (outputElement != null && !outputElement.isBlank()
+        if (jobBased && outputElement != null && !outputElement.isBlank()
             && outputElement.matches("^[A-Za-z_][A-Za-z0-9_]*$")
             && !outputElement.equals("loopCounter")
             && (mi.getInputElement() == null || !outputElement.equals(mi.getInputElement()))) {

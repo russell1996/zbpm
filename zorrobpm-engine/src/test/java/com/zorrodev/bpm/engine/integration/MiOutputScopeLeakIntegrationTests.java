@@ -263,6 +263,44 @@ public class MiOutputScopeLeakIntegrationTests {
         assertNoLeaks(pi, baseline);
     }
 
+    /**
+     * Fix-A boundary (MiReenter regression, 2026-10-19): an MI element WITH a
+     * simple outputElement and WITHOUT output mappings — the outputElement
+     * variable is instance-local (F1 root 6: r not in root, not in the next
+     * instance), while the OTHER completion variables keep reaching the root and
+     * stay visible to the downstream flow after the join. This is the production
+     * pattern (controlProcess gwDecision on {@code action}, MiReenterIntegrationTests)
+     * that the all-local placement broke: in Zeebe it would be instance-local, but
+     * it was never measured in the F1 campaign — compatibility wins, documented in
+     * the report (ВЛИЯНИЕ НА ПРОД / residual divergence).
+     * <p>Mutations: making ALL raw local (first fix iteration) → {@code action}
+     * invisible after the join → incident, RED; making ALL raw root (master) →
+     * {@code r} in root → the mi-basic conformance cases RED. Both directions pinned.
+     */
+    @Transactional
+    @Test
+    void miWithoutMappings_outputElementLocal_otherCompletionVarsReachRoot() throws Exception {
+        Set<UUID> baseline = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbcTemplate);
+        UUID pi = start("test-c853-mi-output-and-gateway.bpmn", Map.of("items", List.of("a", "b")));
+
+        List<ActivityEntity> jobs = live(pi, "miTask");
+        assertThat(jobs).hasSize(2);
+        completeByItem(pi, jobs, "!", Map.of("action", "CLOSE"));
+
+        assertThat(live(pi, "srvClose"))
+            .as("gateway after the join sees the non-outputElement completion var").hasSize(1);
+        runtimeService.completeServiceTask(live(pi, "srvClose").get(0).getId(), List.of());
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+
+        Map<String, Object> root = normalizedRoot(pi);
+        assertThat(root).as("non-outputElement completion variable stays visible downstream")
+            .containsEntry("action", "CLOSE");
+        assertThat(root).as("raw outputElement must not leak to root").doesNotContainKey("r");
+        assertThat(root.get("results")).isEqualTo(List.of("a!", "b!"));
+        assertThat(allVariableNames(pi)).as("no scoped outputElement left behind").doesNotContain("r");
+        assertNoLeaks(pi, baseline);
+    }
+
     // ---------------------------------------------------------------- helpers
 
     private UUID start(String fixture, Map<String, Object> vars) throws Exception {
