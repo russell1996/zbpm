@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-audit12-callchild" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-AUDIT-12 (F-02): дочерний процесс call activity. Одна user task:
+       ребёнок ПАРКУЕТСЯ и ждёт — пока он жив, родительский инстанс висит
+       на своей call-activity строке. Именно это состояние нужно для
+       «cancel(parent) × running child». -->
+  <bpmn:process id="audit12-call-child" name="audit12-call-child" isExecutable="true">
+    <bpmn:startEvent id="childStart" name="childStart">
+      <bpmn:outgoing>flowC1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowC1" sourceRef="childStart" targetRef="childWait" />
+    <bpmn:userTask id="childWait" name="childWait">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowC1</bpmn:incoming>
+      <bpmn:outgoing>flowC2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flowC2" sourceRef="childWait" targetRef="childEnd" />
+    <bpmn:endEvent id="childEnd" name="childEnd">
+      <bpmn:incoming>flowC2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
