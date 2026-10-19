@@ -150,6 +150,10 @@ public class ActivityServiceImplTests {
             t.setId(invocation.getArgument(0));
             return Optional.of(t);
         });
+        // WO-AUDIT-11 (F-09): разветвление спрашивает, жив ли скоуп (погашенный скоуп
+        // не активирует оставшиеся ветви форка). В моках скоуп не погашен — по умолчанию
+        // «жив», иначе форк в этих юнитах молча перестал бы запускать ветви.
+        org.mockito.Mockito.lenient().when(elementSupport.isScopeAlive(any(), any())).thenReturn(true);
         // Stub computeDueAt for the timer catch test (BPMN uses PT5M)
         org.mockito.Mockito.lenient().when(
             elementSupport.computeDueAt(any(com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel.class), any(java.util.UUID.class))
@@ -233,7 +237,7 @@ public class ActivityServiceImplTests {
             org.mockito.Mockito.mock(tools.jackson.databind.ObjectMapper.class), serviceTaskEnqueueService,
             miExecutorProvider());
         registerHandler(BpmnElementType.EXCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.ExclusiveGatewayHandler(dbService, flowNav, elementSupport));
-        registerHandler(BpmnElementType.PARALLEL_GATEWAY, new com.zorrodev.bpm.engine.handler.ParallelGatewayHandler(dbService, flowNav));
+        registerHandler(BpmnElementType.PARALLEL_GATEWAY, new com.zorrodev.bpm.engine.handler.ParallelGatewayHandler(dbService, flowNav, elementSupport));
         registerHandler(BpmnElementType.INCLUSIVE_GATEWAY, new com.zorrodev.bpm.engine.handler.InclusiveGatewayHandler(dbService, flowNav, scriptService, elementSupport));
         registerHandler(BpmnElementType.EVENT_BASED_GATEWAY, new com.zorrodev.bpm.engine.handler.EventBasedGatewayHandler(dbService, flowNav));
         registerHandler(BpmnElementType.INTERMEDIATE_CATCH_EVENT, new com.zorrodev.bpm.engine.handler.WaitStateHandler(dbService));

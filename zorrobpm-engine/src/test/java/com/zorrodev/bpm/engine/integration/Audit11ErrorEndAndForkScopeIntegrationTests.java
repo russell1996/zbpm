@@ -174,16 +174,19 @@ public class Audit11ErrorEndAndForkScopeIntegrationTests {
         assertThat(sub).hasSize(1);
         assertThat(sub.get(0).getStatus()).isEqualTo(ActivityStatus.CANCELLED);
 
+        // the sibling branch is NOT started at all: the scope was terminated by the
+        // boundary in the middle of the fan-out, so the remaining branch is never
+        // activated (Zeebe 8.5: the sibling job of the cancelled scope is not
+        // activatable — oracle a11-fork-scope-boundary, a11Sibling=none).
         List<ActivityEntity> sibling = activities(pi, "siblingTask");
-        assertThat(sibling).hasSize(1);
-        assertThat(sibling.get(0).getStatus())
-            .as("прерывающая граница гасит ВСЕ ветви отменённого скоупа")
-            .isEqualTo(ActivityStatus.CANCELLED);
+        assertThat(sibling)
+            .as("прерывающая граница гасит скоуп — оставшиеся ветви форка не активируются")
+            .isEmpty();
 
-        // the throwing element itself is not left alive either
+        // the throwing element itself executed (it threw the error) — it is not left alive
         List<ActivityEntity> errEnd = activities(pi, "errEnd");
         assertThat(errEnd).hasSize(1);
-        assertThat(errEnd.get(0).getStatus()).isEqualTo(ActivityStatus.CANCELLED);
+        assertThat(errEnd.get(0).getStatus()).isEqualTo(ActivityStatus.COMPLETED);
 
         // finish the boundary path: the worker completes the service task -> instance ends
         UUID afterBoundaryId = afterBoundary.get(0).getId();

@@ -25,6 +25,11 @@ public class ParallelGatewayHandler implements ElementHandler, TypedElementHandl
 
     private final DBService dbService;
     private final FlowNavigator flowNavigator;
+    /**
+     * WO-AUDIT-11 (F-09): живость скоупа разветвления — оставшиеся ветви форка не
+     * активируются, если скоуп погашен (error-граница объемлющего подпроцесса).
+     */
+    private final ElementSupport elementSupport;
 
     @Override
     public BpmnElementType elementType() { return BpmnElementType.PARALLEL_GATEWAY; }
@@ -69,6 +74,17 @@ public class ParallelGatewayHandler implements ElementHandler, TypedElementHandl
             // so finishBranch can decrement and only complete when all are consumed.
             dbService.setPendingBranches(newTokenId, outgoings.size());
             for (String outgoing : outgoings) {
+                // WO-AUDIT-11 (F-09): если скоуп погашен (error-граница объемлющего
+                // подпроцесса поймала ошибку из ПРЕДЫДУЩЕЙ ветви форка), оставшиеся
+                // ветви не активируются: скоуп терминирован — в нём нечего запускать
+                // (Zeebe 8.5: job сестринской ветви не активируется). Без этой проверки
+                // сестринская задача создавалась ПОСЛЕ отмены скоупа и жила вечно —
+                // инстанс висел с активной задачей и без инцидента.
+                if (!elementSupport.isScopeAlive(processInstanceId, tokenId)) {
+                    log.info("{}/{}: scope погашен во время разветвления {} — оставшиеся ветви не активируются",
+                        processInstanceId, tokenId, bpmnElement.getId());
+                    break;
+                }
                 flowNavigator.processFlow(processInstanceId, newTokenId, outgoing, false, null);
                 BpmnFlowModel flow = bpmn.getFlow(outgoing);
                 String targetRef = flow.getTargetRef();

@@ -15,13 +15,13 @@
          scope-walk их не видят, теорема §8 отчёта).
          h1 (снаружи) приходит в joinIn первым — joinIn припаркован. Завершение h2in
          срабатывает joinIn ШТАТНО через резюм (ровно 1 раз, taskY создан) ДО отмены —
-         чистить нечего. Бросок eTask идёт на форк-токене: scope-walk пропускает
-         (токен без scopeActivityId), ошибка необработана — видимый инцидент
-         (incidents=1), scope жив (subProc не CANCELLED), joinIn по-прежнему ровно 1,
-         мёртвых arrived-строк нет. Чистка error scope-walk — defense-in-depth:
-         её ВЫЗОВ доказывает ScopeJoinCleanupWiringTest (mock-verify + POF-мутация).
-         joinIn сам стрелять вторым разом НЕ должен (хвост отменённого scope,
-         POF-2 раунда 4 C8-35) — здесь scope и не отменяется. -->
+         чистить нечего. Бросок eTask идёт на форк-токене: WO-AUDIT-11 (F-09) —
+         обход scope'ов НЕ обрывается на токене без scope, поэтому граница errBnd
+         объемлющего подпроцесса ЛОВИТ ошибку: subProc CANCELLED, инцидентов 0,
+         joinIn по-прежнему ровно 1 (хвоста отменённого scope нет), мёртвых
+         arrived-строк нет. До F-09 этот путь был недостижим (теорема §8 отчёта
+         C8-38) и cleanup был defense-in-depth; теперь он ЖИВОЙ, и защитные
+         утверждения (join ровно 1, мёртвых arrived-строк нет) проверяются здесь. -->
     <bpmn:startEvent id="startEvent" name="startEvent">
       <bpmn:outgoing>flow1</bpmn:outgoing>
     </bpmn:startEvent>

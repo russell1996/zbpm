@@ -21,6 +21,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -131,8 +132,76 @@ class ErrorEscalationThrowerTest {
 
         // Then
         assertThat(result).isTrue();
-        verify(dbService).cancelActiveActivitiesForToken(tokenId);
+        // WO-AUDIT-11 (F-09): отменяется ВЕСЬ scope (filterActivitiesInScope — обход
+        // цепочки токенов), а не только активити на scope-токене: ветви форка живут
+        // на дочерних токенах, и token-wise отмена их не видела.
+        verify(elementSupport).filterActivitiesInScope(eq(processInstanceId), any(), eq(scopeActivityId));
+        verify(dbService, never()).cancelActiveActivitiesForToken(any());
         verify(dbService).cancelActivity(scopeActivityId);
+    }
+
+    /**
+     * WO-AUDIT-11 (F-09): форк-токен (scopeActivityId = null) НЕ обрывает обход
+     * scope'ов — иначе error boundary объемлющего подпроцесса терялась после
+     * параллельного форка (ошибка уходила в инцидент вместо границы).
+     */
+    @Test
+    void throwError_forkTokenWithoutScope_stillFindsEnclosingScopeBoundary() {
+        UUID processInstanceId = UUID.randomUUID();
+        UUID forkTokenId = UUID.randomUUID();
+        UUID scopeTokenId = UUID.randomUUID();
+        UUID incomingTokenId = UUID.randomUUID();
+        UUID scopeActivityId = UUID.randomUUID();
+        String errorCode = "PROCESSED";
+
+        ProcessInstance pi = new ProcessInstance();
+        pi.setId(processInstanceId);
+        pi.setParentActivityId(null);
+        when(dbService.getProcessInstance(processInstanceId)).thenReturn(pi);
+
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+        BpmnElementModel boundary = new BpmnElementModel();
+        boundary.setId("errorBoundary1");
+        boundary.setType(BpmnElementType.ERROR_BOUNDARY_EVENT);
+        BpmnElementExtensionModel ext = new BpmnElementExtensionModel();
+        BoundaryEventExtensionModel boundaryExt = new BoundaryEventExtensionModel();
+        boundaryExt.setAttachedToRef("subprocess1");
+        ext.setBoundaryEventExtension(boundaryExt);
+        EventDefinitionExtensionModel eventDef = new EventDefinitionExtensionModel();
+        eventDef.setCode("PROCESSED");
+        ext.setEventDefinition(eventDef);
+        boundary.setExtensions(ext);
+        bpmn.addElement(boundary);
+
+        when(bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId())).thenReturn(bpmn);
+
+        // форк-токен: scope = null, родитель — scope-токен подпроцесса
+        Token forkTok = new Token();
+        forkTok.setId(forkTokenId);
+        forkTok.setParentId(scopeTokenId);
+        forkTok.setScopeActivityId(null);
+        when(dbService.getToken(forkTokenId)).thenReturn(forkTok);
+
+        Token scopeTok = new Token();
+        scopeTok.setId(scopeTokenId);
+        scopeTok.setParentId(incomingTokenId);
+        scopeTok.setScopeActivityId(scopeActivityId);
+        when(dbService.getToken(scopeTokenId)).thenReturn(scopeTok);
+
+        Activity scope = new Activity();
+        scope.setId(scopeActivityId);
+        scope.setBpmnElementId("subprocess1");
+        when(dbService.getActivity(scopeActivityId)).thenReturn(scope);
+
+        TokenExecutor executor = org.mockito.Mockito.mock(TokenExecutor.class);
+
+        boolean result = errorEscalationThrower.throwError(processInstanceId, forkTokenId, errorCode, null, executor);
+
+        assertThat(result).as("граница объемлющего подпроцесса обязана поймать ошибку из ветки форка").isTrue();
+        verify(elementSupport).filterActivitiesInScope(eq(processInstanceId), any(), eq(scopeActivityId));
+        verify(dbService).cancelActivity(scopeActivityId);
+        // продолжение границы — на токене, ВОШЕДШЕМ в подпроцесс (родитель scope-токена)
+        verify(flowNavigator).proceedToOutgoing(eq(processInstanceId), eq(incomingTokenId), eq(bpmn), eq(boundary), any());
     }
 
     /**

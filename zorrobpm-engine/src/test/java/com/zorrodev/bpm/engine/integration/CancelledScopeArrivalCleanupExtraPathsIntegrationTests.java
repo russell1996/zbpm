@@ -29,13 +29,21 @@ import static org.assertj.core.api.Assertions.assertThat;
  * WO-C8-38 (C38-2, раунд 2, решение maintainer по эскалации V10): живое подтверждение
  * теоремы недостижимости для четырёх error/escalate/terminate-путей отмены scope.
  *
- * <p>Теорема (§8 отчёта): scope-ветки отмены (error scope-walk, interrupting-escalation,
- * terminate in-scope) входят только на токене с {@code scopeActivityId}, а такой токен
- * один — живая парковка join и позиция триггера на нём несовместны. Поэтому чистка
- * arrived-строк на этих сайтах — defense-in-depth (её ВЫЗОВ доказывает
- * {@code ScopeJoinCleanupWiringTest} 4/4 с POF-мутациями), а сквозной «RED без чистки»
- * здесь невозможен: к моменту триггера join уже сработал ШТАТНО через резюм
- * деактивации доставщика, чистить нечего и не вредит.
+ * <p><b>WO-AUDIT-11 (F-09) — теорема §8 ОПРОВЕРГНУТА для форк-токенов.</b> До F-09
+ * обход scope'ов в {@code ErrorEscalationThrower} обрывался на токене без
+ * {@code scopeActivityId} (такой токен даёт форк: {@code ParallelGatewayHandler} /
+ * неявный форк / {@code InclusiveGatewayHandler} создают ветвь с {@code scope = null}),
+ * поэтому error/escalation-граница ОБЪЕМЛЮЩЕГО подпроцесса после форка была
+ * недостижима, а cleanup по этим путям — defense-in-depth. F-09 (санкционировано
+ * WO-AUDIT-11) продолжает обход по всей цепочке токенов: граница ловит ошибку из
+ * ветки форка, скоуп гасится, и защитные утверждения C8-38 становятся ЖИВЫМИ:
+ * <ul>
+ *   <li>join срабатывает РОВНО ОДИН раз (нет хвоста отменённого скоупа);</li>
+ *   <li>мёртвых arrived-строк не остаётся.</li>
+ * </ul>
+ * Именно эти два утверждения класс проверяет и сейчас — они не ослаблены.
+ * Проверено на живом Zeebe 8.5 (оракул {@code a11-fork-scope-boundary}): граница
+ * объемлющего подпроцесса ловит ошибку из ветки форка, сестринская ветка отменена.
  *
  * <p>Форма каждого теста: h1 паркует joinIn → завершение h2in срабатывает joinIn
  * штатно ДО отмены (ровно 1 раз, taskY создан, open-строк joinIn больше нет) →
@@ -129,23 +137,29 @@ public class CancelledScopeArrivalCleanupExtraPathsIntegrationTests {
 
     @Transactional
     @Test
-    void errorScopeWalk_errorOnForkTokenLeavesScopeAlive_joinFiresBeforeCancel() throws Exception {
+    void errorScopeWalk_errorOnForkToken_isCaughtByEnclosingScopeBoundary_joinFiresBeforeCancel() throws Exception {
         UUID pi = start("test-c838-errwalk-holds-neighbour-join.bpmn");
         parkedJoinFiresBeforeScopeCancel(pi);
 
-        // Триггер идёт на форк-токене без scopeActivityId (теорема §8): scope-walk
-        // его не видит — ошибка необработана (видимый инцидент, не тихое висение),
-        // scope жив, joinIn по-прежнему ровно 1 (без второго срабатывания).
+        // WO-AUDIT-11 (F-09): теорема §8 (для этого дерева действовала до F-09) ОПРОВЕРГНУТА
+        // живым прогоном: форк-токен не обрывает обход scope'ов, поэтому граница
+        // ОБЪЕМЛЮЩЕГО подпроцесса (errBnd на subProc) ловит ошибку из ветки форка —
+        // ошибка НЕ уходит в инцидент, а скоуп гасится границей. Zeebe 8.5 (оракул
+        // a11-fork-scope-boundary): то же самое — граница ловит, инцидентов 0,
+        // сестринская ветка отменена.
+        // ЗАЩИТНЫЕ утверждения C8-38 (join не стреляет второй раз, хвоста отменённого
+        // скоупа нет, мёртвых arrived-строк нет) СОХРАНЯЮТСЯ — и теперь они ЖИВЫЕ:
+        // скоуп действительно гасится.
         complete(pi, "eTask");
         assertThat(countOf(pi, "joinIn", ActivityStatus.COMPLETED))
             .as("no tail of a cancelled scope fires: the join fired once, before the cancel")
             .isEqualTo(1L);
         assertThat(countOf(pi, "subProc", ActivityStatus.CANCELLED))
-            .as("the scope survives: a fork-token error does not cancel it")
-            .isEqualTo(0L);
-        assertThat(incidents(pi))
-            .as("unhandled error is a visible incident, not a silent hang")
+            .as("граница объемлющего подпроцесса ловит ошибку из ветки форка (F-09)")
             .isEqualTo(1L);
+        assertThat(incidents(pi))
+            .as("ошибка поймана границей — незакрытого инцидента не остаётся")
+            .isEqualTo(0L);
 
         noDeadArrivalRowsAfterCancelTrigger(pi);
     }
@@ -156,16 +170,17 @@ public class CancelledScopeArrivalCleanupExtraPathsIntegrationTests {
         UUID pi = start("test-c838-escalate-holds-neighbour-join.bpmn");
         parkedJoinFiresBeforeScopeCancel(pi);
 
-        // Триггер идёт на форк-токене без scopeActivityId (теорема §8): прерывание
-        // scope не срабатывает — ветвь триггера просто завершается, scope жив,
-        // joinIn по-прежнему ровно 1, инцидента нет.
+        // WO-AUDIT-11 (F-09): тот же обход scope'ов для escalation — форк-токен его не
+        // обрывает, поэтому прерывающая escalation-граница объемлющего подпроцесса
+        // (escBnd на subProc) срабатывает и гасит скоуп. До F-09 этот путь был
+        // недостижим (теорема §8), и cleanup был defense-in-depth; теперь он ЖИВОЙ.
         complete(pi, "sTask");
         assertThat(countOf(pi, "joinIn", ActivityStatus.COMPLETED))
             .as("no tail of a cancelled scope fires: the join fired once, before the cancel")
             .isEqualTo(1L);
         assertThat(countOf(pi, "subProc", ActivityStatus.CANCELLED))
-            .as("the scope survives: a fork-token escalation does not cancel it")
-            .isEqualTo(0L);
+            .as("прерывающая escalation-граница объемлющего подпроцесса гасит скоуп (F-09)")
+            .isEqualTo(1L);
         assertThat(incidents(pi)).isEqualTo(0L);
 
         noDeadArrivalRowsAfterCancelTrigger(pi);

@@ -219,10 +219,38 @@ class EndEventHandlerTest {
         errorEndEvent.handle(ctx, bpmn, el);
 
         verify(dbService).createActivity(piId, tokenId, el);
-        verify(dbService).completeActivity(activityId);
         verify(activityService).throwError(piId, tokenId, null);
+        // WO-AUDIT-11 (F-01): необработанная ошибка — элемент ОСТАЁТСЯ ЖИВЫМ до броска
+        // (иначе errorActivity отказывается его перевернуть, инцидент уезжает на
+        // COMPLETED-строку, а resolve закрывает его без re-execution — инстанс висит
+        // навсегда). Поэтому completeActivity в необработанном пути НЕ вызывается.
+        verify(dbService, never()).completeActivity(activityId);
         verify(dbService).errorActivity(activityId);
         verify(dbService).createIncident(eq(activityId), any());
+    }
+
+    @Test
+    void errorEndEvent_handledByBoundary_completesTheElement() {
+        UUID piId = UUID.randomUUID();
+        UUID tokenId = UUID.randomUUID();
+        UUID activityId = UUID.randomUUID();
+        BpmnElementModel el = new BpmnElementModel();
+        el.setId("errEnd1");
+        el.setType(BpmnElementType.ERROR_END_EVENT);
+        BpmnProcessDefinitionModel bpmn = new BpmnProcessDefinitionModel();
+
+        when(dbService.createActivity(eq(piId), eq(tokenId), eq(el))).thenReturn(activityId);
+        when(activityService.throwError(piId, tokenId, null)).thenReturn(true);
+
+        ExecutionCtx ctx = new ExecutionCtx(piId, tokenId, null, null);
+        errorEndEvent.handle(ctx, bpmn, el);
+
+        verify(dbService).createActivity(piId, tokenId, el);
+        verify(activityService).throwError(piId, tokenId, null);
+        // поймали границей — элемент отработал: COMPLETED, без инцидента
+        verify(dbService).completeActivity(activityId);
+        verify(dbService, never()).errorActivity(any());
+        verify(dbService, never()).createIncident(any(), any());
     }
 
     @Test

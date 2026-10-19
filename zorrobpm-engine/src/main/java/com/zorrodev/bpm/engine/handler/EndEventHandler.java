@@ -225,7 +225,6 @@ public class EndEventHandler {
         @Override
         public void handle(ExecutionCtx ctx, BpmnProcessDefinitionModel bpmn, BpmnElementModel el) {
             UUID activityId = dbService.createActivity(ctx.processInstanceId(), ctx.tokenId(), el);
-            dbService.completeActivity(activityId);
 
             String errorCode = Optional.ofNullable(el.getExtensions())
                 .map(BpmnElementExtensionModel::getEventDefinition)
@@ -234,8 +233,29 @@ public class EndEventHandler {
 
             log.info("{}/{}: Error end {} thrown (code={}) at {}", ctx.processInstanceId(), ctx.tokenId(), el.getId(), errorCode, activityId);
 
+            // WO-AUDIT-11 (F-01): сначала БРОСОК, потом решение по статусу элемента.
+            // Раньше элемент завершался (COMPLETED) ДО throwError, и тогда:
+            //   — errorActivity (условный переход, WO-ENG-23) отказывался переворачивать
+            //     терминальную строку («row is not active — refusing to flip it to ERROR»);
+            //   — инцидент уезжал на COMPLETED-активити;
+            //   — resolveIncident видел COMPLETED и закрывал инцидент БЕЗ re-execution
+            //     (IncidentService: «COMPLETED → closing incident without re-execution»);
+            //   — итог: инстанс RUNNING без единой активной активити и без единого
+            //     элемента, на который можно повлиять, — навсегда.
+            // Живой Zeebe 8.5 (оракул, docs/analysis/c8-oracle/scenarios/a11-errend-unhandled):
+            // необработанная ошибка поднимает ИНЦИДЕНТ на элементе (+1 created / +1 pending
+            // в счётчиках брокера), инстанс остаётся живым, поток на элементе стоит.
+            // Тот же контракт, что у ручного броска из service task (throwServiceTaskError):
+            // не поймали → элемент в ERROR + открытый инцидент.
             boolean handled = activityService.throwError(ctx.processInstanceId(), ctx.tokenId(), errorCode);
-            if (!handled) {
+            if (handled) {
+                // Граница (или event-subprocess) поймала ошибку: элемент отработал — его
+                // завершаем (как раньше: COMPLETED). Гашение скоупа при этом уже прошло
+                // внутри throwError и эту строку не тронуло (оно гасит только CREATED/IN_PROGRESS).
+                dbService.completeActivity(activityId);
+            } else {
+                // Никто не поймал: элемент паркуется в ERROR, на него — открытый инцидент.
+                // resolve такого инцидента ПЕРЕИСПОЛНЯЕТ элемент (а не закрывает молча).
                 dbService.errorActivity(activityId);
                 dbService.createIncident(activityId, "Unhandled BPMN error" + (errorCode != null ? " '" + errorCode + "'" : ""));
             }
