@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WO-C8-56: field-level case — a single-quoted FEEL string in the user-task assignee
+  (assignmentDefinition/assignee). The deploy must refuse it with the element id and the
+  parser's position, not just the sequence-flow condition field.
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="testC856InvalidFeelAssignee" isExecutable="true">
+    <bpmn:startEvent id="start">
+      <bpmn:outgoing>flowStart</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="task" name="Broken assignee">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:assignmentDefinition assignee="=user = 'x'" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowStart</bpmn:incoming>
+      <bpmn:outgoing>flowEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="end">
+      <bpmn:incoming>flowEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowStart" sourceRef="start" targetRef="task" />
+    <bpmn:sequenceFlow id="flowEnd" sourceRef="task" targetRef="end" />
+  </bpmn:process>
+</bpmn:definitions>

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WO-C8-56: two broken FEEL fields in one model — a single-quoted flow condition (the production
+  expression of outgoingLetterPreparationProcess) and a single-quoted user-task assignee. The
+  deploy answer must name BOTH elements; fixing one and redeploying must not expose the second
+  at runtime.
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="testC856TwoBroken" isExecutable="true">
+    <bpmn:startEvent id="start">
+      <bpmn:outgoing>flowToGateway</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:exclusiveGateway id="gw" name="Check return class">
+      <bpmn:incoming>flowToGateway</bpmn:incoming>
+      <bpmn:outgoing>flowMinor</bpmn:outgoing>
+      <bpmn:outgoing>flowOther</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:userTask id="task" name="Broken assignee">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+        <zeebe:assignmentDefinition assignee="=u = 'y'" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowMinor</bpmn:incoming>
+      <bpmn:outgoing>flowToEnd</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="endOther">
+      <bpmn:incoming>flowOther</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="end">
+      <bpmn:incoming>flowToEnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="flowToGateway" sourceRef="start" targetRef="gw" />
+    <bpmn:sequenceFlow id="flowMinor" sourceRef="gw" targetRef="task">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=returnClass = 'minor'</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="flowOther" sourceRef="gw" targetRef="endOther" />
+    <bpmn:sequenceFlow id="flowToEnd" sourceRef="task" targetRef="end" />
+  </bpmn:process>
+</bpmn:definitions>
