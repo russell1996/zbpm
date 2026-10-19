@@ -1,0 +1,20 @@
+{
+  "id": "a11-errend-unhandled",
+  "title": "F-01 — error end event WITHOUT any error boundary / event subprocess: what does Zeebe 8.5 do?",
+  "bpmn": "process.bpmn",
+  "processId": "a11ErrEnd",
+  "vars": {},
+  "observeJobTypes": [],
+  "expectIncident": true,
+  "waitMs": 4000,
+  "expected": {},
+  "matrix": {
+    "docs89": "8.9 docs: a BPMN error that is not caught by a boundary event or error event sub-process raises an incident on the element that threw the error; the instance stays alive (the scope is not terminated) so an operator can resolve/retry the incident",
+    "ours": "ошибка не поймана → элемент error-end остаётся в ERROR, на него поднимается ОТКРЫТЫЙ инцидент, инстанс жив (completed_at пуст), resolve ПЕРЕИСПОЛНЯЕТ элемент (новая попытка → снова ERROR + новый открытый инцидент) — не тихое закрытие"
+  },
+  "_help": {
+    "observeJobTypes": "Job types polled after the start; empty = the process has no worker task by design.",
+    "expectIncident": "The scenario expects the broker to raise an incident (checked via the broker's incident counters).",
+    "waitMs": "How long to wait for the incident to be raised before sampling the counters."
+  }
+}

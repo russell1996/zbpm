@@ -102,6 +102,13 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
             // деактивации перепроверяются припаркованные join'ы (ШAГ 3, B2).
             try {
                 for (String outgoing : activated) {
+                    // WO-AUDIT-11 (F-09): тот же stop-условие, что и в ParallelGatewayHandler —
+                    // погашенный скоуп не активирует оставшиеся ветви inclusive-форка.
+                    if (!elementSupport.isScopeAlive(processInstanceId, tokenId)) {
+                        log.info("{}/{}: scope погашен во время разветвления {} — оставшиеся ветви не активируются",
+                            processInstanceId, tokenId, bpmnElement.getId());
+                        break;
+                    }
                     BpmnFlowModel flow = bpmn.getFlow(outgoing);
                     BpmnElementModel target = bpmn.getElement(flow.getTargetRef());
                     executor.execute(processInstanceId, newTokenId, bpmn, target);

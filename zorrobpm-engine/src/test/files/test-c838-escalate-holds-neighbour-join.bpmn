@@ -12,11 +12,13 @@
          (token-scope-keyed пути scope-walk/escalation-walk их не видят, теорема §8).
          h1 приходит в joinIn первым — joinIn припаркован. Завершение h2in срабатывает
          joinIn ШТАТНО через резюм (ровно 1 раз, taskY создан) ДО отмены — чистить
-         нечего. Бросок sTask идёт на форк-токене: прерывание не срабатывает, ветвь
-         триггера просто завершается (finishBranch), scope жив (subProc не CANCELLED),
-         joinIn по-прежнему ровно 1, инцидента нет, мёртвых arrived-строк нет.
-         Чистка interrupting-escalation — defense-in-depth: её ВЫЗОВ доказывает
-         ScopeJoinCleanupWiringTest (mock-verify + POF-мутация). -->
+         нечего. Бросок sTask идёт на форк-токене: WO-AUDIT-11 (F-09) — обход
+         scope'ов (и для escalation) НЕ обрывается на токене без scope, поэтому
+         прерывающая граница escBnd объемлющего подпроцесса СРАБАТЫВАЕТ и гасит
+         скоуп: subProc CANCELLED, joinIn по-прежнему ровно 1 (хвоста отменённого
+         scope нет), инцидента нет, мёртвых arrived-строк нет. До F-09 этот путь был
+         недостижим (теорема §8 отчёта C8-38) и cleanup был defense-in-depth;
+         теперь он ЖИВОЙ, и защитные утверждения проверяются здесь. -->
     <bpmn:startEvent id="startEvent" name="startEvent">
       <bpmn:outgoing>flow1</bpmn:outgoing>
     </bpmn:startEvent>

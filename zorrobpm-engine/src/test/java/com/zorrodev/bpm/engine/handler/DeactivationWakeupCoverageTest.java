@@ -112,7 +112,13 @@ class DeactivationWakeupCoverageTest {
     // при раннем completionCondition (cancelRemainingMiSubInstances, R18 выше).
     // WO-C8-43: 126 → 127 — per-branch complete контейнера MI-инстанса
     // (finishMiSubProcessInstance, R19 выше).
-    private static final int EXPECTED_SITE_COUNT = 127;
+    // WO-AUDIT-11 (F-09): 127 → 126 — два token-wide вызова
+    // (cancelActiveActivitiesForToken) в throwError/throwEscalation заменены ОДНИМ
+    // scope-циклом в helper'е cancelScopeActivities (ветви форка живут на дочерних
+    // токенах, token-wise отмена их не видела). Минус два sites, плюс один = −1.
+    // Новый complete-сайт в EndEventHandler (error end в ветке «поймали границей»)
+    // и новый ключ для errorActivity — по числу sites ничего не меняют.
+    private static final int EXPECTED_SITE_COUNT = 126;
 
     /** site key -> причина, почему перепроверка здесь не нужна. Непустая — проверяется тестом. */
     private static final Map<String, String> WHITELIST = new LinkedHashMap<>();
@@ -253,7 +259,8 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("AdHocSubProcessHandler.java#raiseIncident[]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("CompensationThrowHandler.java#runCompensation[} catch (RuntimeException e) {]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("ElementListenerPhaseService.java#failPhaseListener[]|dbService.errorActivity(activityId)", R05);
-        WHITELIST.put("EndEventHandler.java#handle[if (!handled) {]|dbService.errorActivity(activityId)", R05);
+        WHITELIST.put("EndEventHandler.java#handle[if (handled) {]|dbService.completeActivity(activityId)", R01);
+        WHITELIST.put("EndEventHandler.java#handle[} else {]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("IncidentService.java#raiseIncident[]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("MultiInstanceExecutor.java#raiseCardinalityIncident[]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("MultiInstanceExecutor.java#spawnMiInstance[} catch (EngineException e) {]|dbService.errorActivity(activityId)", R05);
@@ -326,12 +333,17 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("ErrorEscalationThrower.java#throwError[for (UUID instanceId : instanceIds) {]|dbService.cancelActivity(instanceId)", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwError[for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {]|dbService.cancelActivity(innerId)", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwError[if (isMiSubProcessScope(scope, bpmn)) {]|dbService.cancelActivity(scope.getId())", R08);
-        WHITELIST.put("ErrorEscalationThrower.java#throwError[} else {]|dbService.cancelActiveActivitiesForToken(tok.getId())", R08);
+        // WO-AUDIT-11 (F-09): token-wide отмена (cancelActiveActivitiesForToken) заменена
+        // scope-циклом (cancelScopeActivities) — форк-ветви живут на дочерних токенах,
+        // token-wise отмена их не видела. Старые записи про cancelActiveActivitiesForToken
+        // удалены (вызова на диске больше нет — иначе stale-проверка теста валит).
         WHITELIST.put("ErrorEscalationThrower.java#throwError[} else {]|dbService.cancelActivity(scope.getId())", R08);
+        WHITELIST.put("ErrorEscalationThrower.java#cancelScopeActivities[processInstanceId, dbService.getActiveActivities(processInstanceId), scope.getId())) {]|dbService.cancelActivity(inScope.getId())", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[for (UUID instanceId : instanceIds) {]|dbService.cancelActivity(instanceId)", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {]|dbService.cancelActivity(innerId)", R08);
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[if (isMiSubProcessScope(scope, bpmn)) {]|dbService.cancelActivity(scope.getId())", R08);
-        WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[} else {]|dbService.cancelActiveActivitiesForToken(tok.getId())", R08);
+        // WO-AUDIT-11 (F-09): тот же scope-цикл, что и в throwError (см. выше) —
+        // token-wide запись удалена, вызова на диске больше нет.
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[} else {]|dbService.cancelActivity(scope.getId())", R08);
         // ── WO-C8-41 (F4): ранняя добивка сиблингов при completionCondition ──
         // (ключи — дословно из вывода сканера, см. его сообщение при падении).

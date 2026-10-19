@@ -1338,6 +1338,55 @@ public class ElementSupport {
     }
 
     /**
+     * WO-AUDIT-11 (F-09): ЭФФЕКТИВНЫЙ scope токена — его собственный
+     * {@code scopeActivityId}, а при null — ближайший scope ВВЕРХ по цепочке токенов.
+     *
+     * <p>Форк-токен ({@code ParallelGatewayHandler}, неявный форк в
+     * {@code FlowNavigator.proceedToOutgoing}, {@code InclusiveGatewayHandler}) создаётся с
+     * {@code scopeActivityId = null}: ветка форка «вне скоупа» по своему токену, хотя
+     * ФАКТИЧЕСКИ живёт внутри объемлющего подпроцесса. Поэтому собственного scope токена
+     * недостаточно — нужен ближайший scope предка. Тот же обход цепочки, что у
+     * {@link #enclosingScopeChain}, но по токенам.
+     *
+     * @return id activity-контейнера скоупа либо null (корневой скоуп / токен не найден)
+     */
+    public UUID effectiveScopeId(UUID tokenId) {
+        UUID current = tokenId;
+        while (current != null) {
+            Token token = dbService.findToken(current).orElse(null);
+            if (token == null) {
+                return null;
+            }
+            if (token.getScopeActivityId() != null) {
+                return token.getScopeActivityId();
+            }
+            current = token.getParentId();
+        }
+        return null;
+    }
+
+    /**
+     * WO-AUDIT-11 (F-09): жив ли скоуп, в котором идёт разветвление.
+     *
+     * <p>CANCELLED-контейнер = скоуп ТЕРМИНИРОВАН (error/escalation-граница объемлющего
+     * подпроцесса, terminate, отмена оператора) — активировать в нём больше нечего:
+     * оставшиеся ветви форка не должны стартовать. Zeebe 8.5 (оракул
+     * {@code docs/analysis/c8-oracle/scenarios/a11-fork-scope-boundary}): прерывающая
+     * граница гасит скоуп целиком, job сестринской ветви не активируется.
+     *
+     * <p>Контейнер в статусе COMPLETED — это «скоуп вышел штатно», а не «погашен»: он не
+     * является признаком смерти скоупа (и в такой ветке гасить нечего).
+     */
+    public boolean isScopeAlive(UUID processInstanceId, UUID tokenId) {
+        UUID scopeId = effectiveScopeId(tokenId);
+        if (scopeId == null) {
+            return true; // корневой скоуп: гасить нечего
+        }
+        Activity scope = dbService.getActivity(scopeId);
+        return scope == null || scope.getStatus() != ActivityStatus.CANCELLED;
+    }
+
+    /**
      * Evaluates one io-mapping {@code source} (FEEL, optional leading '=') against the given
      * variables and converts the result into a {@link ProcessVariable} named {@code target}.
      * Returns {@code null} for a malformed mapping (missing source/target) — callers skip it.

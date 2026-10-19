@@ -73,6 +73,13 @@ public class FlowNavigator {
             UUID newTokenId = newToken.getId();
             dbService.setPendingBranches(newTokenId, element.getOutgoing().size());
             for (String outgoing : element.getOutgoing()) {
+                // WO-AUDIT-11 (F-09): тот же stop-условие, что и в ParallelGatewayHandler —
+                // погашенный скоуп не активирует оставшиеся ветви неявного форка.
+                if (!elementSupport.isScopeAlive(processInstanceId, tokenId)) {
+                    log.info("{}/{}: scope погашен во время неявного разветвления {} — оставшиеся ветви не активируются",
+                        processInstanceId, tokenId, element.getId());
+                    break;
+                }
                 processFlow(processInstanceId, newTokenId, outgoing, false, null);
                 BpmnFlowModel flow = bpmn.getFlow(outgoing);
                 if (flow == null) {

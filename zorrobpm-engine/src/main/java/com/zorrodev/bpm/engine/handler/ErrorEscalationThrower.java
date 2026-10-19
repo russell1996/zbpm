@@ -116,46 +116,65 @@ public class ErrorEscalationThrower {
         }
 
         // walk enclosing embedded-subprocess scopes, innermost first
+        //
+        // WO-AUDIT-11 (F-09): обход идёт по ВСЕЙ цепочке токенов и НЕ обрывается на
+        // первом токене без scope. Форк-токен (ParallelGatewayHandler.createToken(tokenId),
+        // как и неявный форк в FlowNavigator.proceedToOutgoing) создаётся с
+        // scopeActivityId = null — «вне скоупа» — хотя ветка ФАКТИЧЕСКИ живёт внутри
+        // объемлющего SUB_PROCESS. Прежний цикл `while (tok != null && tok.getScopeActivityId() != null)`
+        // на таком токене обрывался, и error boundary объемлющего подпроцесса терялся:
+        // ошибка из ветки параллельного форка уходила дальше (top-level ESP / call activity /
+        // инцидент) вместо того, чтобы быть пойманной границей. Живой Zeebe 8.5 (оракул,
+        // docs/analysis/c8-oracle/scenarios/a11-fork-scope-boundary): граница объемлющего
+        // подпроцесса ловит ошибку из ветки форка, инцидентов 0, сестринская ветка отменена.
         Token tok = dbService.getToken(tokenId);
-        while (tok != null && tok.getScopeActivityId() != null) {
-            Activity scope = dbService.getActivity(tok.getScopeActivityId());
-            BpmnElementModel boundary = findErrorBoundary(bpmn, scope.getBpmnElementId(), errorCode);
-            if (boundary != null) {
-                // WO-C8-40: MI-подпроцесс — scope с N строками инстансов на одном
-                // токене: гасим ВСЕ инстансы и их внутренности ПРЯМЫМИ вызовами
-                // в ветке (helper — только чистое вычисление id; см.
-                // miSubProcessInstanceIds/miSubProcessInnerIds). Обычный scope —
-                // исторический путь без изменений.
-                if (isMiSubProcessScope(scope, bpmn)) {
-                    java.util.Set<UUID> instanceIds = miSubProcessInstanceIds(processInstanceId, scope);
-                    for (UUID instanceId : instanceIds) {
-                        dbService.cancelActivity(instanceId);
+        while (tok != null) {
+            UUID scopeActivityId = tok.getScopeActivityId();
+            if (scopeActivityId != null) {
+                Activity scope = dbService.getActivity(scopeActivityId);
+                BpmnElementModel boundary = findErrorBoundary(bpmn, scope.getBpmnElementId(), errorCode);
+                if (boundary != null) {
+                    // WO-C8-40: MI-подпроцесс — scope с N строками инстансов на одном
+                    // токене: гасим ВСЕ инстансы и их внутренности ПРЯМЫМИ вызовами
+                    // в ветке (helper — только чистое вычисление id; см.
+                    // miSubProcessInstanceIds/miSubProcessInnerIds). Обычный scope —
+                    // исторический путь без изменений.
+                    if (isMiSubProcessScope(scope, bpmn)) {
+                        java.util.Set<UUID> instanceIds = miSubProcessInstanceIds(processInstanceId, scope);
+                        for (UUID instanceId : instanceIds) {
+                            dbService.cancelActivity(instanceId);
+                        }
+                        for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {
+                            dbService.cancelActivity(innerId);
+                        }
+                        // WO-C8-41 (F5, oracle S7-2): как в boundary-отмене —
+                        // предсозданный outputCollection прерванного тела не живёт
+                        // дальше (entry token = токен строки scope-инстанса).
+                        elementSupport.deleteMiBodyState(processInstanceId, scope.getToken(),
+                            bpmn.getElement(scope.getBpmnElementId()));
+                        dbService.cancelActivity(scope.getId());
+                    } else {
+                        // WO-AUDIT-11 (F-09): гасим ВЕСЬ скоуп, а не только активити на
+                        // scope-токене. Отмена по токену не видит ветви форка (они живут
+                        // на дочерних токенах) — сестринская ветка осталась бы жить,
+                        // а инстанс висел бы с активной задачей. Тот же механизм, что у
+                        // terminate-в-подпроцессе (EndEventHandler) и у ESP: filterActivitiesInScope.
+                        cancelScopeActivities(processInstanceId, scope);
+                        dbService.cancelActivity(scope.getId());
                     }
-                    for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {
-                        dbService.cancelActivity(innerId);
-                    }
-                    // WO-C8-41 (F5, oracle S7-2): как в boundary-отмене —
-                    // предсозданный outputCollection прерванного тела не живёт
-                    // дальше (entry token = токен строки scope-инстанса).
-                    elementSupport.deleteMiBodyState(processInstanceId, scope.getToken(),
-                        bpmn.getElement(scope.getBpmnElementId()));
-                    dbService.cancelActivity(scope.getId());
-                } else {
-                    dbService.cancelActiveActivitiesForToken(tok.getId());
-                    dbService.cancelActivity(scope.getId());
+                    // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемого scope —
+                    // та же транзакция, без резюма (см. поле scopeContainment).
+                    dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
+                        scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, scope.getBpmnElementId()));
+                    log.info("{}: error '{}' caught by boundary {} on subprocess {}", processInstanceId, errorCode, boundary.getId(), scope.getBpmnElementId());
+                    flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor);
+                    // БЕЗ перепроверки припаркованных join'ов, и это НЕ пропуск, а решение (белый
+                    // список охранного теста DeactivationWakeupCoverageTest): погашен ВЕСЬ scope целиком,
+                    // то есть умерли и все его внутренние ветви. Воскрешать join этого scope значило бы
+                    // выполнить хвост ОТМЕНЁННОГО потока — ровно тот контрпример, на котором
+                    // reviewer раунда 4 поймал регресс (POF-2, EventSubProcessInclusiveJoinIntegrationTests).
+                    return true;
                 }
-                // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемого scope —
-                // та же транзакция, без резюма (см. поле scopeContainment).
-                dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
-                    scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, scope.getBpmnElementId()));
-                log.info("{}: error '{}' caught by boundary {} on subprocess {}", processInstanceId, errorCode, boundary.getId(), scope.getBpmnElementId());
-                flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor);
-                // БЕЗ перепроверки припаркованных join'ов, и это НЕ пропуск, а решение (белый
-                // список охранного теста DeactivationWakeupCoverageTest): погашен ВЕСЬ scope целиком,
-                // то есть умерли и все его внутренние ветви. Воскрешать join этого scope значило бы
-                // выполнить хвост ОТМЕНЁННОГО потока — ровно тот контрпример, на котором
-                // reviewer раунда 4 поймал регресс (POF-2, EventSubProcessInclusiveJoinIntegrationTests).
-                return true;
             }
             tok = tok.getParentId() != null ? dbService.getToken(tok.getParentId()) : null;
         }
@@ -203,6 +222,28 @@ public class ErrorEscalationThrower {
         }
 
         return false;
+    }
+
+    /**
+     * WO-AUDIT-11 (F-09): гасит ВСЕ живые активити скоупа — не только те, что лежат на
+     * scope-токене.
+     *
+     * <p>Почему не {@code cancelActiveActivitiesForToken(scopeTokenId)}: ветви
+     * parallel/inclusive-форка внутри скоупа живут на ДОЧЕРНИХ токенах (у форк-токена
+     * {@code scopeActivityId = null}), и отмена по scope-токену их не видит — сестринская
+     * ветка оставалась жить, инстанс висел с активной задачей. Тот же механизм «погасить
+     * скоуп целиком», что у terminate-в-подпроцессе ({@code EndEventHandler}) и у
+     * event-subprocess ({@code EventTrigger}): {@code ElementSupport.filterActivitiesInScope}
+     * (обход цепочки токенов, а не сравнение токенов).
+     *
+     * <p>Контейнер скоупа в результат НЕ входит (его собственный скоуп — родительский),
+     * его гасит вызывающий ({@code cancelActivity(scope.getId())}).
+     */
+    private void cancelScopeActivities(UUID processInstanceId, Activity scope) {
+        for (Activity inScope : elementSupport.filterActivitiesInScope(
+                processInstanceId, dbService.getActiveActivities(processInstanceId), scope.getId())) {
+            dbService.cancelActivity(inScope.getId());
+        }
     }
 
     /**
@@ -355,45 +396,53 @@ public class ErrorEscalationThrower {
         BpmnProcessDefinitionModel bpmn = bpmnService.getProcessDefinitionModelById(pi.getProcessDefinitionId());
 
         // walk enclosing embedded-subprocess scopes, innermost first
+        // WO-AUDIT-11 (F-09): тот же обход по ВСЕЙ цепочке токенов, что и в throwError —
+        // форк-токен (scope = null) не обрывает обход, иначе escalation-граница
+        // объемлющего подпроцесса терялась после параллельного форка.
         Token tok = dbService.getToken(tokenId);
-        while (tok != null && tok.getScopeActivityId() != null) {
-            Activity scope = dbService.getActivity(tok.getScopeActivityId());
-            BpmnElementModel boundary = findEscalationBoundary(bpmn, scope.getBpmnElementId(), escalationCode);
-            if (boundary != null) {
-                if (isInterrupting(boundary)) {
-                    // WO-C8-40: та же MI-отмена, что в error-пути выше (прямые
-                    // вызовы в ветке, helper — только вычисление id).
-                    if (isMiSubProcessScope(scope, bpmn)) {
-                        java.util.Set<UUID> instanceIds = miSubProcessInstanceIds(processInstanceId, scope);
-                        for (UUID instanceId : instanceIds) {
-                            dbService.cancelActivity(instanceId);
+        while (tok != null) {
+            UUID scopeActivityId = tok.getScopeActivityId();
+            if (scopeActivityId != null) {
+                Activity scope = dbService.getActivity(scopeActivityId);
+                BpmnElementModel boundary = findEscalationBoundary(bpmn, scope.getBpmnElementId(), escalationCode);
+                if (boundary != null) {
+                    if (isInterrupting(boundary)) {
+                        // WO-C8-40: та же MI-отмена, что в error-пути выше (прямые
+                        // вызовы в ветке, helper — только вычисление id).
+                        if (isMiSubProcessScope(scope, bpmn)) {
+                            java.util.Set<UUID> instanceIds = miSubProcessInstanceIds(processInstanceId, scope);
+                            for (UUID instanceId : instanceIds) {
+                                dbService.cancelActivity(instanceId);
+                            }
+                            for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {
+                                dbService.cancelActivity(innerId);
+                            }
+                            // WO-C8-41 (F5, oracle S7-2): как в error-пути выше.
+                            elementSupport.deleteMiBodyState(processInstanceId, scope.getToken(),
+                                bpmn.getElement(scope.getBpmnElementId()));
+                            dbService.cancelActivity(scope.getId());
+                        } else {
+                            // WO-AUDIT-11 (F-09): гасим весь скоуп (включая ветви форка) —
+                            // тот же механизм, что в error-пути.
+                            cancelScopeActivities(processInstanceId, scope);
+                            dbService.cancelActivity(scope.getId());
                         }
-                        for (UUID innerId : miSubProcessInnerIds(processInstanceId, instanceIds)) {
-                            dbService.cancelActivity(innerId);
-                        }
-                        // WO-C8-41 (F5, oracle S7-2): как в error-пути выше.
-                        elementSupport.deleteMiBodyState(processInstanceId, scope.getToken(),
-                            bpmn.getElement(scope.getBpmnElementId()));
-                        dbService.cancelActivity(scope.getId());
-                    } else {
-                        dbService.cancelActiveActivitiesForToken(tok.getId());
-                        dbService.cancelActivity(scope.getId());
+                        // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемого scope —
+                        // та же транзакция, без резюма (см. поле scopeContainment).
+                        dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
+                            scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, scope.getBpmnElementId()));
+                        log.info("{}: escalation '{}' caught (interrupting) by boundary {} on subprocess {}", processInstanceId, escalationCode, boundary.getId(), scope.getBpmnElementId());
+                        flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor);
+                        // Белый список охранного теста: погашен весь scope вместе с его внутренними
+                        // ветвями — воскрешать его join значит выполнить хвост отменённого потока
+                        // (контрпример раунда 4).
+                        return true;
                     }
-                    // WO-C8-38 (C38-2): чистка arrived-строк join'ов ВНУТРИ отменяемого scope —
-                    // та же транзакция, без резюма (см. поле scopeContainment).
-                    dbService.clearParallelGatewayArrivalsInJoins(processInstanceId,
-                        scopeContainment.inclusiveGatewayIdsInsideScope(bpmn, scope.getBpmnElementId()));
-                    log.info("{}: escalation '{}' caught (interrupting) by boundary {} on subprocess {}", processInstanceId, escalationCode, boundary.getId(), scope.getBpmnElementId());
-                    flowNavigator.proceedToOutgoing(processInstanceId, tok.getParentId(), bpmn, boundary, executor);
-                    // Белый список охранного теста: погашен весь scope вместе с его внутренними
-                    // ветвями — воскрешать его join значит выполнить хвост отменённого потока
-                    // (контрпример раунда 4).
-                    return true;
+                    Token branch = dbService.createToken(tok.getParentId());
+                    log.info("{}: escalation '{}' caught (non-interrupting) by boundary {} on subprocess {} (branch token {})", processInstanceId, escalationCode, boundary.getId(), scope.getBpmnElementId(), branch.getId());
+                    flowNavigator.proceedToOutgoing(processInstanceId, branch.getId(), bpmn, boundary, executor);
+                    return false;
                 }
-                Token branch = dbService.createToken(tok.getParentId());
-                log.info("{}: escalation '{}' caught (non-interrupting) by boundary {} on subprocess {} (branch token {})", processInstanceId, escalationCode, boundary.getId(), scope.getBpmnElementId(), branch.getId());
-                flowNavigator.proceedToOutgoing(processInstanceId, branch.getId(), bpmn, boundary, executor);
-                return false;
             }
             tok = tok.getParentId() != null ? dbService.getToken(tok.getParentId()) : null;
         }

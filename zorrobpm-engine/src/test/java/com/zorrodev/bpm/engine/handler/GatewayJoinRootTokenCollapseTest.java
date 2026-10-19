@@ -96,7 +96,7 @@ class GatewayJoinRootTokenCollapseTest {
         when(dbService.getToken(rootId)).thenReturn(rootToken(rootId));
         when(dbService.createActivity(eq(pi), any(UUID.class), any(BpmnElementModel.class))).thenReturn(UUID.randomUUID());
 
-        new ParallelGatewayHandler(dbService, flowNavigator)
+        new ParallelGatewayHandler(dbService, flowNavigator, realElementSupport())
             .handle(new ExecutionCtx(pi, rootId, executor, executionContext), bpmn, join);
 
         ArgumentCaptor<UUID> tokenCaptor = ArgumentCaptor.forClass(UUID.class);
