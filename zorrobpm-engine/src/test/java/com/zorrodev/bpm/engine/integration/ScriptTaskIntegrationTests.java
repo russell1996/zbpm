@@ -52,6 +52,23 @@ public class ScriptTaskIntegrationTests {
     @Autowired
     private IncidentRepository incidentRepository;
 
+    // WO-C8-56: the invalid-script fixture is deliberately unparseable FEEL — after the
+    // deploy-time FEEL gate such a model can no longer go through addProcessDefinition, so the
+    // invalid-script test writes the definition as a PRE-GATE (legacy) deployment: same rows,
+    // real parser + repositories, gate bypassed by construction. The test subject is the
+    // RUNTIME incident path on such a definition.
+    @Autowired
+    private com.zorrodev.bpm.engine.service.BpmnParseService bpmnParseService;
+
+    @Autowired
+    private com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository processDefinitionRepository;
+
+    @Autowired
+    private com.zorrodev.bpm.engine.repository.ProcessRepository processRepository;
+
+    @Autowired
+    private com.zorrodev.bpm.engine.service.FileService fileService;
+
     private ProcessVariable var(String name, ProcessVariableType type, String value) {
         ProcessVariable v = new ProcessVariable();
         v.setName(name);
@@ -133,11 +150,16 @@ public class ScriptTaskIntegrationTests {
     void invalidScriptRaisesIncidentInsteadOfStallingSilently() throws Exception {
         // a syntactically invalid FEEL script must not crash the engine: the activity is left
         // un-completed and an incident is recorded on the script task.
+        // WO-C8-56: the script 'a +' is deliberately unparseable FEEL — the deploy-time gate
+        // now refuses such a model, so the definition is written as a PRE-GATE (legacy)
+        // deployment: same rows a pre-gate deploy wrote, real parser + repositories, gate
+        // bypassed by construction. The subject is the RUNTIME incident path.
         String bpmn = Files.readString(Paths.get("src/test/files/test-script-task-invalid.bpmn"));
-        ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
+        UUID modelId = LegacyDefinitionDeployer.deployLegacy(
+            bpmn, bpmnParseService, processDefinitionRepository, processRepository, fileService);
 
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
-        dto.setProcessDefinitionId(model.getId());
+        dto.setProcessDefinitionId(modelId);
         IdDTO startResult = runtimeService.startProcessInstance(dto);
         UUID processInstanceId = startResult.getId();
 

@@ -76,6 +76,12 @@ class ProcessDefinitionServiceImplTest {
     @Mock
     private AdvisoryDeployLock advisoryDeployLock;
 
+    // WO-C8-56: the deploy-time FEEL gate. Untouched by the cases in this class — the mock's
+    // default empty-list answer leaves every legacy model deployable here; the gate's own
+    // behaviour is pinned by FeelDeployValidationIntegrationTests + FeelSyntaxValidatorTest.
+    @Mock
+    private com.zorrodev.bpm.engine.bpmn.xml.FeelSyntaxValidator feelSyntaxValidator;
+
     private final BpmnParseServiceImpl bpmnParseService = new BpmnParseServiceImpl();
 
     private ProcessDefinitionServiceImpl service;
@@ -100,6 +106,7 @@ class ProcessDefinitionServiceImplTest {
             artifactRegistrar,
             postCommitActions,
             advisoryDeployLock,
+            feelSyntaxValidator,
             // WO-QW-14: the REAL page-clamp helper this service now delegates to.
             new com.zorrodev.bpm.engine.service.query.QueryPaginationSupport()
         );

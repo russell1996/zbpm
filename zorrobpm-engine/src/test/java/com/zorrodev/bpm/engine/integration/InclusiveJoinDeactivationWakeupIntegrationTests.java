@@ -66,6 +66,21 @@ public class InclusiveJoinDeactivationWakeupIntegrationTests {
     @Autowired
     private ActivityService activityService;
 
+    // WO-C8-56: the errbnd-stranded-join fixture carries deliberately unparseable FEEL — after
+    // the deploy-time FEEL gate it can no longer go through addProcessDefinition, so this class
+    // needs the pre-gate row set (real repositories, no gate) for that one fixture.
+    @Autowired
+    private com.zorrodev.bpm.engine.service.BpmnParseService bpmnParseService;
+
+    @Autowired
+    private com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository processDefinitionRepository;
+
+    @Autowired
+    private com.zorrodev.bpm.engine.repository.ProcessRepository processRepository;
+
+    @Autowired
+    private com.zorrodev.bpm.engine.service.FileService fileService;
+
     private String bpmn(String file) throws Exception {
         return Files.readString(Paths.get("src/test/files/" + file));
     }
@@ -115,8 +130,13 @@ public class InclusiveJoinDeactivationWakeupIntegrationTests {
     @Transactional
     @Test
     void interruptingErrorBoundaryOnTheLastDeliverer_wakesTheParkedJoin() throws Exception {
-        UUID pdId = processDefinitionService.addProcessDefinition(
-            bpmn("test-c835-errbnd-stranded-join.bpmn")).getId();
+        // WO-C8-56: this fixture's condition (=svcOk == "yes") is deliberately unparseable FEEL
+        // — the deploy-time gate now refuses such models, so the definition is written as a
+        // PRE-GATE (legacy) deployment: same rows, real parser + repositories, gate bypassed by
+        // construction. The test subject is the RUNTIME behaviour on such a definition.
+        UUID pdId = LegacyDefinitionDeployer.deployLegacy(
+            bpmn("test-c835-errbnd-stranded-join.bpmn"),
+            bpmnParseService, processDefinitionRepository, processRepository, fileService);
         StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
         dto.setProcessDefinitionId(pdId);
         dto.setVariables(List.of(var("svcOk", "yes")));

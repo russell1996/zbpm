@@ -4,6 +4,8 @@ import com.zorrodev.bpm.contract.dto.PagedDataDTO;
 import com.zorrodev.bpm.contract.dto.ProcessDefinitionsQueryParameters;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.InvalidFeelExpression;
+import com.zorrodev.bpm.engine.bpmn.xml.FeelSyntaxValidator;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
 import com.zorrodev.bpm.engine.entity.ProcessEntity;
 import com.zorrodev.bpm.engine.repository.ProcessDefinitionRepository;
@@ -48,6 +50,13 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
     private final DeploymentArtifactRegistrar artifactRegistrar;
     private final DeploymentPostCommitActions postCommitActions;
     private final AdvisoryDeployLock advisoryDeployLock;
+    /**
+     * WO-C8-56: deploy-time FEEL syntax validation — the same question Zeebe 8.5.0 asks at
+     * deploy ("does the FEEL parser accept this expression?"), asked of the parsed model with
+     * the engine's own parser (feel-engine). Findings refuse the deployment; they never touch
+     * already-deployed definitions.
+     */
+    private final FeelSyntaxValidator feelSyntaxValidator;
     /**
      * WO-QW-14: single owner of the server-side page clamp. This class used to inline
      * {@code PageRequest.of(Math.max(0, index), Math.min(200, …), sort)}, which clamped the SIZE
@@ -150,6 +159,38 @@ public class ProcessDefinitionServiceImpl implements ProcessDefinitionService {
                 finding.code(),
                 finding.description(),
                 java.util.Map.of("elementIds", finding.elementIds()));
+        }
+
+        // WO-C8-56: FEEL the engine's own parser rejects — single-quoted atoms, unknown
+        // operators, truncated expressions — used to deploy fine and die at the first runtime
+        // evaluation (an incident, or worse: a silently mis-evaluated condition). Zeebe 8.5.0
+        // refuses such a model at deploy; the engine now asks the same question at the same
+        // moment, with the same parser it runs at runtime. As with the refusals above: BEFORE
+        // the transaction, so a refused model leaves no version row, no stored file, no
+        // subscription/job. Deliberately deploy-time ONLY: a definition deployed before this
+        // gate keeps running exactly as it does today — rejection never re-parses stored
+        // models. Same answer shape as the refusals above (400 + stable code + element ids).
+        List<InvalidFeelExpression> invalidFeel = feelSyntaxValidator.validate(model);
+        if (!invalidFeel.isEmpty()) {
+            if (invalidFeel.size() > 1) {
+                log.warn("WO-C8-56: deployment of '{}' rejected for {} invalid FEEL expression(s): {}",
+                    key, invalidFeel.size(),
+                    invalidFeel.stream()
+                        .map(f -> f.elementId() + "/" + f.field() + " -> " + f.parseError())
+                        .toList());
+            }
+            throw new com.zorrodev.bpm.contract.exception.ApiException(
+                org.springframework.http.HttpStatus.BAD_REQUEST,
+                "INVALID_FEEL_EXPRESSION",
+                "Invalid FEEL expression: " + invalidFeel.stream()
+                    .map(f -> f.elementId() + "." + f.field() + " (" + f.expression() + "): "
+                        + f.parseError())
+                    .collect(java.util.stream.Collectors.joining("; ")),
+                java.util.Map.of("elementIds", invalidFeel.stream()
+                    .map(InvalidFeelExpression::elementId)
+                    .distinct()
+                    .sorted()
+                    .toList()));
         }
 
         // WO-REL-15 (R-05): ALL database artifacts of a deployment (version row, bpmn model/file,
