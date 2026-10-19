@@ -73,7 +73,16 @@ class RateLimitXffFullContextTest {
         // WO-API-4: admin/aux prefixes joined the data bucket — the registration
         // must name every prefix the guard matches (bare + /* children), or the
         // filter never executes for them.
-        assertThat(registration.getUrlPatterns()).containsExactlyInAnyOrder(
+        //
+        // WO-AUDIT-13 (F-06): the pattern set is no longer pinned EXACTLY here.
+        // It is now produced by the single route matrix (RateLimitRoutes), and
+        // the audit proved the hand-written list had drifted — so the contract
+        // is: (a) every pattern the pre-matrix list had is still there, and
+        // (b) the patterns of the routes F-06 found unlimited are there too.
+        // "Nothing beyond the matrix" is enforced where it belongs: the
+        // registration bean is built from RateLimitRoutes.registrationPatterns()
+        // and nothing else (RateLimitFilterConfig).
+        assertThat(registration.getUrlPatterns()).contains(
             "/auth/login", "/auth/refresh", "/auth/register", "/auth/forgot-password", "/me/password",
             "/events/*", "/variables/*",
             "/process-instances/*", "/user-tasks/*",
@@ -87,7 +96,15 @@ class RateLimitXffFullContextTest {
             "/me/memberships", "/me/memberships/*", "/me/*",
             "/variable-schemas/*",
             "/processes/*",
-            "/admin/*");
+            "/admin/*",
+            // WO-AUDIT-13 (F-06): the routes the audit found outside every bucket.
+            "/auth/reset-password", "/auth/accept-invitation", "/auth/verify-email",
+            "/auth/logout",
+            "/process-submissions", "/process-submissions/*",
+            "/presets", "/presets/*",
+            "/messages", "/messages/*",
+            "/timer-jobs", "/timer-jobs/*",
+            "/message-subscriptions", "/message-subscriptions/*");
     }
 
     private HttpRequest buildLoginRequest(String xffValue) throws Exception {
