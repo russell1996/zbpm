@@ -582,6 +582,11 @@ public class MultiInstanceExecutor {
      */
     private int collectionSize(BpmnElementModel element, MultiInstanceExtensionModel mi,
             List<ProcessVariable> variables, Object collection) {
+        // Обычный случай (java-список после evaluateExpression) не требует
+        // конверсии; к toJavaStructure идём только для scala/Jackson-типов.
+        if (collection instanceof List<?> list) {
+            return list.size();
+        }
         Object javaValue = elementSupport.toJavaStructure(collection);
         if (javaValue instanceof List<?> list) {
             return list.size();
