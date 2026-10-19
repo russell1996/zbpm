@@ -4,13 +4,16 @@
   "bpmn": "process.bpmn",
   "processId": "a11ForkScope",
   "vars": {},
-  "observeJobTypes": ["a11AfterBoundary", "a11Sibling"],
+  "observeJobTypes": [
+    "a11AfterBoundary",
+    "a11Sibling"
+  ],
   "expectIncident": false,
   "waitMs": 4000,
   "expected": {},
   "matrix": {
     "docs89": "8.9 docs: a BPMN error thrown inside a scope propagates to the enclosing scope; an error boundary event on the enclosing embedded sub-process catches it, the sub-process scope is cancelled and the boundary's outgoing flow is taken",
-    "ours": ""
+    "ours": "граница объемлющего subprocess ЛОВИТ ошибку из ветки форка: инцидентов 0, контейнер подпроцесса CANCELLED, сестринская ветка не активируется, поток границы продолжен (job после границы создан)"
   },
   "_help": {
     "observeJobTypes": "Job types polled after the start. a11AfterBoundary is created ONLY if the error boundary on the enclosing subprocess caught the error; a11Sibling is created by the surviving parallel branch (it must be cancelled by the interrupting boundary).",

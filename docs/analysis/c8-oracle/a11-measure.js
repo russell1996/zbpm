@@ -111,8 +111,10 @@ async function main() {
     incidentDelta > 0 ? `incident raised (+${incidentDelta}, pending ${pendingDelta >= 0 ? '+' : ''}${pendingDelta})` : 'no incident',
     ...Object.entries(observedJobs).map(([t, j]) => `${t}=${j.length ? j.map((x) => x.elementId).join(',') : 'none'}`),
   ].join(', ');
-  const line = `## ${scenarioId} — ${sc.title}\n\n\`${sc.matrix.docs89} | ${liveCol} | (pending) | measured-8.5 (ours pending)\``;
-  console.log(`MATRIX:   ${sc.matrix.docs89} | ${liveCol} | (pending) | measured-8.5 (ours pending)`);
+  const ours = sc.matrix.ours || '(pending)';
+  const verdict = sc.matrix.ours ? 'measured-8.5 (ours = match)' : 'measured-8.5 (ours pending)';
+  const line = `## ${scenarioId} — ${sc.title}\n\n\`${sc.matrix.docs89} | ${liveCol} | ${ours} | ${verdict}\``;
+  console.log(`MATRIX:   ${sc.matrix.docs89} | ${liveCol} | ${ours} | ${verdict}`);
   if (withMatrix) {
     fs.appendFileSync(path.join(__dirname, 'MATRIX.md'), `\n${line}\n`);
     console.log('MATRIX.md updated');
