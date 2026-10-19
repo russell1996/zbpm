@@ -5,7 +5,6 @@ import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.dto.IdDTO;
-import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DBService;
@@ -32,7 +31,6 @@ public class RuntimeServiceImpl implements RuntimeService {
     private final DBService dbService;
     private final ActivityService activityService;
     private final BpmnService bpmnService;
-    private final BpmMetrics bpmMetrics;
 
     @Override
     public IdDTO startProcessInstance(StartProcessInstanceDTO dto) {
@@ -70,8 +68,12 @@ public class RuntimeServiceImpl implements RuntimeService {
 
         UUID processInstanceId = activityService.startProcessInstance(
             parentProcessInstanceId, processDefinitionId, variables, claimedInitiator);
-        bpmMetrics.processStarted();
-        bpmMetrics.incrementActiveInstances();
+        // WO-AUDIT-12 (F-02): счётчики lifecycle переехали в
+        // ProcessInstanceDbOperationsImpl.createProcessInstance — там, где
+        // инстанс РЕАЛЬНО создаётся. Здесь они считались только для
+        // «старта через runtime-сервис», а декремент в complete/cancel — для
+        // ЛЮБОГО инстанса: gauge активных инстансов уходил в минус на каждом
+        // дочернем инстансе call activity и на каждом message/timer-старте.
 
         IdDTO result = new IdDTO();
         result.setId(processInstanceId);

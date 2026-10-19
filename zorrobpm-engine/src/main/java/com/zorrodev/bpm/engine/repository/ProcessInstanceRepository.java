@@ -85,6 +85,19 @@ public interface ProcessInstanceRepository extends JpaRepository<ProcessInstance
     List<ProcessInstanceEntity> findByParentActivityId(UUID parentActivityId);
 
     /**
+     * WO-AUDIT-12 (F-02): дочерние инстансы (call activity) ДАННОГО инстанса —
+     * все, кто ещё не терминален. Родитель известен по строке активности
+     * ({@code process_instances.parent_activity_id → activities.id}), поэтому
+     * «дети инстанса» = инстансы, чья parent-строка принадлежит этому
+     * инстансу. Один запрос вместо «перебрать активности инстанса и для
+     * каждой спросить findByParentActivityId» (N+1 на пути отмены).
+     */
+    @Query("SELECT pi FROM ProcessInstanceEntity pi WHERE pi.parentActivityId IN "
+        + "(SELECT a.id FROM ActivityEntity a WHERE a.processInstanceId = :processInstanceId) "
+        + "AND pi.completedAt IS NULL")
+    List<ProcessInstanceEntity> findRunningChildrenByParentInstanceId(UUID processInstanceId);
+
+    /**
      * WO-REL-31 CR-4: definition key in one join query instead of instance→definition
      * two-step resolution. Empty when the instance or its definition is missing —
      * same branches the two-step path used to skip.

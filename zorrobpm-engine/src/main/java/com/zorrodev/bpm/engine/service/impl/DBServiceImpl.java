@@ -23,6 +23,7 @@ import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.TokenDbOperations;
 import com.zorrodev.bpm.engine.service.db.UserTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
+import com.zorrodev.bpm.engine.service.InstanceCancellationService;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
 import org.springframework.stereotype.Service;
@@ -50,6 +51,8 @@ public class DBServiceImpl implements DBService {
     private final ActivityDbOperations activityDbOperations;
     private final VariableDbOperations variableDbOperations;
     private final TokenDbOperations tokenDbOperations;
+    /** WO-AUDIT-12 (F-02): каскадная отмена дочерних инстансов call activity. */
+    private final InstanceCancellationService instanceCancellationService;
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
@@ -544,6 +547,11 @@ public class DBServiceImpl implements DBService {
         // canceling-фазы: оба идут через этот метод).
         finalizeFinishedInstance(processInstanceId);
         processInstanceDbOperations.cancelProcessInstance(processInstanceId);
+        // WO-AUDIT-12 (F-02): каскад на дочерние инстансы call activity.
+        // Родитель стал терминальным ВЫШЕ — guard в FlowNavigator (продолжение
+        // ребёнка в терминальный родитель запрещено) срабатывает на любом
+        // дочернем завершении, даже если ребёнка уже убил каскад.
+        instanceCancellationService.cancelDescendants(processInstanceId);
     }
 
     @Override

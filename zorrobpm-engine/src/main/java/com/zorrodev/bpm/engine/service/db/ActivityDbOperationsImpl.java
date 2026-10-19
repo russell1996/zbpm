@@ -69,7 +69,21 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
     @Override
     public void completeActivity(UUID activityId) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
-        activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.COMPLETED, Instant.now());
+        // WO-AUDIT-12 (F-02): переход в COMPLETED — УСЛОВНЫЙ, только из
+        // активного состояния (CREATED/IN_PROGRESS), тем же приёмом, что
+        // errorActivity. Безусловный UPDATE переписывал терминальную строку:
+        // завершение дочернего call-activity переворачивало CANCELLED-строку
+        // родительской активности в COMPLETED (история отменённого инстанса
+        // искажалась). Отказ — молчаливый прыжок назад по истории недопустим:
+        // пишем в лог и НЕ эмитим activityCompleted.
+        int updated = activityRepository.setStatusAndCompletedAtIfStatusIn(
+            activityId, ActivityStatus.COMPLETED, Instant.now(),
+            List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS));
+        if (updated == 0) {
+            log.warn("completeActivity({}): row is not active (status={}) — refusing to flip it to COMPLETED",
+                activityId, activity.getStatus());
+            return;
+        }
         // WO-C8-37 (C37-3): the host's wait is over — its unconsumed message
         // subscriptions can never be claimed by the dead host again. Consume them
         // here (single UPDATE, consumed=true — history preserved) so a later
