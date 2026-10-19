@@ -143,10 +143,16 @@ Measured on live Zeebe 8.5.0 (see report `docs/internal`):
 - **Completion variables** (from `CompleteJob`) are written to the containing scope (root) and
   **are** visible to subsequent root elements — this is the reliable way to land a FEEL-computed
   result where a dump job can capture it.
-- **Input-mapping / output-mapping target variables on a ROOT-level task do NOT surface** in the
-  activated job's raw `variables` and do **not** reach the root scope visible to a later root task.
-  (Inside an MI sub-process the input-mapped var *does* appear in the job's raw variables — S3.)
+- **Input-mapping targets are local to the element scope**: they DO appear in the activated job's
+  raw `variables`, and they do NOT overwrite a same-named variable in the parent/root scope. A
+  later root task sees the start/root value, not the input-mapped shadow.
+- **Output-mapping targets are written to the element's parent scope** (for a root-level task,
+  the root scope), so they DO reach a subsequent root task. Output mappings are evaluated in the
+  element scope, including input-mapped locals; sibling outputs are visible to later output
+  mappings in the same element. Completion variables are also merged into the containing scope.
 
-Consequence for F1: to capture a FEEL input/output-mapping result at root, route it through a
-completion variable or do the mapping inside a sub-process scope. This is exactly the kind of
-ioMapping differential the campaign is meant to pin down.
+F1 corrected the original F0 wording: the F0 claim mixed input-mapping locality with
+output-mapping propagation. The measured F1 cases `input-rewrite`, `output-local`,
+`output-completion`, `output-other-output`, `sp-container-input`, `sp-container-output` and
+`sp-output-scope` pin the two directions separately. See
+`docs/analysis/feel-iomapping-conformance-matrix.md`.

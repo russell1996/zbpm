@@ -1,0 +1,76 @@
+package com.zorrodev.bpm.engine.integration;
+
+import org.junit.jupiter.api.Test;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
+
+import java.io.InputStream;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * WO-OPS-30 F1 — guard for the evidence base itself.
+ *
+ * <p>The conformance matrix is only meaningful if every measured case is present in
+ * {@code feel-iomapping-cases.json} and is structurally usable by the harness. This
+ * test does NOT assert engine behavior (F1 is measurement-only); it protects the
+ * 72-case corpus from silently losing or duplicating a case, which would make the
+ * matrix claim broader coverage than was actually measured.</p>
+ */
+class FeelIoMappingCaseSetTest {
+
+    private static final int EXPECTED_CASES = 72;
+    private static final Set<String> WRAPPERS = Set.of("subprocess", "mi");
+    private static final List<String> OPERATION_FIELDS = List.of(
+        "input", "output", "completionVars", "containerInput", "containerOutput", "outputElement"
+    );
+
+    @Test
+    void caseSetIsCompleteAndWellFormed() throws Exception {
+        Map<String, Object> root;
+        try (InputStream in = getClass().getClassLoader().getResourceAsStream("feel-iomapping-cases.json")) {
+            assertThat(in).as("feel-iomapping-cases.json on test classpath").isNotNull();
+            root = new ObjectMapper().readValue(in, new TypeReference<Map<String, Object>>() { });
+        }
+
+        assertThat(root.get("campaign"))
+            .isEqualTo("WO-OPS-30 F1 — FEEL and ioMapping differential measurements");
+        assertThat(root.get("oracle"))
+            .isEqualTo("Zeebe 8.5.0 (docs: Camunda 8.9)");
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> cases = (List<Map<String, Object>>) root.get("cases");
+
+        assertThat(cases).hasSize(EXPECTED_CASES);
+        assertThat(cases)
+            .extracting(c -> c.get("id"))
+            .doesNotHaveDuplicates()
+            .allSatisfy(id -> assertThat(id).isInstanceOf(String.class));
+
+        assertThat(cases).allSatisfy(c -> {
+            String id = (String) c.get("id");
+            assertThat(id).as("case id").isNotBlank();
+            assertThat(c.get("title")).as("title of %s", id).isInstanceOf(String.class);
+            assertThat((String) c.get("title")).as("title of %s", id).isNotBlank();
+            assertThat(c.get("docs")).as("docs of %s", id).isInstanceOf(String.class);
+            assertThat((String) c.get("docs")).as("docs of %s", id).isNotBlank();
+            if (c.containsKey("wrap")) {
+                assertThat(WRAPPERS).as("wrap of %s", id).contains((String) c.get("wrap"));
+            }
+            assertThat(OPERATION_FIELDS.stream().anyMatch(c::containsKey))
+                .as("operation field of %s", id)
+                .isTrue();
+        });
+
+        assertThat(cases)
+            .filteredOn(c -> "mi".equals(c.get("wrap")))
+            .allSatisfy(c -> assertThat(c).containsKey("outputCollection"));
+
+        assertThat(cases)
+            .extracting(c -> c.get("id"))
+            .contains("path-quoted-backtick", "path-quoted-getvalue");
+    }
+}
