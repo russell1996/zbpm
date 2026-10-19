@@ -197,4 +197,46 @@ public class Audit11ErrorEndAndForkScopeIntegrationTests {
             .as("после границы инстанс доходит до конца")
             .isNotNull();
     }
+
+    /**
+     * F-09, вторая топология: ошибка во ВТОРОЙ ветви форка, в ПЕРВОЙ — живая задача.
+     * Граница объемлющего подпроцесса обязана погасить ВЕСЬ скоуп, включая задачу
+     * сестринской ветви: она живёт на дочернем токене форка, и отмена «по scope-токену»
+     * её не видит (тогда задача осталась бы жить — инстанс висел бы с активной задачей).
+     */
+    @Test
+    void errorInSecondForkBranch_cancelsTheLiveTaskOfTheSiblingBranch() throws Exception {
+        UUID pi = start("test-audit11-fork-scope-sibling-cancel.bpmn");
+
+        assertThat(openIncidents(pi))
+            .as("F-09: граница объемлющего подпроцесса обязана поймать ошибку из ветки форка")
+            .isEmpty();
+
+        // the sibling branch's task was live when the error fired — the scope-wide
+        // cancellation must take it down (Zeebe 8.5: the sibling job of the cancelled
+        // scope is not activatable)
+        List<ActivityEntity> sibling = activities(pi, "siblingTask");
+        assertThat(sibling).hasSize(1);
+        assertThat(sibling.get(0).getStatus())
+            .as("прерывающая граница гасит задачу сестринской ветви (она на дочернем токене форка)")
+            .isEqualTo(ActivityStatus.CANCELLED);
+
+        // the scope container is cancelled and the boundary path was taken
+        List<ActivityEntity> sub = activities(pi, "sub1");
+        assertThat(sub).hasSize(1);
+        assertThat(sub.get(0).getStatus()).isEqualTo(ActivityStatus.CANCELLED);
+
+        List<ActivityEntity> afterBoundary = activities(pi, "afterBoundary");
+        assertThat(afterBoundary).hasSize(1);
+        assertThat(afterBoundary.get(0).getStatus()).isEqualTo(ActivityStatus.CREATED);
+
+        // finish the boundary path: the worker completes the service task -> instance ends
+        UUID afterBoundaryId = afterBoundary.get(0).getId();
+        tx.executeWithoutResult(s -> runtimeService.completeServiceTask(afterBoundaryId, List.of()));
+
+        ProcessInstance piRow = instance(pi);
+        assertThat(piRow.getCompletedAt())
+            .as("после границы инстанс доходит до конца")
+            .isNotNull();
+    }
 }
