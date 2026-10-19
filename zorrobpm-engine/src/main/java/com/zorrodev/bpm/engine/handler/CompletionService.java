@@ -397,6 +397,13 @@ public class CompletionService {
         // mappings сырьё не persist'ится, но маппинг видит его через overlay
         // (проекция: S2b не показывает сырой tu, =tu читает tu-c); вне MI —
         // root как раньше (S0-контроль).
+        // WO-C8-53 (F1 корни 5/6, live Zeebe 8.5.0): сырьё элемента, который
+        // сам — инстанс MI (обычная MI-задача) ИЛИ несёт output-маппинги, — в
+        // его СОБСТВЕННЫЙ activity scope: instance-local / element-local,
+        // deleteVariables ниже его снимает; протечки между инстансами и в root
+        // больше нет (r не в следующем job и не в dump; c не в root при
+        // маппингах). Единый резолвер — completionRawScopeOrNull (S0-ветка:
+        // без MI и без маппингов — root, как раньше).
         UUID completionScope = elementSupport.miCompletionScopeOrNull(
             processInstanceId, userTaskId, bpmnElement, bpmn);
         boolean outputsAppliedWithOverlay = false;
@@ -404,10 +411,14 @@ public class CompletionService {
             elementSupport.applyScopedOutputsWithExtra(processInstanceId, userTaskId,
                 bpmnElement, bpmn, variables);
             outputsAppliedWithOverlay = true;
-        } else if (completionScope != null) {
-            dbService.setVariables(processInstanceId, completionScope, variables);
         } else {
-            dbService.setVariables(processInstanceId, variables);
+            UUID rawScope = elementSupport.completionRawScopeOrNull(
+                processInstanceId, userTaskId, bpmnElement, bpmn);
+            if (rawScope == null) {
+                dbService.setVariables(processInstanceId, variables);
+            } else {
+                dbService.setVariables(processInstanceId, rawScope, variables);
+            }
         }
         dbService.completeActivity(userTaskId);
         dbService.completeUserTask(userTaskId);
@@ -1328,6 +1339,10 @@ public class CompletionService {
         // WO-C8-41 (F1, oracle S1/S2b): как в user-task хвосте выше — скоуп
         // инстанса внутри MI-подпроцесса, проекция при маппингах (overlay),
         // root вне MI.
+        // WO-C8-53 (F1 корни 5/6, live Zeebe 8.5.0): тот же raw-scope резолвер,
+        // что в user-task хвосте — MI-инстанс/элемент с маппингами → own
+        // activity scope (локально, deleteVariables ниже снимает), иначе как
+        // раньше (MI-подпроцесс → скоуп инстанса, S0 → root).
         UUID completionScope = elementSupport.miCompletionScopeOrNull(
             processInstanceId, serviceTaskId, bpmnElement, bpmn);
         boolean outputsAppliedWithOverlay = false;
@@ -1335,10 +1350,14 @@ public class CompletionService {
             elementSupport.applyScopedOutputsWithExtra(processInstanceId, serviceTaskId,
                 bpmnElement, bpmn, variables);
             outputsAppliedWithOverlay = true;
-        } else if (completionScope != null) {
-            dbService.setVariables(processInstanceId, completionScope, variables);
         } else {
-            dbService.setVariables(processInstanceId, variables);
+            UUID rawScope = elementSupport.completionRawScopeOrNull(
+                processInstanceId, serviceTaskId, bpmnElement, bpmn);
+            if (rawScope == null) {
+                dbService.setVariables(processInstanceId, variables);
+            } else {
+                dbService.setVariables(processInstanceId, rawScope, variables);
+            }
         }
         dbService.completeActivity(serviceTaskId);
         dbService.completeServiceTask(serviceTaskId);
