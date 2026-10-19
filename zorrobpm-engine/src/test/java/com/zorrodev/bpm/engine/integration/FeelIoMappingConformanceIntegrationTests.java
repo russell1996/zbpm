@@ -151,6 +151,93 @@ public class FeelIoMappingConformanceIntegrationTests {
         obs.put("incidents", openIncidents(pi));
         observed.put(id, obs);
         assertThat(obs.get("outcome")).as("case %s produced a measurement", id).isNotNull();
+        assertExpectations(c, obs);
+    }
+
+    /**
+     * WO-C8-53: optional per-case live-8.5 expectations (only where the oracle value is
+     * known — G-Q: expected values come from the Zeebe 8.5 live run, never from our own
+     * current implementation). Cases without {@code expect} stay characterization-only.
+     */
+    private void assertExpectations(Map<String, Object> c, Map<String, Object> obs) {
+        if (!(c.get("expect") instanceof Map<?, ?> expect)) {
+            return;
+        }
+        String id = String.valueOf(c.get("id"));
+        if (expect.containsKey("outcome")) {
+            assertThat(obs.get("outcome")).as("outcome of %s", id).isEqualTo(expect.get("outcome"));
+        }
+        if (expect.containsKey("miJobCount")) {
+            assertThat((List<?>) obs.get("miJobs")).as("MI job count of %s", id)
+                .hasSize(((Number) expect.get("miJobCount")).intValue());
+        }
+        if (expect.containsKey("miJobEach")) {
+            Map<String, Object> wanted = expectedMap(expect.get("miJobEach"));
+            assertThat((List<?>) obs.get("miJobs")).as("MI jobs of %s", id).allSatisfy(job ->
+                assertThat(unwrapped((Map<?, ?>) job)).as("MI job payload of %s", id)
+                    .containsAllEntriesOf(wanted));
+        }
+        if (expect.containsKey("workEquals")) {
+            assertThat(unwrapped((Map<?, ?>) obs.get("work"))).as("work payload of %s", id)
+                .isEqualTo(expectedMap(expect.get("workEquals")));
+        }
+        if (expect.containsKey("dumpEquals")) {
+            assertThat(unwrapped((Map<?, ?>) obs.get("dump"))).as("dump payload of %s", id)
+                .isEqualTo(expectedMap(expect.get("dumpEquals")));
+        }
+    }
+
+    private Map<String, Object> expectedMap(Object raw) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        ((Map<?, ?>) raw).forEach((k, v) -> out.put(String.valueOf(k), expectedValue(v)));
+        return out;
+    }
+
+    private static Object expectedValue(Object value) {
+        if (value instanceof Integer i) {
+            return i.longValue();
+        }
+        if (value instanceof Map<?, ?> m) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            m.forEach((k, v) -> out.put(String.valueOf(k), expectedValue(v)));
+            return out;
+        }
+        if (value instanceof List<?> list) {
+            return list.stream().map(FeelIoMappingConformanceIntegrationTests::expectedValue).toList();
+        }
+        return value;
+    }
+
+    /** Typed job-payload wrapper → plain value, keeping JSON variables structured. */
+    private Map<String, Object> unwrapped(Map<?, ?> payload) {
+        if (payload == null) {
+            return null;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        payload.forEach((k, v) -> out.put(String.valueOf(k), unwrapValue(v)));
+        return out;
+    }
+
+    private Object unwrapValue(Object entry) {
+        if (!(entry instanceof Map<?, ?> wrapper) || !wrapper.containsKey("value")) {
+            return entry;
+        }
+        Object value = wrapper.get("value");
+        if (value == null) {
+            return null;
+        }
+        String type = String.valueOf(wrapper.get("type"));
+        try {
+            return switch (type) {
+                case "LONG" -> Long.parseLong(String.valueOf(value));
+                case "DOUBLE" -> Double.parseDouble(String.valueOf(value));
+                case "BOOLEAN" -> Boolean.parseBoolean(String.valueOf(value));
+                case "JSON" -> objectMapper.readValue(String.valueOf(value), Object.class);
+                default -> String.valueOf(value);
+            };
+        } catch (Exception e) {
+            throw new IllegalStateException("unreadable variable wrapper " + entry, e);
+        }
     }
 
     private void measureRoot(UUID pi, Map<String, Object> c, Map<String, Object> obs) {

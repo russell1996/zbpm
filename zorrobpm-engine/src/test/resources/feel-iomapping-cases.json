@@ -798,7 +798,14 @@
           "source": "=c",
           "target": "o"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {},
+        "dumpEquals": {
+          "o": "C"
+        }
+      }
     },
     {
       "id": "output-local",
@@ -815,7 +822,13 @@
           "source": "=l",
           "target": "o"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "dumpEquals": {
+          "o": "L"
+        }
+      }
     },
     {
       "id": "output-other-output",
@@ -834,7 +847,15 @@
           "source": "=o1",
           "target": "o3"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "dumpEquals": {
+          "o1": "a",
+          "o2": "b",
+          "o3": "a"
+        }
+      }
     },
     {
       "id": "duplicate-target",
@@ -917,6 +938,23 @@
       "outputElement": "=r",
       "completionTemplate": {
         "r": "${item}!"
+      },
+      "expect": {
+        "outcome": "completed",
+        "miJobCount": 2,
+        "miJobEach": {
+          "r": null
+        },
+        "dumpEquals": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a!",
+            "b!"
+          ]
+        }
       }
     },
     {
@@ -936,6 +974,25 @@
       "outputElement": "=r",
       "completionTemplate": {
         "r": "${item}!"
+      },
+      "expect": {
+        "outcome": "completed",
+        "miJobCount": 3,
+        "miJobEach": {
+          "r": null
+        },
+        "dumpEquals": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a!",
+            "b!",
+            "c!"
+          ]
+        }
       }
     },
     {
@@ -950,7 +1007,24 @@
         ]
       },
       "outputCollection": "results",
-      "outputElement": "=r"
+      "outputElement": "=r",
+      "expect": {
+        "outcome": "completed",
+        "miJobCount": 2,
+        "miJobEach": {
+          "r": null
+        },
+        "dumpEquals": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            null,
+            null
+          ]
+        }
+      }
     }
   ]
 }
