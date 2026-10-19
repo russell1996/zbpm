@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_a11e" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:error id="bizErr" name="Business Error" errorCode="E-1" />
+  <bpmn:process id="a11ErrEnd" name="a11ErrEnd" isExecutable="true">
+    <bpmn:startEvent id="start" name="start">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="start" targetRef="errEnd" />
+    <bpmn:endEvent id="errEnd" name="errEnd">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:errorEventDefinition id="ed1" errorRef="bizErr" />
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
