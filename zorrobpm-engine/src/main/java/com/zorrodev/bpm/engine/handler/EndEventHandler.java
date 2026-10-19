@@ -250,8 +250,13 @@ public class EndEventHandler {
             boolean handled = activityService.throwError(ctx.processInstanceId(), ctx.tokenId(), errorCode);
             if (handled) {
                 // Граница (или event-subprocess) поймала ошибку: элемент отработал — его
-                // завершаем (как раньше: COMPLETED). Гашение скоупа при этом уже прошло
-                // внутри throwError и эту строку не тронуло (оно гасит только CREATED/IN_PROGRESS).
+                // завершаем (как раньше: COMPLETED). Гашение скоупа уже прошло внутри
+                // throwError и перевело эту строку в CANCELLED (на момент гашения она
+                // была ещё CREATED) — completeActivity переводит её в COMPLETED: элемент,
+                // бросивший ошибку, выполнен (в Zeebe 8.5 элемент error-end в скоупе,
+                // пойманном границей, — completed). Промежуточный CANCELLED наружу не виден:
+                // отмена активити доменных событий не эмитит (в поток уходит одна
+                // activity.completed).
                 dbService.completeActivity(activityId);
             } else {
                 // Никто не поймал: элемент паркуется в ERROR, на него — открытый инцидент.
