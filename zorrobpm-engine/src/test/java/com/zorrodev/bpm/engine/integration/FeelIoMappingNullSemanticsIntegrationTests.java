@@ -1,9 +1,13 @@
 package com.zorrodev.bpm.engine.integration;
 
 import com.zorrodev.bpm.engine.TestMain;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -44,5 +48,12 @@ public class FeelIoMappingNullSemanticsIntegrationTests extends FeelIoMappingCon
     @Override
     protected String observedFile() {
         return System.getProperty("feel.observed.file", "target/feel-iomapping-observed-lenient.json");
+    }
+
+    @Transactional
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("cases")
+    void measure(Map<String, Object> c) throws Exception {
+        measureCase(c);
     }
 }

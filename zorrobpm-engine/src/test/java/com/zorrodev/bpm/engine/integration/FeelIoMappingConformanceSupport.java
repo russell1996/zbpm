@@ -120,10 +120,13 @@ public abstract class FeelIoMappingConformanceSupport {
         }
     }
 
-    @Transactional
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("cases")
-    void measure(Map<String, Object> c) throws Exception {
+    /**
+     * The measurement itself. The {@code @ParameterizedTest} entry point lives in each
+     * concrete profile class (so that the test method is visible in THAT class — the
+     * gate G4b resolves a quoted {@code Class.method} against the class's own source),
+     * and delegates here.
+     */
+    protected void measureCase(Map<String, Object> c) throws Exception {
         String id = String.valueOf(c.get("id"));
         Map<String, Object> obs = new LinkedHashMap<>();
         obs.put("id", id);

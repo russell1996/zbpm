@@ -1,8 +1,13 @@
 package com.zorrodev.bpm.engine.integration;
 
 import com.zorrodev.bpm.engine.TestMain;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Map;
 
 /**
  * WO-OPS-30 F1 — characterization measurements of FEEL / ioMapping behaviour on the
@@ -28,4 +33,11 @@ import org.springframework.test.context.ActiveProfiles;
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
 public class FeelIoMappingConformanceIntegrationTests extends FeelIoMappingConformanceSupport {
+
+    @Transactional
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("cases")
+    void measure(Map<String, Object> c) throws Exception {
+        measureCase(c);
+    }
 }
