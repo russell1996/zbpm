@@ -8,6 +8,7 @@ import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
 import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
+import com.zorrodev.bpm.contract.model.VariableScopeGroup;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.engine.service.query.ActivityQueryOperations;
 import com.zorrodev.bpm.engine.service.query.IncidentQueryOperations;
@@ -113,6 +114,11 @@ public class QueryServiceImpl implements QueryService {
     @Override
     public PagedDataDTO<ProcessVariable> findVariables(VariableQuery query, Collection<UUID> allowedPdIds) {
         return variableQueryOperations.findVariables(query, allowedPdIds);
+    }
+
+    @Override
+    public List<VariableScopeGroup> getVariablesByScope(UUID processInstanceId) {
+        return variableQueryOperations.variablesByScope(processInstanceId);
     }
 
 }

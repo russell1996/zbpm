@@ -8,6 +8,7 @@ import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
 import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
+import com.zorrodev.bpm.contract.model.VariableScopeGroup;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.contract.dto.query.IncidentQuery;
 import com.zorrodev.bpm.contract.dto.query.MessageSubscriptionQuery;
@@ -51,6 +52,9 @@ public interface QueryService {
     PagedDataDTO<Incident> findIncidents(IncidentQuery query, Collection<UUID> allowedPdIds);
 
     PagedDataDTO<ProcessVariable> findVariables(VariableQuery query, Collection<UUID> allowedPdIds);
+
+    /** WO-C8-51 (часть A): переменные инстанса по скоупам (root первым). */
+    List<VariableScopeGroup> getVariablesByScope(UUID processInstanceId);
 
     PagedDataDTO<TimerJob> findTimerJobs(TimerJobQuery query, Collection<UUID> allowedPdIds);
 

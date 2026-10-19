@@ -9,6 +9,7 @@ import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
 import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
+import com.zorrodev.bpm.contract.model.VariableScopeGroup;
 import com.zorrodev.bpm.contract.dto.Incident;
 import com.zorrodev.bpm.contract.dto.query.IncidentQuery;
 import com.zorrodev.bpm.contract.dto.query.MessageSubscriptionQuery;
@@ -114,6 +115,25 @@ public class QueryResource implements QueryContract {
         ProcessInstance instance = queryService.getProcessInstance(id);
         requireResourceAccess(instance.getProcessDefinitionId());
         return queryService.getActivities(id);
+    }
+
+    /**
+     * WO-C8-51 (часть A): переменные инстанса по скоупам — root-группа первой.
+     * Авторизация идентична {@link #getProcessInstanceActivities}: владение
+     * определяется по processDefinitionId инстанса (allowedPdIds); чужой
+     * инстанс → 404 (существование скрыто, WO-SEC-43). Неизвестный id — тоже
+     * 404: у нового эндпоинта нет причин отдавать 500 на «не нашли» (у
+     * соседних List-эндпоинтов такое поведение было pre-existing, не тиражируем).
+     */
+    public List<VariableScopeGroup> getProcessInstanceVariablesByScope(@PathVariable UUID id) {
+        ProcessInstance instance;
+        try {
+            instance = queryService.getProcessInstance(id);
+        } catch (java.util.NoSuchElementException e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Resource not found");
+        }
+        requireResourceAccess(instance.getProcessDefinitionId());
+        return queryService.getVariablesByScope(id);
     }
 
     public PagedDataDTO<ActivityInstance> getProcessInstanceActivitiesPaged(@PathVariable UUID id,
