@@ -1,0 +1,956 @@
+{
+  "campaign": "WO-OPS-30 F1 — FEEL and ioMapping differential measurements",
+  "oracle": "Zeebe 8.5.0 (docs: Camunda 8.9)",
+  "cases": [
+    {
+      "id": "num-int",
+      "title": "integer literal",
+      "docs": "FEEL number; integral values are numbers (Camunda job vars JSON number)",
+      "input": [
+        {
+          "source": "=1",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "num-double",
+      "title": "decimal literal",
+      "docs": "FEEL number supports decimals",
+      "input": [
+        {
+          "source": "=1.5",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "num-trailing-zero",
+      "title": "decimal literal with trailing zero",
+      "docs": "number 1.0 — Camunda keeps it a number; JSON representation is measured",
+      "input": [
+        {
+          "source": "=1.0",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "num-large-long",
+      "title": "integer above 2^53",
+      "docs": "8.9 data types: FEEL numbers are BigDecimal with 34 digits (not IEEE double); no precision loss",
+      "input": [
+        {
+          "source": "=9007199254740993",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "num-above-long",
+      "title": "integer above Long.MAX_VALUE",
+      "docs": "8.9 data types: FEEL numbers are BigDecimal with 34 digits; no documented Long limit",
+      "input": [
+        {
+          "source": "=9223372036854775808",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "num-div",
+      "title": "division",
+      "docs": "8.9 data types: FEEL numbers are BigDecimal; division returns a number (wire representation measured)",
+      "input": [
+        {
+          "source": "=1 / 3",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "num-decimal-sum",
+      "title": "0.1 + 0.2",
+      "docs": "FEEL decimal arithmetic (not binary floating point)",
+      "input": [
+        {
+          "source": "=0.1 + 0.2",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "num-round",
+      "title": "round half to even",
+      "docs": "8.9 numeric built-ins list: no round() function (unknown-function policy is measured)",
+      "input": [
+        {
+          "source": "=round(2.5)",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "str-double",
+      "title": "double-quoted string",
+      "docs": "FEEL strings use double quotes",
+      "input": [
+        {
+          "source": "=\"hello\"",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "str-single",
+      "title": "single-quoted string",
+      "docs": "8.9 expressions: FEEL strings use double quotes; single quotes are not the documented form",
+      "input": [
+        {
+          "source": "='hello'",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "str-quote",
+      "title": "escaped double quote",
+      "docs": "FEEL escape sequence \\\" inside double-quoted string",
+      "input": [
+        {
+          "source": "=\"a\\\"b\"",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "str-newline",
+      "title": "escaped newline",
+      "docs": "FEEL escape sequence \\n inside double-quoted string",
+      "input": [
+        {
+          "source": "=\"a\\nb\"",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "str-unicode",
+      "title": "cyrillic string",
+      "docs": "FEEL strings are unicode",
+      "input": [
+        {
+          "source": "=\"Қазақ\"",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "str-concat",
+      "title": "string concatenation",
+      "docs": "FEEL '+' concatenates strings",
+      "input": [
+        {
+          "source": "=\"a\" + \"b\"",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "str-num",
+      "title": "string(number)",
+      "docs": "FEEL string() conversion of a decimal",
+      "input": [
+        {
+          "source": "=string(1.0)",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "str-null",
+      "title": "string(null)",
+      "docs": "8.9 conversion: string(null) → null (measured)",
+      "input": [
+        {
+          "source": "=string(null)",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "str-json-text",
+      "title": "STRING variable holding JSON text",
+      "docs": "8.9 variables: STRING JSON text is stored verbatim and is not parsed implicitly",
+      "vars": {
+        "payload": "{\"a\":1}"
+      },
+      "input": [
+        {
+          "source": "=payload",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "str-json-path",
+      "title": "JSON variable path",
+      "docs": "Camunda object variable; FEEL path a on a context",
+      "vars": {
+        "payload": {
+          "a": 1
+        }
+      },
+      "input": [
+        {
+          "source": "=payload.a",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "null-literal",
+      "title": "explicit null literal",
+      "docs": "FEEL null value; Camunda stores JSON null",
+      "input": [
+        {
+          "source": "=null",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "missing-bare",
+      "title": "unknown variable bare name",
+      "docs": "8.9 FEEL variables: a missing variable evaluates to null (not an incident)",
+      "input": [
+        {
+          "source": "=nope",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "present-null",
+      "title": "present variable whose value is null",
+      "docs": "8.9 FEEL variables: null is a value; an existing null variable is not “missing”",
+      "vars": {
+        "explicitNull": null
+      },
+      "input": [
+        {
+          "source": "=explicitNull",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "missing-default",
+      "title": "default() with missing variable",
+      "docs": "8.9 context functions: no default() function; a missing variable evaluates to null",
+      "input": [
+        {
+          "source": "=default(nope, \"d\")",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "missing-coalesce",
+      "title": "?? with missing variable",
+      "docs": "8.9 FEEL grammar: no ?? null-coalescing operator",
+      "input": [
+        {
+          "source": "=nope ?? \"d\"",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "missing-compare",
+      "title": "missing variable compared to null",
+      "docs": "8.9 FEEL: a missing variable evaluates to null for comparison",
+      "input": [
+        {
+          "source": "=if nope = null then \"isnull\" else \"notnull\"",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "path-obj",
+      "title": "context path",
+      "docs": "FEEL path a.b",
+      "vars": {
+        "a": {
+          "b": "B"
+        }
+      },
+      "input": [
+        {
+          "source": "=a.b",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "path-deep",
+      "title": "nested context path",
+      "docs": "FEEL path a.b.c",
+      "vars": {
+        "a": {
+          "b": {
+            "c": 3
+          }
+        }
+      },
+      "input": [
+        {
+          "source": "=a.b.c",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "path-missing",
+      "title": "missing path",
+      "docs": "8.9 FEEL variables: a missing context key evaluates to null",
+      "vars": {
+        "a": {
+          "b": "B"
+        }
+      },
+      "input": [
+        {
+          "source": "=a.nope",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "path-index",
+      "title": "list index 1",
+      "docs": "FEEL lists are 1-based",
+      "vars": {
+        "list": [
+          "x",
+          "y",
+          "z"
+        ]
+      },
+      "input": [
+        {
+          "source": "=list[1]",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "path-index-zero",
+      "title": "list index 0",
+      "docs": "8.9 list expressions: lists are 1-based; index 0 is out of range → null",
+      "vars": {
+        "list": [
+          "x",
+          "y",
+          "z"
+        ]
+      },
+      "input": [
+        {
+          "source": "=list[0]",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "path-oob",
+      "title": "list index out of bounds",
+      "docs": "8.9 list expressions: an out-of-range index evaluates to null",
+      "vars": {
+        "list": [
+          "x",
+          "y",
+          "z"
+        ]
+      },
+      "input": [
+        {
+          "source": "=list[9]",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "filter-list",
+      "title": "list filter with projection",
+      "docs": "FEEL filter expression orders[amount > 100].id",
+      "vars": {
+        "orders": [
+          {
+            "id": "A",
+            "amount": 50
+          },
+          {
+            "id": "B",
+            "amount": 150
+          },
+          {
+            "id": "C",
+            "amount": 200
+          }
+        ]
+      },
+      "input": [
+        {
+          "source": "=orders[amount > 100].id",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "filter-single",
+      "title": "filter then index",
+      "docs": "FEEL filter list then 1-based index",
+      "vars": {
+        "orders": [
+          {
+            "id": "A",
+            "amount": 50
+          },
+          {
+            "id": "B",
+            "amount": 150
+          },
+          {
+            "id": "C",
+            "amount": 200
+          }
+        ]
+      },
+      "input": [
+        {
+          "source": "=orders[amount > 100][1].id",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "path-quoted",
+      "title": "context key with space",
+      "docs": "8.9 FEEL variables: a context key with a space is accessed with backticks (or get value); bracket syntax is not documented",
+      "vars": {
+        "a": {
+          "key with space": "V"
+        }
+      },
+      "input": [
+        {
+          "source": "=a[\"key with space\"]",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "path-quoted-backtick",
+      "title": "context key with space via backticks",
+      "docs": "8.9 FEEL variables: backticks access a context key with a space",
+      "vars": {
+        "a": {
+          "key with space": "V"
+        }
+      },
+      "input": [
+        {
+          "source": "=a.`key with space`",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "path-quoted-getvalue",
+      "title": "context key with space via get value()",
+      "docs": "8.9 context functions: get value(context, key)",
+      "vars": {
+        "a": {
+          "key with space": "V"
+        }
+      },
+      "input": [
+        {
+          "source": "=get value(a, \"key with space\")",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "list-literal",
+      "title": "list literal",
+      "docs": "FEEL list",
+      "input": [
+        {
+          "source": "=[1,2,3]",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "list-count",
+      "title": "count()",
+      "docs": "FEEL count(list)",
+      "input": [
+        {
+          "source": "=count([1,2,3])",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "list-sum",
+      "title": "sum()",
+      "docs": "FEEL sum(list)",
+      "input": [
+        {
+          "source": "=sum([1,2,3])",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "list-sort",
+      "title": "sort() with function",
+      "docs": "FEEL sort(list, function)",
+      "input": [
+        {
+          "source": "=sort([3,1,2], function(x,y) x < y)",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "list-distinct",
+      "title": "distinct values()",
+      "docs": "FEEL distinct values(list)",
+      "input": [
+        {
+          "source": "=distinct values([1,1,2])",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "list-flatten",
+      "title": "flatten()",
+      "docs": "FEEL flatten(list of lists)",
+      "input": [
+        {
+          "source": "=flatten([[1,2],[3]])",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "ctx-literal",
+      "title": "context literal",
+      "docs": "FEEL context {a:1,b:\"x\"}",
+      "input": [
+        {
+          "source": "={a:1,b:\"x\"}",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "ctx-put",
+      "title": "context put()",
+      "docs": "FEEL context put(context, key, value)",
+      "input": [
+        {
+          "source": "=context put({a:1}, \"b\", 2)",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "for-expr",
+      "title": "for expression",
+      "docs": "FEEL for x in list return expr",
+      "input": [
+        {
+          "source": "=for x in [1,2,3] return x * 2",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "some-expr",
+      "title": "some satisfies",
+      "docs": "FEEL some x in list satisfies condition",
+      "input": [
+        {
+          "source": "=some x in [1,2] satisfies x > 1",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "every-expr",
+      "title": "every satisfies",
+      "docs": "FEEL every x in list satisfies condition",
+      "input": [
+        {
+          "source": "=every x in [1,2] satisfies x > 0",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "mixed-eq",
+      "title": "1 = 1.0",
+      "docs": "FEEL numeric equality across representations",
+      "input": [
+        {
+          "source": "=1 = 1.0",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "mixed-string-num",
+      "title": "\"1\" = 1",
+      "docs": "8.9 boolean expressions: values of different types are incomparable → null",
+      "input": [
+        {
+          "source": "=\"1\" = 1",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "mixed-lt",
+      "title": "1 < \"2\"",
+      "docs": "8.9 boolean expressions: incomparable types in a comparison → null",
+      "input": [
+        {
+          "source": "=1 < \"2\"",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "null-eq",
+      "title": "null = null",
+      "docs": "FEEL null equality",
+      "input": [
+        {
+          "source": "=null = null",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "date-literal",
+      "title": "date literal",
+      "docs": "FEEL date(\"yyyy-MM-dd\")",
+      "input": [
+        {
+          "source": "=date(\"2024-01-02\")",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "datetime-literal",
+      "title": "date and time literal",
+      "docs": "8.9 temporal: date and time literal with @UTC",
+      "input": [
+        {
+          "source": "=date and time(\"2024-01-02T03:04:05@UTC\")",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "duration-literal",
+      "title": "duration literal",
+      "docs": "FEEL duration(\"PT5M\")",
+      "input": [
+        {
+          "source": "=duration(\"PT5M\")",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "date-add",
+      "title": "date + duration",
+      "docs": "FEEL temporal arithmetic",
+      "input": [
+        {
+          "source": "=date(\"2024-01-01\") + duration(\"P1D\")",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "string-date",
+      "title": "string(date)",
+      "docs": "FEEL string(date) ISO form",
+      "input": [
+        {
+          "source": "=string(date(\"2024-01-02\"))",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "string-now",
+      "title": "string(now())",
+      "docs": "8.9 temporal/conversion: string(date and time); zone/offset format measured (WO-ENG-33)",
+      "input": [
+        {
+          "source": "=string(now())",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "noeq-literal",
+      "title": "source without '=' — literal or FEEL?",
+      "docs": "8.9 expressions: without '=' the source is a static value, not FEEL",
+      "input": [
+        {
+          "source": "hello",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "noeq-var",
+      "title": "source without '=' matching a variable name",
+      "docs": "8.9 expressions: without '=' the source is a static string, even if it matches a variable name",
+      "vars": {
+        "present": "V"
+      },
+      "input": [
+        {
+          "source": "present",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "empty-source",
+      "title": "empty source value",
+      "docs": "8.9 variables: an ioMapping source is optional; an omitted/empty source yields null (live 8.5 rejects at deploy)",
+      "input": [
+        {
+          "source": "",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "eq-only",
+      "title": "source is '=' only",
+      "docs": "8.9 expressions: '=' introduces a FEEL expression; an empty expression is not valid FEEL",
+      "input": [
+        {
+          "source": "=",
+          "target": "r"
+        }
+      ]
+    },
+    {
+      "id": "target-nested",
+      "title": "target with a dot (nested path)",
+      "docs": "8.9 variables: a target with dots creates a nested context in the element scope",
+      "input": [
+        {
+          "source": "=1",
+          "target": "a.b"
+        }
+      ]
+    },
+    {
+      "id": "input-rewrite",
+      "title": "input mapping overwrites an existing variable name",
+      "docs": "Input mappings are local to the element and shadow the parent value",
+      "vars": {
+        "x": 1
+      },
+      "input": [
+        {
+          "source": "=\"s\"",
+          "target": "x"
+        }
+      ]
+    },
+    {
+      "id": "output-completion",
+      "title": "output mapping reads a completion variable",
+      "docs": "8.9 variables: completion variables are visible to output mappings; only mapped outputs are merged into the parent scope",
+      "completionVars": {
+        "c": "C"
+      },
+      "output": [
+        {
+          "source": "=c",
+          "target": "o"
+        }
+      ]
+    },
+    {
+      "id": "output-local",
+      "title": "output mapping reads an input-mapped local",
+      "docs": "8.9 variables: output mappings evaluate in the element scope including input-mapped locals",
+      "input": [
+        {
+          "source": "=\"L\"",
+          "target": "l"
+        }
+      ],
+      "output": [
+        {
+          "source": "=l",
+          "target": "o"
+        }
+      ]
+    },
+    {
+      "id": "output-other-output",
+      "title": "output mapping references another output target",
+      "docs": "8.9 variables: output mappings are evaluated in order; each target is visible to later mappings in the same element",
+      "output": [
+        {
+          "source": "=\"a\"",
+          "target": "o1"
+        },
+        {
+          "source": "=\"b\"",
+          "target": "o2"
+        },
+        {
+          "source": "=o1",
+          "target": "o3"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-target",
+      "title": "two input mappings with the same target",
+      "docs": "Camunda: duplicate targets — measured (order/last-wins)",
+      "input": [
+        {
+          "source": "=\"a\"",
+          "target": "t"
+        },
+        {
+          "source": "=\"b\"",
+          "target": "t"
+        }
+      ]
+    },
+    {
+      "id": "sp-output-scope",
+      "title": "inner task output inside a normal subprocess",
+      "docs": "8.9 subprocess: output mappings write to the element's parent scope (the subprocess scope)",
+      "wrap": "subprocess",
+      "output": [
+        {
+          "source": "=\"v\"",
+          "target": "o"
+        }
+      ]
+    },
+    {
+      "id": "sp-container-input",
+      "title": "subprocess container input shadows root",
+      "docs": "8.9 subprocess: input mappings are local to the subprocess scope",
+      "wrap": "subprocess",
+      "vars": {
+        "x": "root"
+      },
+      "containerInput": [
+        {
+          "source": "=\"sub\"",
+          "target": "x"
+        }
+      ],
+      "input": [
+        {
+          "source": "=x",
+          "target": "y"
+        }
+      ]
+    },
+    {
+      "id": "sp-container-output",
+      "title": "subprocess container output promotes a local",
+      "docs": "8.9 subprocess: output mappings promote to the parent scope",
+      "wrap": "subprocess",
+      "output": [
+        {
+          "source": "=\"v\"",
+          "target": "inner"
+        }
+      ],
+      "containerOutput": [
+        {
+          "source": "=inner",
+          "target": "promoted"
+        }
+      ]
+    },
+    {
+      "id": "mi-basic",
+      "title": "parallel multi-instance service task",
+      "docs": "8.9 multi-instance: inputElement/outputElement are local to each instance; outputCollection is propagated; loopCounter is 1-based",
+      "wrap": "mi",
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ]
+      },
+      "outputCollection": "results",
+      "outputElement": "=r",
+      "completionTemplate": {
+        "r": "${item}!"
+      }
+    },
+    {
+      "id": "mi-sequential",
+      "title": "sequential multi-instance service task",
+      "docs": "8.9 multi-instance: inputElement/outputElement are local to each instance; outputCollection is propagated; loopCounter is 1-based",
+      "wrap": "mi",
+      "isSequential": true,
+      "vars": {
+        "items": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "outputCollection": "results",
+      "outputElement": "=r",
+      "completionTemplate": {
+        "r": "${item}!"
+      }
+    },
+    {
+      "id": "mi-empty-output",
+      "title": "MI completion without the outputElement variable",
+      "docs": "8.9 multi-instance: outputCollection is pre-created as [null × N]; a missing outputElement value stays null",
+      "wrap": "mi",
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ]
+      },
+      "outputCollection": "results",
+      "outputElement": "=r"
+    }
+  ]
+}

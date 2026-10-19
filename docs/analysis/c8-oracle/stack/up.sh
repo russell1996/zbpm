@@ -32,6 +32,13 @@ zeebe_in_my_project() {
 if zeebe_up; then
   echo "[up] ${ZEEBE} already up + healthy — reusing, NOT recreating"
 else
+  # A stopped container with this name (left by an earlier run of this or another
+  # compose project) makes `docker compose up` fail with a name conflict. It is ours
+  # by name and is not running, so remove it before the fresh stand-up.
+  if docker inspect "$ZEEBE" >/dev/null 2>&1 && ! running "$ZEEBE"; then
+    echo "[up] removing stopped stale ${ZEEBE} container ..."
+    docker rm -f "$ZEEBE" >/dev/null 2>&1 || true
+  fi
   echo "[up] starting ${ZEEBE} (fresh stand-up) ..."
   docker compose up -d zeebe
   echo "[up] waiting for zeebe health (${HEALTH_URL}) ..."
