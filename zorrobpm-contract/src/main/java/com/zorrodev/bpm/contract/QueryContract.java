@@ -16,6 +16,7 @@ import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ServiceTask;
 import com.zorrodev.bpm.contract.model.TimerJob;
 import com.zorrodev.bpm.contract.model.UserTask;
+import com.zorrodev.bpm.contract.model.VariableScopeGroup;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.service.annotation.GetExchange;
@@ -55,6 +56,15 @@ public interface QueryContract {
     PagedDataDTO<ActivityInstance> getProcessInstanceActivitiesPaged(@PathVariable UUID id,
         @RequestParam(required = false) Integer pageIndex,
         @RequestParam(required = false) Integer pageSize);
+
+    /**
+     * WO-C8-51 (часть A): переменные инстанса, СГРУППИРОВАННЫЕ по скоупам —
+     * root-группа первой ({@code scope == null}), дальше по группе на каждый
+     * живой скоуп. Существующий {@code GET /variables} не меняется (он отдаёт
+     * только root и намеренно не подмешивает scoped-переменные, WO-ENG-14).
+     */
+    @GetExchange("/process-instances/{id}/variables-by-scope")
+    List<VariableScopeGroup> getProcessInstanceVariablesByScope(@PathVariable UUID id);
 
     @GetExchange("/incidents")
     PagedDataDTO<Incident> getIncidents(IncidentQuery query);

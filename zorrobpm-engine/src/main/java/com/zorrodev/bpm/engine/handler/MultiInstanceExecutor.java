@@ -536,7 +536,7 @@ public class MultiInstanceExecutor {
             .orElseThrow(() -> new EngineException("Multi-instance " + element.getId() + " has no loop characteristics"));
 
         if (mi.getInputCollection() != null && !mi.getInputCollection().isBlank()) {
-            return collectionSize(collection, element.getId());
+            return collectionSize(element, mi, variables, collection);
         }
 
         String expression = mi.getCardinality();
@@ -573,20 +573,26 @@ public class MultiInstanceExecutor {
         dbService.createIncident(activityId, message);
     }
 
-    private int collectionSize(Object collection, String elementId) {
-        if (collection instanceof java.util.Collection<?> c) {
-            return c.size();
+    /**
+     * WO-C8-51 (B): принимается только настоящая последовательность. Прежняя
+     * рефлексия по {@code size()} принимала и scala-Map (FEEL-объект): объект
+     * молча порождал N инстансов по числу полей с {@code item=null} в каждом,
+     * без инцидента. Zeebe на контекст вместо списка поднимает инцидент — теперь
+     * и мы (проверка — тем же {@code toJavaStructure}, что у ad-hoc).
+     */
+    private int collectionSize(BpmnElementModel element, MultiInstanceExtensionModel mi,
+            List<ProcessVariable> variables, Object collection) {
+        // Обычный случай (java-список после evaluateExpression) не требует
+        // конверсии; к toJavaStructure идём только для scala/Jackson-типов.
+        if (collection instanceof List<?> list) {
+            return list.size();
         }
-        if (collection != null) {
-            try {
-                Object n = collection.getClass().getMethod("size").invoke(collection);
-                if (n instanceof Integer size) {
-                    return size;
-                }
-            } catch (ReflectiveOperationException ignored) {
-            }
+        Object javaValue = elementSupport.toJavaStructure(collection);
+        if (javaValue instanceof List<?> list) {
+            return list.size();
         }
-        throw new EngineException("Multi-instance " + elementId + " inputCollection did not evaluate to a list: " + collection);
+        throw new EngineException("Multi-instance " + element.getId() + " inputCollection did not evaluate to a list: "
+            + CollectionNotAListDiagnosis.describe(mi.getInputCollection(), collection, variables));
     }
 
     private Object miInputCollection(UUID processInstanceId, UUID token, MultiInstanceExtensionModel mi) {

@@ -1,0 +1,38 @@
+{
+  "id": "c851-mi-collection-value-classes",
+  "title": "WO-C8-51B — MI inputCollection: each JSON value class on live Zeebe 8.5",
+  "bpmn": "process.bpmn",
+  "processId": "c851MiProbe",
+  "jobType": "c851work",
+  "dumpType": "c851dump",
+  "runner": "probe.js",
+  "startVar": "activities",
+  "cases": [
+    { "case": "array", "vars": { "activities": ["a", "b"] }, "expected": "2 instances (item=a,b), instance completes to the dump job" },
+    { "case": "string-json-text", "vars": { "activities": "[\"a\",\"b\"]" }, "expected": "0 instances; no dump — instance stuck (incident): a STRING is not parsed into a collection" },
+    { "case": "string-empty", "vars": { "activities": "" }, "expected": "0 instances; no dump — stuck (incident)" },
+    { "case": "absent", "vars": {}, "expected": "0 instances; no dump — stuck (incident)" },
+    { "case": "null", "vars": { "activities": null }, "expected": "0 instances; no dump — stuck (incident)" },
+    { "case": "number", "vars": { "activities": 5 }, "expected": "0 instances; no dump — stuck (incident)" },
+    { "case": "object", "vars": { "activities": { "a": 1 } }, "expected": "0 instances; no dump — stuck (incident); MUST NOT silently spawn instances (the pre-fix bug)" }
+  ],
+  "observed8_5": {
+    "run": "2026-10-19, camunda/zeebe:8.5.0, gateway 8.5.0 (zbpm-cmp-zeebe)",
+    "array": "instances=2 itemValues=[a,b] reachedDump=true",
+    "string-json-text": "instances=0 reachedDump=false",
+    "string-empty": "instances=0 reachedDump=false",
+    "absent": "instances=0 reachedDump=false",
+    "null": "instances=0 reachedDump=false",
+    "number": "instances=0 reachedDump=false",
+    "object": "instances=0 reachedDump=false"
+  },
+  "matrix": {
+    "docs89": "MI inputCollection must evaluate to a list; a STRING is never parsed as JSON; a non-list value raises an incident on the multi-instance body and no instances are created",
+    "ours": "incident with a diagnosis message on all six non-list classes; 2 instances for the array; object no longer silently spawns N null-item instances (WO-C8-51B fix)"
+  },
+  "_help": {
+    "runner": "probe.js is a standalone runner (compare.js cannot express 'expected incident' — it insists on a dump job); it reads this file for the case table.",
+    "instances": "count of distinct c851work jobs created for the started process instance",
+    "reachedDump": "whether the instance afterwards reached the c851dump element (true = the MI body completed and the token moved on; false + 0 instances = the instance is stuck on an incident)"
+  }
+}
