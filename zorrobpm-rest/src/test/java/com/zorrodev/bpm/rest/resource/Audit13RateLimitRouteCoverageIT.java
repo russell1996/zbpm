@@ -119,7 +119,13 @@ class Audit13RateLimitRouteCoverageIT {
             new RouteCase("AUTH_LINK", "POST", "/auth/forgot-password", EMPTY_BODY, false),
             // ---- control: routes that were already limited (regression guard) ----
             new RouteCase("DATA", "GET", "/process-instances", null, true),
-            new RouteCase("DATA", "GET", "/users", null, true)
+            new RouteCase("DATA", "GET", "/users", null, true),
+            // ---- read routes of the data bucket: the BUCKET is shared, but the
+            // REGISTRATION is per URL pattern — a read route that lost its
+            // pattern would answer with the application's own status forever
+            // (the same class of hole F-06 was about, on the read side) ----
+            new RouteCase("DATA", "GET", "/variables", null, true),
+            new RouteCase("DATA", "GET", "/events", null, true)
         );
     }
 

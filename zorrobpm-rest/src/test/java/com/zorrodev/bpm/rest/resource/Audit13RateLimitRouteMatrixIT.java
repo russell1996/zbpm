@@ -47,11 +47,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li>every matrix line's URL patterns are really registered.</li>
  * </ol>
  *
- * <p>Why the registration is checked against the pattern list and not through
- * a live request: MockMvc adds the filter to the chain for EVERY path — it
- * does not emulate the servlet container's URL-pattern mapping. A live 429
- * therefore proves the bucket, and the pattern list proves the registration;
- * both halves are needed, and neither substitutes for the other.
+ * <p>Why the registration is checked against the pattern list AND by live
+ * requests: a live 429 proves that the filter RAN for that path (MockMvc
+ * honours the {@code FilterRegistrationBean} URL patterns — a route whose
+ * pattern is missing is simply not filtered, it answers with the
+ * application's own status), while the pattern list proves that every matrix
+ * line really is registered. The two halves check different failure modes:
+ * the list can hold a pattern the container does not apply, and a live
+ * request can pass for a route the matrix does not know about.
  */
 @ActiveProfiles("test")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
