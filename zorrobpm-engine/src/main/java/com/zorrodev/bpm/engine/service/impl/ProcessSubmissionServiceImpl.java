@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.service.impl;
 
 import com.zorrodev.bpm.contract.ProcessRole;
 import com.zorrodev.bpm.contract.dto.ProcessSubmissionDTO;
+import com.zorrodev.bpm.contract.dto.SubmitProcessSubmissionDTO;
 import com.zorrodev.bpm.contract.exception.ApiException;
 import com.zorrodev.bpm.contract.exception.BpmnParseException;
 import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
@@ -45,9 +46,6 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
 
-    /** 256 KiB — submissions are review payloads, not deployment artifacts (WO-ACL-3). */
-    static final int MAX_BPMN_LENGTH = 262_144;
-
     /**
      * Naming convention for NEW process keys (WO-ACL-3, updated WO-ACL-9): letter first (any case),
      * then letters/digits/underscore/hyphen, 3..64 chars. Underscore is allowed because
@@ -74,10 +72,15 @@ public class ProcessSubmissionServiceImpl implements ProcessSubmissionService {
         if (bpmn == null || bpmn.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "BPMN XML is required");
         }
-        if (bpmn.length() > MAX_BPMN_LENGTH) {
+        // 256 KiB — submissions are review payloads, not deployment artifacts (WO-ACL-3).
+        // WO-AUDIT-13 (F-07): the limit itself now lives in the contract
+        // (SubmitProcessSubmissionDTO.MAX_BPMN_LENGTH), so the DTO cap and this service
+        // guard are the same number and cannot drift apart.
+        if (bpmn.length() > SubmitProcessSubmissionDTO.MAX_BPMN_LENGTH) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "BPMN_TOO_LARGE",
                 "BPMN XML exceeds the 256 KB submission limit",
-                Map.of("maxLength", MAX_BPMN_LENGTH, "actualLength", bpmn.length()));
+                Map.of("maxLength", SubmitProcessSubmissionDTO.MAX_BPMN_LENGTH,
+                    "actualLength", bpmn.length()));
         }
 
         BpmnProcessDefinitionModel model;
