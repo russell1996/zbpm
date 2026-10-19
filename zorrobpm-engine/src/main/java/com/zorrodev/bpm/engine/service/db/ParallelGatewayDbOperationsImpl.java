@@ -66,6 +66,19 @@ public class ParallelGatewayDbOperationsImpl implements ParallelGatewayDbOperati
         parallelGatewayRepository.deleteArrivalsByProcessInstanceId(processInstanceId);
     }
 
+    /**
+     * WO-C8-48: терминальный переход инстанса (complete/cancel) стирает bookkeeping
+     * join'ов целиком — и arrivals, и marker-строки. Для ЖИВОГО инстанса так нельзя
+     * (marker'ы принадлежат MI/ad-hoc-хендлерам: {@link #clearAllParallelGatewayArrivals}
+     * их намеренно не трогает), но у завершённого инстанса владельцев маркеров уже нет,
+     * а таблица транзиентная (диагностика/трейс её не читают, retention удаляет строки
+     * завершённых инстансов целиком).
+     */
+    @Override
+    public void clearInstanceBookkeeping(UUID processInstanceId) {
+        parallelGatewayRepository.deleteBookkeepingByProcessInstanceId(processInstanceId);
+    }
+
     @Override
     public void recordInclusiveExpected(UUID processInstanceId, String gatewayElementId, int expectedCount) {
         ParallelGatewayEntity entity = new ParallelGatewayEntity();
