@@ -72,6 +72,16 @@ public class ElementSupport {
      * so already-deployed models referencing an OPTIONAL variable keep the legacy silent
      * {@code ""} instead of parking on an incident on the first real run after rollout.
      * Operators opt into the strict (Zeebe-closer) behaviour explicitly per installation.
+     *
+     * <p>WO-C8-54: the flag is OBSOLETE. The live Zeebe 8.5.0 measurement (the F1
+     * campaign, {@code docs/analysis/c8-oracle/feel-iomapping.js}) shows that Zeebe
+     * does NOT raise an incident for a missing variable in an io-mapping — it
+     * evaluates it to a NULL VALUE and completes the job. The strict/lenient duality
+     * of WO-ENG-29/30 was built on an unverified assumption about Zeebe; the
+     * measurement disproves it. Both profiles now follow live 8.5, so the flag no
+     * longer changes anything — it is kept (a deployment may still set it) and
+     * reported as obsolete at startup. Removing the property itself is a separate
+     * decision (owner) — see the report of WO-C8-54.</p>
      */
     private final boolean strictMissing;
 
@@ -85,6 +95,11 @@ public class ElementSupport {
         this.objectMapper = objectMapper;
         this.businessZone = businessZone;
         this.strictMissing = strictMissing;
+        if (strictMissing) {
+            log.warn("zorrobpm.engine.io-mapping.strict-missing=true is OBSOLETE since WO-C8-54: "
+                + "a missing/unknown/incomparable variable in an io-mapping is a NULL VALUE "
+                + "(live Zeebe 8.5), not an incident — both profiles now behave identically");
+        }
     }
 
     /**
@@ -1365,6 +1380,22 @@ public class ElementSupport {
      * failure ({@code !isSuccess}, e.g. syntax errors — the Zeebe fix class) always
      * throws regardless of the flag: that is a genuine computation error, never an
      * «absent optional variable».</p>
+     *
+     * <p>WO-C8-54: the strict/lenient duality is GONE — the live Zeebe 8.5.0
+     * measurement (F1 campaign, {@code docs/analysis/c8-oracle/feel-iomapping.js})
+     * shows that Zeebe evaluates a missing variable, an unknown function, an
+     * incomparable comparison and an out-of-range index to a NULL VALUE: the job is
+     * created, the mapped variable is a JSON null, the process continues — no
+     * incident. The strict premise of WO-ENG-29/30 («Zeebe raises an incident») was
+     * never measured and is false, so both profiles now follow live 8.5:
+     * <ul>
+     *   <li>a HARD failure (syntax error — the Zeebe fix class, rejected at deploy
+     *       by WO-C8-56) still throws → the incident path is unchanged;</li>
+     *   <li>a SUPPRESSED failure with a null result (missing variable, unknown
+     *       function, incomparable types, missing context key) → a null VALUE
+     *       (JSON null), no incident — the live-8.5 behaviour;</li>
+     *   <li>a value WITH a suppressed failure → the value (unchanged).</li>
+     * </ul></p>
      */
     public ProcessVariable evaluateMapping(IoMappingExtensionModel.Mapping mapping, List<ProcessVariable> variables) {
         if (mapping.getSource() == null || mapping.getTarget() == null || mapping.getTarget().isBlank()) {
@@ -1395,21 +1426,31 @@ public class ElementSupport {
         // Verified against feel-engine 1.19.3 native API — see report probe table:
         // missing bare name → success/null + suppressed NO_VARIABLE_FOUND;
         // =null literal → success/null + EMPTY suppressed; syntax error → !success.
+        // WO-ENG-29: failure-vs-null distinction. A HARD failure (!isSuccess, e.g.
+        // syntax errors — the Zeebe fix class) throws FeelEvaluationException
+        // (incident path) in BOTH modes.
+        //
+        // WO-C8-54: a SUPPRESSED failure with a null result is NOT an incident — it is
+        // a null value (live Zeebe 8.5). The suppressed-failure set of the native API
+        // is exactly the "the expression could not produce a value" class:
+        // NO_VARIABLE_FOUND (a missing variable), NO_FUNCTION_FOUND (an unknown
+        // function), NO_CONTEXT_ENTRY_FOUND (a missing context key), NOT_COMPARABLE
+        // (values of different types). All of them evaluate to null in Zeebe, and the
+        // job is created with a null variable. The WARN is kept (log-based inventory
+        // of the models that hit the null path).
         boolean hardFailure = result.isFailure();
-        boolean missingVariable = !result.suppressedFailures().isEmpty() && result.result() == null;
-        if (hardFailure || (missingVariable && strictMissing)) {
+        if (hardFailure) {
             throw new com.zorrodev.bpm.engine.service.FeelEvaluationException(
                 "io-mapping source '" + source + "' failed to evaluate for target '"
-                    + mapping.getTarget() + "': "
-                    + (result.isFailure() ? result.failure() : result.suppressedFailures().mkString("; ")));
+                    + mapping.getTarget() + "': " + result.failure());
         }
-        if (missingVariable) {
-            // WO-ENG-30 lenient mode: legacy silent behaviour + WARN for log-based inventory.
-            log.warn("io-mapping source '{}' references a missing variable for target '{}'"
-                + " — legacy '' applied (zorrobpm.engine.io-mapping.strict-missing=false)",
-                source, mapping.getTarget());
+        Object value = result.result();
+        if (value == null && !result.suppressedFailures().isEmpty()) {
+            log.warn("io-mapping source '{}' evaluated to null for target '{}' ({} suppressed) "
+                + "— Zeebe 8.5 parity: a null VALUE, no incident",
+                source, mapping.getTarget(), result.suppressedFailures().mkString("; "));
         }
-        return toProcessVariable(mapping.getTarget(), result.result());
+        return toProcessVariable(mapping.getTarget(), value);
     }
 
     /**
@@ -1470,6 +1511,20 @@ public class ElementSupport {
         // ошибочно считается «целым», и longValueExact падает на дробном
         // значении с ложным "outside LONG range".
         Object normalized = normalizeFeelNumber(result);
+        if (normalized == null) {
+            // WO-C8-54: a FEEL null is a VALUE, not an empty string. Live Zeebe 8.5
+            // delivers it as a JSON null (measured: the job payload carries
+            // {"r":null} for a missing variable, an unknown function, an
+            // incomparable comparison, an out-of-range index and an explicit
+            // =null). The legacy conversion turned it into a STRING "" — the
+            // "null silently becomes an empty string" defect of WO-C8-54's root 1.
+            // The only representation our typed variable model has for a JSON null
+            // is type=JSON with the text "null" (the same one the multi-instance
+            // outputCollection path already writes — see MultiInstanceExecutor).
+            variable.setType(ProcessVariableType.JSON);
+            variable.setValue("null");
+            return variable;
+        }
         if (normalized instanceof Boolean b) {
             variable.setType(ProcessVariableType.BOOLEAN);
             variable.setValue(b.toString());
@@ -1506,7 +1561,7 @@ public class ElementSupport {
             variable.setValue(formatFeelDatetime(name, temporal));
         } else {
             variable.setType(ProcessVariableType.STRING);
-            variable.setValue(normalized == null ? "" : normalized.toString());
+            variable.setValue(normalized.toString());
         }
         return variable;
     }

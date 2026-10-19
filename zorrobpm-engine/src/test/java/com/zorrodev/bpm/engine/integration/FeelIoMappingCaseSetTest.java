@@ -22,8 +22,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class FeelIoMappingCaseSetTest {
 
-    private static final int EXPECTED_CASES = 72;
-    private static final Set<String> WRAPPERS = Set.of("subprocess", "mi");
+    /** 72 кейса Ф1 + 12 кейсов условий гейтвея (WO-C8-54). */
+    private static final int EXPECTED_CASES = 84;
+    private static final Set<String> WRAPPERS = Set.of("subprocess", "mi", "gateway");
     private static final List<String> OPERATION_FIELDS = List.of(
         "input", "output", "completionVars", "containerInput", "containerOutput", "outputElement"
     );
@@ -60,9 +61,17 @@ class FeelIoMappingCaseSetTest {
             if (c.containsKey("wrap")) {
                 assertThat(WRAPPERS).as("wrap of %s", id).contains((String) c.get("wrap"));
             }
-            assertThat(OPERATION_FIELDS.stream().anyMatch(c::containsKey))
-                .as("operation field of %s", id)
-                .isTrue();
+            if ("gateway".equals(c.get("wrap"))) {
+                // WO-C8-54: a condition case carries the condition text and whether
+                // the second flow is the default one.
+                assertThat(c.get("condition")).as("condition of %s", id).isInstanceOf(String.class);
+                assertThat((String) c.get("condition")).as("condition of %s", id).isNotBlank();
+                assertThat(c.get("defaultFlow")).as("defaultFlow of %s", id).isInstanceOf(Boolean.class);
+            } else {
+                assertThat(OPERATION_FIELDS.stream().anyMatch(c::containsKey))
+                    .as("operation field of %s", id)
+                    .isTrue();
+            }
         });
 
         assertThat(cases)
@@ -71,6 +80,19 @@ class FeelIoMappingCaseSetTest {
 
         assertThat(cases)
             .extracting(c -> c.get("id"))
-            .contains("path-quoted-backtick", "path-quoted-getvalue");
+            .contains("path-quoted-backtick", "path-quoted-getvalue",
+                // WO-C8-54: the gateway-condition cases of G-Q item 3
+                "cond-missing-var-default", "cond-missing-compare-default",
+                "cond-not-comparable-default", "cond-unknown-function-default",
+                "cond-explicit-null-default", "cond-true-default");
+
+        // WO-C8-54: the null-semantics cases of the root carry the live-8.5
+        // expectations (the values the harness asserts).
+        assertThat(cases)
+            .filteredOn(c -> c.containsKey("expect"))
+            .extracting(c -> c.get("id"))
+            .contains("num-round", "str-null", "null-literal", "missing-bare", "present-null",
+                "missing-default", "path-missing", "mixed-string-num", "mixed-lt",
+                "path-index-zero", "path-oob");
     }
 }

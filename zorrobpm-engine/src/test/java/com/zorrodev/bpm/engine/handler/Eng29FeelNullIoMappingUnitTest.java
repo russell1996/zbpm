@@ -24,32 +24,48 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 /**
- * WO-ENG-29: unit-level contract of {@link ElementSupport#evaluateMapping} on the
- * REAL prod path — real {@code FeelEngineApi} (same builder shape as
- * {@code DmnEngineConfig}), real {@code FeelBudgetImpl} + {@code ScriptServiceImpl}
- * (pool/timeout/bulkhead), real {@code ElementSupport#evaluateMapping}.
+ * WO-ENG-29 (superseded by WO-C8-54) — unit-level contract of
+ * {@link ElementSupport#evaluateMapping} on the REAL prod path — real
+ * {@code FeelEngineApi} (same builder shape as {@code DmnEngineConfig}), real
+ * {@code FeelBudgetImpl} + {@code ScriptServiceImpl} (pool/timeout/bulkhead), real
+ * {@code ElementSupport#evaluateMapping}.
  *
- * <p>Three cases, no Spring context:
+ * <p><b>WO-C8-54 (2026-10-19) supersedes the incident part of this contract.</b>
+ * WO-ENG-29 assumed that Zeebe raises an incident when an io-mapping source
+ * references an absent variable. The live Zeebe 8.5.0 measurement of the F1
+ * campaign disproves that assumption: Zeebe evaluates such a source to a NULL
+ * VALUE — the job is created, the mapped variable is a JSON null, the process
+ * continues, NO incident ({@code docs/analysis/c8-oracle/feel-iomapping.js},
+ * case {@code missing-bare}: {@code completed  work={"r":null}}). The strict /
+ * lenient duality of WO-ENG-30 existed only to roll that assumption out safely;
+ * with the assumption gone, the duality is gone too (both profiles follow live
+ * 8.5) and the flag is obsolete.</p>
+ *
+ * <p>What this class pins NOW (WO-C8-54):</p>
  * <ol>
- *   <li>source references a variable absent from the context → FEEL failure →
- *       {@link FeelEvaluationException} (incident path at callers);</li>
- *   <li>source is an explicit {@code =null} literal → legitimate null → same
- *       {@code ""} STRING variable as before, no exception (regression guard);</li>
- *   <li>source references a variable explicitly holding a null value → FEEL
- *       resolves the present-but-null name to honest null (NOT «not found»),
- *       same {@code ""} STRING variable, no exception.</li>
+ *   <li>a source referencing a variable absent from the context → a null VALUE
+ *       (JSON null), no exception, no incident (live 8.5);</li>
+ *   <li>the same for a source without the {@code =} prefix (the FEEL evaluation
+ *       of a bare name against an empty context is a missing variable — the
+ *       static-source question itself is WO-C8-55);</li>
+ *   <li>an explicit {@code =null} literal → a null VALUE (JSON null);</li>
+ *   <li>a variable that EXISTS with a null value → an honest null (JSON null),
+ *       not an evaluation failure;</li>
+ *   <li>a HARD failure (syntax error) → still an exception (the incident path) —
+ *       the Zeebe fix class, rejected at deploy by WO-C8-56.</li>
  * </ol>
  *
- * <p>POF-мутации (каждая валится ровно своим тестом):
+ * <p>POF-мутации (каждая валится ровно своим тестом):</p>
  * <ul>
  *   <li>вернуть JSR-223 {@code scriptService.evaluateExpression} в
  *       {@code evaluateMapping} — criterion1 КРАСНЫЙ (legacy wrapper глотает
- *       failure в null → тихая {@code ""} вместо исключения);</li>
+ *       failure в null → тихая {@code ""} вместо JSON null);</li>
  *   <li>убрать проверку {@code suppressedFailures} (только {@code isSuccess}) —
  *       criterion1 КРАСНЫЙ (нативный API отдаёт success=true с null при
  *       NO_VARIABLE_FOUND — проверено пробой feel-engine 1.19.3, см. отчёт);</li>
- *   <li>бросать исключение и на честном null — criterion2/criterion3 КРАСНЫЕ
- *       (смешение «ошибка»/«легитимный null» — тот класс бага, что был у Zeebe).</li>
+ *   <li>бросать исключение и на честном null — criterion1/criterion3 КРАСНЫЕ
+ *       (смешение «ошибка»/«легитимный null» — тот же класс, что был у Zeebe,
+ *       только наоборот: Zeebe не инцидентит, а мы инцидентили).</li>
  * </ul>
  */
 class Eng29FeelNullIoMappingUnitTest {
@@ -89,25 +105,29 @@ class Eng29FeelNullIoMappingUnitTest {
         return v;
     }
 
-    // ─── Критерий 1: отсутствующая переменная → FeelEvaluationException ───────
+    /** WO-C8-54: a null VALUE is a JSON null — the representation live 8.5 delivers. */
+    private static void assertJsonNull(ProcessVariable variable, String what) {
+        assertThat(variable.getType()).as("type of %s", what).isEqualTo(ProcessVariableType.JSON);
+        assertThat(variable.getValue()).as("value of %s", what).isEqualTo("null");
+    }
+
+    // ─── Критерий 1: отсутствующая переменная → null VALUE (live 8.5) ─────────
 
     @Test
-    void criterion1_missingVariable_throwsFeelEvaluationException() {
-        assertThatThrownBy(() -> elementSupport.evaluateMapping(
-                mapping("=routeStageUuid", "routeStageUuid"), List.of()))
-            .as("source references a variable absent from the job result — must be a "
-                + "distinguishable evaluation failure, not a silent null")
-            .isInstanceOf(FeelEvaluationException.class)
-            .hasMessageContaining("routeStageUuid");
+    void criterion1_missingVariable_isANullValueNotAFailure() {
+        ProcessVariable variable = elementSupport.evaluateMapping(
+            mapping("=routeStageUuid", "routeStageUuid"), List.of());
+
+        assertJsonNull(variable, "a missing variable");
     }
 
     @Test
-    void criterion1_missingVariable_withoutEqualsPrefix_alsoThrows() {
-        assertThatThrownBy(() -> elementSupport.evaluateMapping(
-                mapping("routeStageUuid", "routeStageUuid"),
-                List.of(str("otherVar", "x"))))
-            .isInstanceOf(FeelEvaluationException.class)
-            .hasMessageContaining("routeStageUuid");
+    void criterion1_missingVariable_withoutEqualsPrefix_alsoANullValue() {
+        ProcessVariable variable = elementSupport.evaluateMapping(
+            mapping("routeStageUuid", "routeStageUuid"),
+            List.of(str("otherVar", "x")));
+
+        assertJsonNull(variable, "a missing variable (no '=' prefix)");
     }
 
     // ─── Предпосылка бага: legacy JSR-223 действительно глотает failure ──────
@@ -123,17 +143,14 @@ class Eng29FeelNullIoMappingUnitTest {
             .isNull();
     }
 
-    // ─── Критерий 3: легитимный null — как раньше, без исключения ────────────
+    // ─── Критерий 3: легитимный null — значение, а не ошибка ──────────────────
 
     @Test
-    void criterion3_explicitNullLiteral_behavesAsBefore() {
+    void criterion3_explicitNullLiteral_isANullValue() {
         ProcessVariable variable = elementSupport.evaluateMapping(
             mapping("=null", "nullEcho"), List.of());
 
-        assertThat(variable.getType()).isEqualTo(ProcessVariableType.STRING);
-        assertThat(variable.getValue())
-            .as("explicit =null keeps the pre-fix '' STRING behaviour (no incident)")
-            .isEqualTo("");
+        assertJsonNull(variable, "an explicit =null literal");
     }
 
     @Test
@@ -148,10 +165,7 @@ class Eng29FeelNullIoMappingUnitTest {
         ProcessVariable variable = elementSupport.evaluateMapping(
             mapping("=routeStageUuid", "routeStageUuid"), List.of(nullValued));
 
-        assertThat(variable.getType()).isEqualTo(ProcessVariableType.STRING);
-        assertThat(variable.getValue())
-            .as("present-but-null variable is honest null, not an evaluation failure")
-            .isEqualTo("");
+        assertJsonNull(variable, "a present-but-null variable");
     }
 
     @Test
@@ -166,16 +180,26 @@ class Eng29FeelNullIoMappingUnitTest {
 
     @Test
     void suppressedFailureWithNonNullValue_proceedsWithValue() {
-        // WO-DIFF-1 S-027 precedent: `=noSuchVar` USED TO yield "" via the legacy
-        // path and existing fixtures (toProcessVariable on null) rely on it; more
-        // importantly a suppressed failure alongside a REAL value (fallback/default
-        // expressions that degrade gracefully) must keep flowing — only null-valued
-        // failures are incidents. Direct unit proof on the same native result shape.
+        // WO-DIFF-1 S-027 precedent: a suppressed failure alongside a REAL value
+        // (fallback expressions that degrade gracefully) must keep flowing — only
+        // null-valued failures become a null VALUE. Direct unit proof on the same
+        // native result shape.
         ProcessVariable variable = elementSupport.evaluateMapping(
             mapping("=if routeStageUuid = null then \"fallback\" else routeStageUuid", "out"),
             List.of());
 
         assertThat(variable.getType()).isEqualTo(ProcessVariableType.STRING);
         assertThat(variable.getValue()).isEqualTo("fallback");
+    }
+
+    // ─── Жёсткая ошибка — по-прежнему исключение (инцидент) ──────────────────
+
+    @Test
+    void hardFailure_syntaxError_stillThrows() {
+        assertThatThrownBy(() -> elementSupport.evaluateMapping(
+                mapping("=1 +", "broken"), List.of()))
+            .as("a syntax error is a genuine computation error (the Zeebe fix class) — "
+                + "never an absent variable; live 8.5 rejects it at deploy (WO-C8-56)")
+            .isInstanceOf(FeelEvaluationException.class);
     }
 }
