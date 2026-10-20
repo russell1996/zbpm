@@ -208,6 +208,35 @@ services:
       RETENTION_TTL_DAYS: ${RETENTION_TTL_DAYS:-0}
       RETENTION_POLL_INTERVAL_MS: ${RETENTION_POLL_INTERVAL_MS:-3600000}
       BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-Asia/Almaty}
+      # WO-AUDIT-15 (F-11): чистка таблиц events/outbox (WO-AUDIT-7). Код и
+      # properties были, а РУЧЕК в compose не было: в контейнер они не попадали,
+      # дефолт 0 (= выключено) оставался в силе, и events/outbox росли бесконечно.
+      # Имена — ТОЧНАЯ relaxed-binding форма ключей
+      # `zorrobpm.engine.retention.events-ttl-days` / `...outbox-ttl-days`
+      # (прецедент C8-36 F-7: укороченное имя без ENGINE_/RETENTION_ не
+      # разрешается никогда).
+      #
+      # Умолчание 0 = чистка ВЫКЛЮЧЕНА (безопасно: таблицы растут, но ничего не
+      # удаляется по чужому решению). Включение на проде — решение владельца,
+      # не исполнителя; порядок включения: сначала DRY_RUN=true (считает
+      # «удалил бы N», удаляет 0), потом TTL.
+      #
+      # Окно SSE catch-up: клиент, отвалившийся дольше TTL, при reconnect по
+      # Last-Event-ID получит ДЫРУ в ленте — строки с его позицией уже удалены.
+      # Живой подписчик защищён (пин SseLiveCursorTracker: строки выше
+      # минимального активного курсора не трогаются), но отключившийся клиент
+      # не зарегистрирован и ничем не прикрыт. Поэтому events-TTL обязан быть
+      # НЕ МЕНЬШЕ максимального окна disconnected-клиента (для ориентира: 30
+      # дней покрывает выходные и отпуск; меньше 7 дней — почти наверняка
+      # рвёт ленту у мобильных клиентов).
+      ZORROBPM_ENGINE_RETENTION_EVENTS_TTL_DAYS: ${ZORROBPM_ENGINE_RETENTION_EVENTS_TTL_DAYS:-0}
+      ZORROBPM_ENGINE_RETENTION_OUTBOX_TTL_DAYS: ${ZORROBPM_ENGINE_RETENTION_OUTBOX_TTL_DAYS:-0}
+      # dry-run + пауза между батчами — тот же набор WO-AUDIT-7. dry-run
+      # ОБЯЗАТЕЛЕН как первый шаг включения (считает, не удаляет). Без
+      # проброса этих двух оператор не смог бы даже посмотреть, что чистка
+      # собралась бы удалить.
+      ZORROBPM_ENGINE_RETENTION_DRY_RUN: ${ZORROBPM_ENGINE_RETENTION_DRY_RUN:-false}
+      ZORROBPM_ENGINE_RETENTION_BATCH_PAUSE_MS: ${ZORROBPM_ENGINE_RETENTION_BATCH_PAUSE_MS:-0}
       # WO-C8-36 (H-1): phased-штамп вызова в теле задания. В нашем стеке engine
       # и http-connector released together, все воркеры этого релиза новые —
       # поэтому true (прод-дефолт в application.properties остаётся false для

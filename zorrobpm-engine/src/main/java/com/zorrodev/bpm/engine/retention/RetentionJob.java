@@ -40,6 +40,13 @@ public class RetentionJob {
         if (config.getTtlDays() <= 0
                 && config.getEventsTtlDays() <= 0
                 && config.getOutboxTtlDays() <= 0) {
+            // WO-AUDIT-15 (П-1 verifier): выключенная чистка не должна оставлять
+            // в метрике значение ПРОШЛОГО прохода. Иначе оператор выключает TTL
+            // и видит на дашборде «удалено 1000 строк за последний проход» —
+            // будто чистка продолжает работать. Ноль здесь означает «за этот тик
+            // ничего не удалено», и описание метрики это фиксирует.
+            bpmMetrics.setRetentionEventsDeletedLastPass(0L);
+            bpmMetrics.setRetentionOutboxDeletedLastPass(0L);
             return; // disabled
         }
 
@@ -53,9 +60,15 @@ public class RetentionJob {
         }
         if (config.getEventsTtlDays() > 0) {
             runEventsPass(passNow, deadlineNanos);
+        } else {
+            // Проход по events выключен — gauge не должен показывать прошлый.
+            bpmMetrics.setRetentionEventsDeletedLastPass(0L);
         }
         if (config.getOutboxTtlDays() > 0) {
             runOutboxPass(passNow, deadlineNanos);
+        } else {
+            // То же для outbox.
+            bpmMetrics.setRetentionOutboxDeletedLastPass(0L);
         }
     }
 
@@ -68,6 +81,9 @@ public class RetentionJob {
         Instant cutoff = passNow.minus(Duration.ofDays(config.getEventsTtlDays()));
         if (config.isDryRun()) {
             long would = batchProcessor.countEligibleEvents(cutoff, cursorTracker.minActiveCursor());
+            // WO-AUDIT-15 (F-11): gauge последнего прохода — 0 (dry-run ничего не
+            // удаляет), иначе он продолжал бы показывать прошлый реальный проход.
+            bpmMetrics.setRetentionEventsDeletedLastPass(0L);
             log.warn("Retention dry-run: would delete {} events rows older than {} — deleting 0 "
                 + "(dry-run covers events/outbox passes only; instance/submission/orphan passes "
                 + "are unaffected)", would, cutoff);
@@ -91,6 +107,9 @@ public class RetentionJob {
             }
         }
         bpmMetrics.recordRetentionPassDuration(Duration.between(passStart, Instant.now()));
+        // WO-AUDIT-15 (F-11): «сколько удалил последний проход» — 0 честно значит
+        // «проход отработал и ничего не удалил» (чистка настроена, но пусто).
+        bpmMetrics.setRetentionEventsDeletedLastPass(rows);
         if (rows > 0) {
             log.info("Retention: deleted {} events rows in {} batches", rows, batches);
         }
@@ -104,6 +123,8 @@ public class RetentionJob {
         Instant cutoff = passNow.minus(Duration.ofDays(config.getOutboxTtlDays()));
         if (config.isDryRun()) {
             long would = batchProcessor.countEligibleOutbox(cutoff);
+            // WO-AUDIT-15 (F-11): см. events-проход — dry-run удаляет 0.
+            bpmMetrics.setRetentionOutboxDeletedLastPass(0L);
             log.warn("Retention dry-run: would delete {} outbox rows older than {} — deleting 0 "
                 + "(dry-run covers events/outbox passes only; instance/submission/orphan passes "
                 + "are unaffected)", would, cutoff);
@@ -127,6 +148,8 @@ public class RetentionJob {
             }
         }
         bpmMetrics.recordRetentionPassDuration(Duration.between(passStart, Instant.now()));
+        // WO-AUDIT-15 (F-11): результат последнего прохода (0 = прошёл и ничего не удалил).
+        bpmMetrics.setRetentionOutboxDeletedLastPass(rows);
         if (rows > 0) {
             log.info("Retention: deleted {} outbox rows in {} batches", rows, batches);
         }
