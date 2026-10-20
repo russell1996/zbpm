@@ -192,6 +192,31 @@ describe('WO-UI-28 criterion 4: empty value opens editor; validation error expan
     expect(toggle.attributes('disabled')).toBeDefined()
   })
 
+  // WO-UI-42 п.2 (UI-28 О-3): находка приёмки — «наблюдение, не дефект:
+  // jsonCollapsedOverride по индексу + сброс только по длине — та же идиома,
+  // что jsonShown; ошибка валидации всегда раскрывает (rowError раньше
+  // override) — потери видимости ошибки нет. Не чинить».
+  // Закрываем по описанию: закрепляем инвариант тестом, чтобы правка
+  // порядка проверок (override раньше rowError) не проскочила молча.
+  it('инвариант: явный override «свернуто» НЕ скрывает ошибку — строка раскрывается', async () => {
+    const w = mount(VariablesEditor, {
+      props: { modelValue: [{ name: 'j', type: 'JSON', value: '{"a":1}' }] },
+    })
+    await flushPromises()
+    const toggle = () => w.find('[data-testid="ve-json-toggle-0"]')
+    // Пользователь раскрывает строку, потом снова сворачивает (override = true).
+    await toggle().trigger('click')
+    await flushPromises()
+    await toggle().trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="ve-json-preview-0"]').exists(), 'строка свёрнута пользователем').toBe(true)
+    // Значение стало невалидным (шаблон/проп сменился) — ошибка обязана быть
+    // видна: строка раскрывается ВОПРЕКИ override.
+    await w.setProps({ modelValue: [{ name: 'j', type: 'JSON', value: '{"a": truely}' }] })
+    await flushPromises()
+    expect(w.find('[data-testid="ve-json-preview-0"]').exists(), 'ошибка видна: превью скрыто').toBe(false)
+    expect(w.find('textarea[id^="pv-value-"]').exists(), 'строка раскрыта — редактор с ошибкой').toBe(true)
+  })
 })
 
 describe('WO-UI-28 criterion 5: collapse does not mutate the value', () => {
