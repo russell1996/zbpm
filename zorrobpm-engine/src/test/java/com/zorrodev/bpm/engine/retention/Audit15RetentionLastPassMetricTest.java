@@ -157,6 +157,55 @@ class Audit15RetentionLastPassMetricTest {
             .isEqualTo(1.0);
     }
 
+    @Test
+    void aDisabledPass_doesNotLeaveTheValueOfThePreviousPassOnTheGauge() {
+        config.setEventsTtlDays(30);
+        when(batchProcessor.claimAndDeleteEventsBatch(any(), eq(25), any()))
+            .thenReturn(new RetentionBatchProcessor.EventsBatch(List.of(1L, 2L, 3L), 3))
+            .thenReturn(new RetentionBatchProcessor.EventsBatch(List.of(), 0));
+
+        job.run();
+        assertThat(gauge(EVENTS_GAUGE)).isEqualTo(3.0);
+
+        // Оператор выключает чистку (TTL = 0). Gauge не должен продолжать
+        // показывать «удалено 3» от прохода, который больше не идёт.
+        config.setEventsTtlDays(0);
+        job.run();
+
+        assertThat(gauge(EVENTS_GAUGE))
+            .as("выключенный проход обязан обнулить gauge (иначе на дашборде остаётся "
+                + "значение прошлого прохода и кажется, что чистка работает)")
+            .isEqualTo(0.0);
+    }
+
+    @Test
+    void aPassThatIsDisabledWhileTheOtherOneRuns_keepsItsGaugeAtZero() {
+        // Сначала events-проход идёт и удаляет — его gauge становится 3.
+        config.setEventsTtlDays(30);
+        when(batchProcessor.claimAndDeleteEventsBatch(any(), eq(25), any()))
+            .thenReturn(new RetentionBatchProcessor.EventsBatch(List.of(1L, 2L, 3L), 3))
+            .thenReturn(new RetentionBatchProcessor.EventsBatch(List.of(), 0));
+        job.run();
+        assertThat(gauge(EVENTS_GAUGE)).isEqualTo(3.0);
+
+        // Теперь events-проход выключен, а outbox-проход включён. Gauge по events
+        // обязан стать 0: проход не идёт, показывать «удалено 3» нельзя.
+        config.setEventsTtlDays(0);
+        config.setOutboxTtlDays(14);
+        when(batchProcessor.claimAndDeleteOutboxBatch(any(), eq(25)))
+            .thenReturn(new RetentionBatchProcessor.OutboxBatch(
+                java.util.List.of(java.util.UUID.randomUUID()), 2))
+            .thenReturn(new RetentionBatchProcessor.OutboxBatch(List.of(), 0));
+
+        job.run();
+
+        assertThat(gauge(OUTBOX_GAUGE)).isEqualTo(2.0);
+        assertThat(gauge(EVENTS_GAUGE))
+            .as("выключенный events-проход обязан обнулить свой gauge (иначе на дашборде "
+                + "остаётся «удалено 3» от прохода, который уже не идёт)")
+            .isEqualTo(0.0);
+    }
+
     private double gauge(String name) {
         Gauge g = registry.find(name).gauge();
         assertThat(g).as("метрика %s обязана быть зарегистрирована", name).isNotNull();

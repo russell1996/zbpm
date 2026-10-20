@@ -9,7 +9,9 @@ import org.springframework.core.env.SystemEnvironmentPropertySource;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -84,6 +86,11 @@ class Audit15RetentionComposeEnvBindingTest {
     /** Compose-файлы, в которых ручка обязана быть объявлена. */
     private static final String[] COMPOSE_FILES = {"docker-compose.yml", "docker-compose.multi.yml"};
 
+    /** Сервис приложения в каждом из compose-файлов (в soak-риге — {@code app1}, источник якоря). */
+    private static final Map<String, String> COMPOSE_APP_SERVICE = Map.of(
+        "docker-compose.yml", "app",
+        "docker-compose.multi.yml", "app1");
+
     private static final String ENGINE_PROPERTIES =
         "zorrobpm-engine/src/main/resources/zorrobpm-engine.properties";
     private static final String ENV_EXAMPLE = ".env.example";
@@ -99,8 +106,17 @@ class Audit15RetentionComposeEnvBindingTest {
 
     /**
      * Критерий F-11, часть 1: каждая из четырёх ручек объявлена в
-     * {@code environment:} сервиса {@code app} — иначе оператор не достанется
+     * {@code environment:} сервиса приложения — иначе оператор не достанется
      * до неё ни через что (в {@code docker-compose.yml} нет {@code env_file}).
+     *
+     * <p><b>Проверяется именно блок сервиса приложения</b>, а не «где-то в
+     * файле»: переменная, объявленная в {@code environment:} другого сервиса
+     * (например, {@code frontend}), в контейнер приложения не попадает — и
+     * стража, ищущая имя где угодно в compose, такой дефект пропустила бы
+     * (проверено мутацией: перенос четырёх ручек в сервис {@code frontend}
+     * оставлял такой «сторож» зелёным). Блок сервиса выделяется так же, как в
+     * {@code ModuleConfigImportGuardTest.appServiceBlock} — по строке уровня
+     * сервиса.
      */
     @Test
     void retentionEnvVarsAreDeclaredInTheAppServiceOfEveryCompose() {
@@ -108,10 +124,38 @@ class Audit15RetentionComposeEnvBindingTest {
             Map<String, String> declared = envVarsDeclaredIn(composeFile);
             for (String envName : KEY_TO_ENV.values()) {
                 assertThat(declared)
-                    .as("%s обязан объявлять %s в environment: сервиса приложения — иначе "
+                    .as("%s обязан объявлять %s в environment: сервиса приложения (%s) — иначе "
                         + "значение из .env не попадёт в контейнер, и дефолт 0 (= выключено) "
-                        + "останется в силе (WO-AUDIT-15, F-11)", composeFile, envName)
+                        + "останется в силе (WO-AUDIT-15, F-11)",
+                        composeFile, envName, appServiceOf(composeFile))
                     .containsKey(envName);
+            }
+        }
+    }
+
+    /**
+     * Обратная сторона того же требования: ручка не должна «присутствовать» в
+     * environment других сервисов. Объявление в чужом сервисе не доставляет
+     * переменную в контейнер приложения, но создаёт ложное впечатление, что
+     * ручка проброшена, — и вводит в заблуждение того, кто чинит compose
+     * позже.
+     */
+    @Test
+    void retentionEnvVarsAreNotDeclaredInOtherServices() {
+        for (String composeFile : COMPOSE_FILES) {
+            String appService = appServiceOf(composeFile);
+            for (String service : serviceNamesOf(composeFile)) {
+                if (service.equals(appService)) {
+                    continue;
+                }
+                Map<String, String> declared = envVarsDeclaredIn(composeFile, service);
+                for (String envName : KEY_TO_ENV.values()) {
+                    assertThat(declared)
+                        .as("%s: ручка %s объявлена в environment сервиса '%s' — она туда "
+                            + "не попадает в контейнер приложения (%s); объявлять её надо "
+                            + "в сервисе приложения", composeFile, envName, service, appService)
+                        .doesNotContainKey(envName);
+                }
             }
         }
     }
@@ -251,15 +295,68 @@ class Audit15RetentionComposeEnvBindingTest {
 
     // ------------------------------------------------------------------ инфраструктура
 
-    /** Все {@code ИМЯ: ${ИМЯ:-дефолт}} из compose-файла: имя → дефолт. */
+    /** Все {@code ИМЯ: ${ИМЯ:-дефолт}} из блока сервиса приложения: имя → дефолт. */
     private static Map<String, String> envVarsDeclaredIn(String composeFile) {
-        String yaml = read(repoRoot().resolve(composeFile));
+        return envVarsDeclaredIn(composeFile, appServiceOf(composeFile));
+    }
+
+    /**
+     * Все {@code ИМЯ: ${ИМЯ:-дефолт}} из блока УКАЗАННОГО сервиса: имя → дефолт.
+     *
+     * <p>Форма объявления — конвенция репозитория: переменная с умолчанием
+     * ({@code ${VAR:-default}}). Голый литерал ({@code VAR: 30}) в compose
+     * означал бы, что значение оператора из {@code .env} игнорируется (compose
+     * побеждает файл) — такой вариант стража не принимает, и это правильно.
+     */
+    private static Map<String, String> envVarsDeclaredIn(String composeFile, String serviceName) {
+        String block = serviceBlock(read(repoRoot().resolve(composeFile)), serviceName);
         Map<String, String> result = new LinkedHashMap<>();
-        Matcher m = ENV_DECLARATION.matcher(yaml);
+        Matcher m = ENV_DECLARATION.matcher(block);
         while (m.find()) {
             result.put(m.group(1), m.group(2));
         }
         return result;
+    }
+
+    /** Имя сервиса приложения в конкретном compose-файле. */
+    private static String appServiceOf(String composeFile) {
+        return COMPOSE_APP_SERVICE.get(composeFile);
+    }
+
+    /** Имена сервисов compose-файла (строки уровня сервиса, два пробела). */
+    private static List<String> serviceNamesOf(String composeFile) {
+        List<String> names = new ArrayList<>();
+        Matcher m = Pattern.compile("(?m)^ {2}([a-z0-9-]+):").matcher(
+            read(repoRoot().resolve(composeFile)));
+        while (m.find()) {
+            names.add(m.group(1));
+        }
+        return names;
+    }
+
+    /**
+     * Блок одного сервиса compose: от его заголовка до следующего заголовка
+     * уровня сервиса. Тот же приём, что в
+     * {@code ModuleConfigImportGuardTest.appServiceBlock}.
+     */
+    private static String serviceBlock(String yaml, String serviceName) {
+        List<String> lines = List.of(yaml.split("\n", -1));
+        int start = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).matches("^ {2}" + Pattern.quote(serviceName) + ":.*")) {
+                start = i + 1;
+                break;
+            }
+        }
+        if (start < 0) {
+            throw new IllegalStateException("сервис '" + serviceName + "' не найден в compose-файле");
+        }
+        for (int i = start; i < lines.size(); i++) {
+            if (lines.get(i).matches("^ {2}[a-z0-9-]+:.*")) {
+                return String.join("\n", lines.subList(start, i));
+            }
+        }
+        return String.join("\n", lines.subList(start, lines.size()));
     }
 
     /** Все {@code ${ИМЯ:дефолт}} из properties-файла: имя переменной → дефолт. */

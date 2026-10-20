@@ -40,6 +40,13 @@ public class RetentionJob {
         if (config.getTtlDays() <= 0
                 && config.getEventsTtlDays() <= 0
                 && config.getOutboxTtlDays() <= 0) {
+            // WO-AUDIT-15 (П-1 verifier): выключенная чистка не должна оставлять
+            // в метрике значение ПРОШЛОГО прохода. Иначе оператор выключает TTL
+            // и видит на дашборде «удалено 1000 строк за последний проход» —
+            // будто чистка продолжает работать. Ноль здесь означает «за этот тик
+            // ничего не удалено», и описание метрики это фиксирует.
+            bpmMetrics.setRetentionEventsDeletedLastPass(0L);
+            bpmMetrics.setRetentionOutboxDeletedLastPass(0L);
             return; // disabled
         }
 
@@ -53,9 +60,15 @@ public class RetentionJob {
         }
         if (config.getEventsTtlDays() > 0) {
             runEventsPass(passNow, deadlineNanos);
+        } else {
+            // Проход по events выключен — gauge не должен показывать прошлый.
+            bpmMetrics.setRetentionEventsDeletedLastPass(0L);
         }
         if (config.getOutboxTtlDays() > 0) {
             runOutboxPass(passNow, deadlineNanos);
+        } else {
+            // То же для outbox.
+            bpmMetrics.setRetentionOutboxDeletedLastPass(0L);
         }
     }
 

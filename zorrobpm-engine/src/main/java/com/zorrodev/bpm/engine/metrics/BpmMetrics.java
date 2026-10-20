@@ -341,11 +341,13 @@ public class BpmMetrics {
         // счётчике неразличимы, на этом gauge — различимы.
         Gauge.builder("zbpm.retention.events.deleted.last_pass",
                 retentionEventsDeletedLastPass, AtomicLong::doubleValue)
-            .description("Events rows deleted by the LAST retention pass (0 = the pass ran and deleted nothing)")
+            .description("Events rows deleted by the LAST retention pass (0 = the last tick deleted "
+                + "nothing: either the pass is disabled (TTL=0) or it ran and found nothing)")
             .register(registry);
         Gauge.builder("zbpm.retention.outbox.deleted.last_pass",
                 retentionOutboxDeletedLastPass, AtomicLong::doubleValue)
-            .description("Outbox rows deleted by the LAST retention pass (0 = the pass ran and deleted nothing)")
+            .description("Outbox rows deleted by the LAST retention pass (0 = the last tick deleted "
+                + "nothing: either the pass is disabled (TTL=0) or it ran and found nothing)")
             .register(registry);
 
         // WO-AUDIT-8 (A-NEW4-10): retry-lane queue depth — насыщение lane
@@ -465,6 +467,11 @@ public class BpmMetrics {
      * WO-AUDIT-15 (F-11): результат ПОСЛЕДНЕГО прохода по таблице events.
      * Вызывается в конце прохода — и когда он ничего не удалил (0), иначе gauge
      * врал бы «проход удалил N» после прохода, который удалил 0.
+     *
+     * <p>Вызывается и тогда, когда проход ВЫКЛЮЧЕН (TTL = 0): в этом случае
+     * gauge показывает 0, а не значение прошлого прохода — иначе после
+     * выключения чистки на дашборде осталось бы «удалено N» от прохода,
+     * который давно не идёт.
      */
     public void setRetentionEventsDeletedLastPass(long rows) {
         retentionEventsDeletedLastPass.set(rows);
