@@ -167,6 +167,29 @@ expect_marker() {
   fi
 }
 
+# F16. the "at least 8 characters" rule must count CHARACTERS, not bytes: under LC_ALL=C bash
+#      counts bytes, so a 7-character Cyrillic value would measure 14 and slip through. The gate
+#      pins a UTF-8 locale itself, so the check must behave the same under LC_ALL=C.
+expect_marker_cyr() { # <label> <report> <expected: ok|fail>
+  local label="$1" report="$2" want="$3" out ok=0 ln="${BASH_LINENO[0]}"
+  TOTAL=$((TOTAL + 1))
+  set +e
+  out="$(LC_ALL=C WO_GATE_BASE="$BASE_SHA" bash "$GATE" SELFTEST "$report" 2>&1)"
+  set -e
+  if [ "$want" = "ok" ]; then
+    if printf '%s\n' "$out" | grep -q "OK.*G25"; then ok=1; fi
+  else
+    if printf '%s\n' "$out" | grep -q "FAIL.*G25"; then ok=1; fi
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "SELFTEST OK      $label (LC_ALL=C: G25 '$want' as expected)"
+  else
+    echo "SELFTEST FAILURE $label - ci/test-wo-report-gate-selftest.sh:$ln expected a G25 '$want' line under LC_ALL=C"
+    printf '%s\n' "$out" | grep -E 'G25' | head -3
+    FAILED=$((FAILED + 1))
+  fi
+}
+
 write_report
 BASE_SHA="$(git rev-parse "$BASE")"
 
@@ -486,6 +509,11 @@ expect_marker "engine handler, marker only in a ~~~ block -> G25 FAIL" "$BASE_SH
   /tmp/wo-report-gate-selftest.report.$$.tilde.md
 expect_marker "engine handler, marker only in an indented code block -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
   /tmp/wo-report-gate-selftest.report.$$.indented.md
+expect_marker_cyr "LC_ALL=C, 7 Cyrillic chars after the marker -> G25 FAIL" \
+  /tmp/wo-report-gate-selftest.report.$$.cyr7.md fail
+expect_marker_cyr "LC_ALL=C, 8 Cyrillic chars after the marker -> G25 OK" \
+  /tmp/wo-report-gate-selftest.report.$$.cyr8.md ok
+
 BASE_SHA="$head"
 
 # F13. probes removed → the diff of this commit still lists the deleted paths, so the
@@ -519,33 +547,6 @@ expect_marker "docs-only diff -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
 expect_marker "docs-only diff -> G26 SKIP" "$BASE_SHA" "$head" skip "G26" \
   /tmp/wo-report-gate-selftest.report.$$.plain.md
 BASE_SHA="$head"
-
-# F16. the "at least 8 characters" rule must count CHARACTERS, not bytes: under LC_ALL=C bash
-#      counts bytes, so a 7-character Cyrillic value would measure 14 and slip through. The gate
-#      pins a UTF-8 locale itself, so the check must behave the same under LC_ALL=C.
-expect_marker_cyr() { # <label> <report> <expected: ok|fail>
-  local label="$1" report="$2" want="$3" out ok=0 ln="${BASH_LINENO[0]}"
-  TOTAL=$((TOTAL + 1))
-  set +e
-  out="$(LC_ALL=C WO_GATE_BASE="$BASE_SHA" bash "$GATE" SELFTEST "$report" 2>&1)"
-  set -e
-  if [ "$want" = "ok" ]; then
-    if printf '%s\n' "$out" | grep -q "OK.*G25"; then ok=1; fi
-  else
-    if printf '%s\n' "$out" | grep -q "FAIL.*G25"; then ok=1; fi
-  fi
-  if [ "$ok" -eq 1 ]; then
-    echo "SELFTEST OK      $label (LC_ALL=C: G25 '$want' as expected)"
-  else
-    echo "SELFTEST FAILURE $label - ci/test-wo-report-gate-selftest.sh:$ln expected a G25 '$want' line under LC_ALL=C"
-    printf '%s\n' "$out" | grep -E 'G25' | head -3
-    FAILED=$((FAILED + 1))
-  fi
-}
-expect_marker_cyr "LC_ALL=C, 7 Cyrillic chars after the marker -> G25 FAIL" \
-  /tmp/wo-report-gate-selftest.report.$$.cyr7.md fail
-expect_marker_cyr "LC_ALL=C, 8 Cyrillic chars after the marker -> G25 OK" \
-  /tmp/wo-report-gate-selftest.report.$$.cyr8.md ok
 
 if [ "$FAILED" -ne 0 ]; then
   echo "SELFTEST: $FAILED case(s) FAILED - wo-report-gate.sh G2/G24/G25/G26 regressed."
