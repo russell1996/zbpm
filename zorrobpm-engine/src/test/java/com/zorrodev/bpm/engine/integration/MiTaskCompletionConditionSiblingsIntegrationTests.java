@@ -116,10 +116,19 @@ public class MiTaskCompletionConditionSiblingsIntegrationTests {
             .toList();
     }
 
-    /** Живые инстансы MI-элемента (activity-строки CREATED/IN_PROGRESS). */
+    /**
+     * Живые инстансы MI-элемента (activity-строки CREATED/IN_PROGRESS).
+     *
+     * <p>Фильтр по статусам идёт ПОВЕРХ выборки строк (как в PG-варианте
+     * {@code MiTaskCompletionConditionSiblingsPgIT.liveInstances}), а не по
+     * предварительно отфильтрованному списку: иначе ветка {@code IN_PROGRESS}
+     * была бы мёртвой и helper молча смотрел бы только на CREATED.
+     */
     private List<ActivityEntity> liveInstances(UUID pi, String elementId) {
-        return activities(pi, elementId, ActivityStatus.CREATED)
-            .stream().filter(a -> a.getStatus() == ActivityStatus.CREATED || a.getStatus() == ActivityStatus.IN_PROGRESS)
+        return activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(pi))
+            .filter(a -> a.getBpmnElementId().equals(elementId))
+            .filter(a -> a.getStatus() == ActivityStatus.CREATED || a.getStatus() == ActivityStatus.IN_PROGRESS)
             .sorted(Comparator.comparing(ActivityEntity::getId))
             .toList();
     }
