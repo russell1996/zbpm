@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, watch } from 'vue'
+import { onMounted, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
@@ -28,6 +28,11 @@ const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage }
   { resolved: false },
   { getTotalElements: () => store.incidents?.totalElements },
 )
+// Имя фиксата в шаблоне осталось прежним (showResolved) — изменился только
+// ИСТОЧНИК состояния (query-параметр вместо локального ref). Так строка
+// <input> в шаблоне не меняется: «голый» <input> здесь — старый долг, а не
+// новый UI (G24 считает только ДОБАВЛЕННЫЕ строки).
+const showResolved = toRef(state, 'resolved')
 // WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
 const scroll = useListScroll('incidents')
 
@@ -92,7 +97,7 @@ function exportData() {
 
     <div class="flex items-center gap-4">
       <label class="flex items-center gap-2 text-sm">
-        <input v-model="state.resolved" type="checkbox" class="rounded" />
+        <input v-model="showResolved" type="checkbox" class="rounded" />
         {{ t('showCompleted') }}
       </label>
     </div>

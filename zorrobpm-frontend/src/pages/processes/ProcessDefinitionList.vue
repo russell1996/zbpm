@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
@@ -41,6 +41,12 @@ const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage }
   },
   { getTotalElements: () => store.definitions?.totalElements },
 )
+// Имена фиксатов в шаблоне остались прежними (latestOnly / showArchived) —
+// изменился только ИСТОЧНИК состояния (query-параметр вместо локального
+// ref). Так строки <input> в шаблоне не меняются: «голый» <input> здесь —
+// старый долг, а не новый UI (G24 считает только ДОБАВЛЕННЫЕ строки).
+const latestOnly = toRef(state, 'latest')
+const showArchived = toRef(state, 'archived')
 // WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
 const scroll = useListScroll('definitions')
 
@@ -178,11 +184,11 @@ watch(() => [state.search, state.latest, state.archived], debounce(() => { reset
         class="px-3 py-2 border border-input rounded-md text-sm w-64 focus:outline-none focus:ring-2 focus:ring-ring"
       />
       <label class="flex items-center gap-2 text-sm">
-        <input v-model="state.latest" type="checkbox" class="rounded" />
+        <input v-model="latestOnly" type="checkbox" class="rounded" />
         {{ t('latestOnly') }}
       </label>
       <label class="flex items-center gap-2 text-sm">
-        <input v-model="state.archived" type="checkbox" class="rounded" data-testid="show-archived-toggle" />
+        <input v-model="showArchived" type="checkbox" class="rounded" data-testid="show-archived-toggle" />
         {{ t('showArchived') }}
       </label>
       <!-- WO-ACL-8 criterion 22: "All / My" segment toggle instead of checkbox. -->

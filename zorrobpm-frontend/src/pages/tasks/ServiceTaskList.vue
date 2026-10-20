@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, watch } from 'vue'
+import { onMounted, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
@@ -26,6 +26,11 @@ const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage }
   { completed: false },
   { getTotalElements: () => store.serviceTasks?.totalElements },
 )
+// Имя фиксата в шаблоне осталось прежним (filterCompleted) — изменился
+// только ИСТОЧНИК состояния (query-параметр вместо локального ref). Так
+// строка <input> в шаблоне не меняется: «голый» <input> здесь — старый долг,
+// а не новый UI (G24 считает только ДОБАВЛЕННЫЕ строки).
+const filterCompleted = toRef(state, 'completed')
 // WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
 const scroll = useListScroll('serviceTasks')
 
@@ -91,7 +96,7 @@ watch(() => state.completed, debounce(() => { resetPage(); load() }))
 
     <div class="flex items-center gap-4">
       <label class="flex items-center gap-2 text-sm">
-        <input v-model="state.completed" type="checkbox" class="rounded" />
+        <input v-model="filterCompleted" type="checkbox" class="rounded" />
         {{ t('showCompleted') }}
       </label>
     </div>
