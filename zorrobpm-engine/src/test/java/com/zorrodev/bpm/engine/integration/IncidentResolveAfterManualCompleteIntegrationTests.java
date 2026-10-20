@@ -179,7 +179,8 @@ public class IncidentResolveAfterManualCompleteIntegrationTests {
             .as("no new active activity was created").isZero();
         IncidentEntity afterResolveInc = tx.execute(s -> incidentRepository.findById(incidentId).orElseThrow());
         assertThat(afterResolveInc.getCompletedAt()).as("incident must be closed without re-execution").isNotNull();
-        assertThat(countOpenIncidents(svcId)).as("открытых инцидентов не осталось").isZero();    }
+        assertThat(countOpenIncidents(svcId)).as("открытых инцидентов не осталось").isZero();
+    }
 
     @Test
     void normalIncidentResolve_reExecutesWhenNotCompleted() throws Exception {
