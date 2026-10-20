@@ -26,6 +26,16 @@ WO-OPS-30 Ф2а. Поведение измерено на **живом Zeebe 8.5
 * **`retries`**: у live это поле активированного задания (воркер его видит), у нас — остаток
   бюджета в БД движка; пометка `workerVisibleRetries=NONE` означает, что в ТЕЛЕ задания
   бюджета нет (строка R4).
+* **время в пробе «воркера нет» ускорено**: вместо ожидания реальных 15 минут
+  `dispatch-timeout` watchdog вызывается боевым bean'ом
+  `StuckServiceTaskBatchProcessor.processBatch(Instant.now().plusSeconds(3600), 100, Duration.ofMinutes(15))`
+  — «час вместо 15 минут» (тот же порог, что в проде, но сдвинутый момент обработки).
+  Инцидент поднимает боевой код, а не тестовая копия.
+* **сырые артефакты прогонов — gitignored**: `scenarios/f2a-*/result-8.5.json` (живая сторона) и
+  `zorrobpm-engine/target/job-protocol-observed.json` (наша сторона) НЕ лежат в дереве ветки —
+  они перегенерируются прогонами (`node job-protocol.js`, `JobProtocolConformanceIntegrationTests`).
+  Ветками в git: корпус кейсов `zorrobpm-engine/src/test/resources/job-protocol-cases.json`,
+  канонические BPMN `zorrobpm-engine/src/test/resources/job-protocol/*.bpmn` и эта матрица.
 
 | # | кейс | 8.9 docs | Zeebe 8.5 live | ours | вердикт / находка |
 |---:|---|---|---|---|---|
