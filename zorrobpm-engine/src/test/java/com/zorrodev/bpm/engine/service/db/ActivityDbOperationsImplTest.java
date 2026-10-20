@@ -105,6 +105,57 @@ class ActivityDbOperationsImplTest {
         verify(domainEventEmitter, never()).emitActivityCompleted(any(), any(), any(), any());
     }
 
+    /**
+     * WO-AUDIT-12 (F-02) ↔ WO-AUDIT-11 (F-09): УЗКИЙ переход «бросивший элемент →
+     * COMPLETED» допускает источник CANCELLED — именно в этом статусе строка
+     * бросившего error-end элемента оказывается после гашения скоупа, которое
+     * вызвал САМ этот бросок (причина, не жертва).
+     *
+     * <p>Точный список источников — часть контракта: ERROR (паркованный элемент с
+     * открытым инцидентом) и COMPLETED (повторное завершение) в него НЕ входят.
+     */
+    @Test
+    void completeActivityAfterHandledError_allowsCancelledSourceOnly() {
+        UUID activityId = UUID.randomUUID(); UUID piId = UUID.randomUUID();
+        ActivityEntity act = new ActivityEntity(); act.setId(activityId); act.setProcessInstanceId(piId);
+        act.setBpmnElementId("errEnd"); act.setStatus(ActivityStatus.CANCELLED);
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(act));
+        ProcessInstanceEntity pi = new ProcessInstanceEntity(); pi.setId(piId); pi.setProcessDefinitionId(UUID.randomUUID());
+        when(processInstanceRepository.findById(piId)).thenReturn(Optional.of(pi));
+        when(activityRepository.setStatusAndCompletedAtIfStatusIn(eq(activityId), eq(ActivityStatus.COMPLETED),
+            any(java.time.Instant.class), any())).thenReturn(1);
+
+        db.completeActivityAfterHandledError(activityId);
+
+        // РОВНО этот набор источников: CANCELLED — можно (строка бросившего элемента),
+        // ERROR/COMPLETED — нельзя (паркованный элемент / повторное завершение).
+        verify(activityRepository).setStatusAndCompletedAtIfStatusIn(eq(activityId), eq(ActivityStatus.COMPLETED),
+            any(java.time.Instant.class),
+            eq(List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS, ActivityStatus.CANCELLED)));
+        verify(domainEventEmitter).emitActivityCompleted(eq(piId), any(UUID.class), eq("errEnd"), eq(null));
+    }
+
+    /**
+     * Тот же узкий переход, но строка ПАРКОВАНА (ERROR) или уже COMPLETED: переход
+     * не выполняется (0 обновлённых строк) — событие не эмитится, безусловный UPDATE
+     * не вызывается.
+     */
+    @Test
+    void completeActivityAfterHandledError_onNonUpdatableRow_emitsNothing() {
+        UUID activityId = UUID.randomUUID(); UUID piId = UUID.randomUUID();
+        ActivityEntity act = new ActivityEntity(); act.setId(activityId); act.setProcessInstanceId(piId);
+        act.setBpmnElementId("errEnd"); act.setStatus(ActivityStatus.ERROR);
+        when(activityRepository.findById(activityId)).thenReturn(Optional.of(act));
+        when(activityRepository.setStatusAndCompletedAtIfStatusIn(eq(activityId), eq(ActivityStatus.COMPLETED),
+            any(java.time.Instant.class), any())).thenReturn(0);
+
+        db.completeActivityAfterHandledError(activityId);
+
+        verify(activityRepository, never()).setStatusAndCompletedAt(any(), any(), any());
+        verify(messageSubscriptionRepository, never()).consumeByActivityIds(any(), any());
+        verify(domainEventEmitter, never()).emitActivityCompleted(any(), any(), any(), any());
+    }
+
     @Test
     void cancelActivity_closesHostSubscriptions() {
         UUID activityId = UUID.randomUUID(); UUID piId = UUID.randomUUID();

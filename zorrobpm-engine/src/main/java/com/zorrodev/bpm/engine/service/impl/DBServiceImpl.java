@@ -82,6 +82,11 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void completeActivityAfterHandledError(UUID activityId) {
+        activityDbOperations.completeActivityAfterHandledError(activityId);
+    }
+
+    @Override
     public void errorActivity(UUID activityId) {
         activityDbOperations.errorActivity(activityId);
     }
