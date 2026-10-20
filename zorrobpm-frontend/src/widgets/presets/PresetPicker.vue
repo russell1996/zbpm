@@ -227,11 +227,22 @@ async function loadPresets() {
   loading.value = true
   loadError.value = null
   try {
-    presets.value = await listPresets({
+    const list = await listPresets({
       key: props.processKey,
       kind: props.targetKind,
       ...(props.targetRef ? { ref: props.targetRef } : {}),
     })
+    // WO-UI-38: ответ может прийти НЕ-массивом (например, HTML от SPA-фолбэка
+    // прокси вместо JSON). `presets` обязан остаться массивом: иначе v-for
+    // рисует «шаблон» на каждый символ ответа, а поиск выбранного падает.
+    // Раньше это не всплывало: `.find` вызывался только за guard'ом «есть
+    // выбранный шаблон», а список всё равно показывал мусор.
+    if (!Array.isArray(list)) {
+      presets.value = []
+      loadError.value = t('loadError')
+      return
+    }
+    presets.value = list
   } catch (e) {
     if (isPresetsDisabled(e)) {
       available.value = false

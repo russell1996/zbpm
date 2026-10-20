@@ -271,6 +271,21 @@ describe('PresetPicker — WO-UI-34 single dropdown', () => {
     expect(w.findAll('button').some((b) => b.text().includes('presetSaveAsTemplate'))).toBe(false)
   })
 
+  it('(d-bis) a non-array response from listPresets does not break the picker', async () => {
+    // Ответ НЕ-массивом (например, HTML от SPA-фолбэка прокси вместо JSON):
+    // список шаблонов обязан остаться списком, а не «шаблоном на символ».
+    mockList.mockResolvedValue({ content: [] } as never)
+    const w = render()
+    await flushPromises()
+    expect(w.find('[data-testid="preset-select"]').exists()).toBe(true)
+    expect(w.text(), 'load error is shown').toContain('loadError')
+    const trigger = w.find('[data-testid="preset-select"]')
+    trigger.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(document.querySelectorAll('[role="option"]').length).toBe(1)
+  })
+
   it('more than 8 presets switch to the Combobox with search', async () => {
     mockList.mockResolvedValue(Array.from({ length: 10 }, (_, i) => preset(i + 1)))
     const w = render()
