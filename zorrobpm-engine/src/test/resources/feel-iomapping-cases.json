@@ -1367,6 +1367,76 @@
       "expect": {
         "outcome": "deployError"
       }
+    },
+    {
+      "id": "mi-outputelement-bare-parent-var",
+      "title": "MI outputElement as a bare reference to a PROCESS-level variable — the legal form of the production spelling",
+      "docs": "8.9 multi-instance: the output element is a FEEL expression; a bare identifier is pre-created as NULL in the MI scope (F1 root 6), so the process-level value is shadowed — live 8.5 probe mi-outputelement-eq-var: results [null, null]",
+      "wrap": "mi",
+      "outputCollection": "results",
+      "outputElement": "=probeId",
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ],
+        "probeId": "P"
+      },
+      "expect": {
+        "outcome": "completed",
+        "miJobCount": 2,
+        "miJobEach": {
+          "probeId": null
+        },
+        "dumpEquals": {
+          "probeId": "P",
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            null,
+            null
+          ]
+        }
+      }
+    },
+    {
+      "id": "mi-outputelement-ctx-parent-var",
+      "title": "MI outputElement as a CONTEXT that reads a process-level variable",
+      "docs": "8.9 multi-instance: a context expression is NOT pre-created, so the process-level value stays visible — live 8.5 probe mi-outputelement-eq-ctx-var: results [{v: P}, {v: P}]",
+      "wrap": "mi",
+      "outputCollection": "results",
+      "outputElement": "={\"v\": probeId}",
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ],
+        "probeId": "P"
+      },
+      "expect": {
+        "outcome": "completed",
+        "miJobCount": 2,
+        "miJobEach": {
+          "probeId": "P"
+        },
+        "dumpEquals": {
+          "probeId": "P",
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            {
+              "v": "P"
+            },
+            {
+              "v": "P"
+            }
+          ]
+        }
+      }
     }
   ]
 }

@@ -18,11 +18,19 @@
  *       semantics in Zeebe; the 'static value' rule of (A) must NOT be transferred there
  *       without a measurement. The prod corpus has 'mi.outputElement' values WITHOUT '='
  *       ('probeId', '{"decision": decision, "comment": comment}') — so this is not academic.
+ *       (C2) WHICH FORM MUST THE PRODUCER WRITE INSTEAD? The refused spelling has to be
+ *       replaced by something that deploys AND carries the value: a bare reference
+ *       ('=probeId'), a context ('={"v": probeId}') and a literal ('="probeId"') behave
+ *       DIFFERENTLY on live 8.5 — measured, not guessed.
  *
  * Writes scenarios/feel-iomapping-static-nested/result-8.5.json. No assumptions about the
  * expected values: this is a measurement, not an assertion suite.
  *
  * Usage: node feel-iomapping-static-nested.js
+ *
+ * Corpus: 29 probes (15 io-mapping + 14 multi-instance). Measured 2026-10-20 on the live
+ * Zeebe 8.5.0 oracle — the MI half of the corpus was extended on that day (WO-C8-55,
+ * maintainer's question "what exactly must the consumer write instead of the refused form?").
  */
 'use strict';
 const path = require('path');
@@ -124,6 +132,40 @@ const MI_PROBES = [
     why: 'inputCollection WITH \'=\' — control' },
   { id: 'mi-inputelement-plain', inputElement: 'item', vars: { items: ['a', 'b'] },
     why: 'inputElement is the NAME of the element variable — control' },
+
+  /* --- the "what exactly must the consumer write?" probes (maintainer, 2026-10-20) ---
+   * The prod corpus writes `outputElement="probeId"` (a bare variable name) and
+   * `outputElement='{"decision": decision, "comment": comment}'` (a JSON text). Both are
+   * refused at deploy by live 8.5. The consumer therefore needs the EXACT form to write
+   * instead — and the answer is not obvious: `=probeId` (a variable reference) and
+   * `={"decision": decision, "comment": comment}` (a context) are two different FEEL
+   * expressions, and the first measured result was `results: [null, null]`.
+   * These probes separate the three questions that hide behind that:
+   *   1) is the null a NAME artefact (`probeId`) or does EVERY bare reference behave so?
+   *   2) can the value be read inside a CONTEXT expression (`{"v": probeId}`)?
+   *   3) is the value visible in the MI scope at all, or only in the parent scope?
+   */
+  { id: 'mi-outputelement-eq-var-othername', outputElement: '=myVal',
+    vars: { myVal: 'M', items: ['a', 'b'] },
+    why: 'a bare variable reference under ANOTHER name — is the null name-specific?' },
+  { id: 'mi-outputelement-eq-ctx-var', outputElement: '={"v": probeId}',
+    vars: { probeId: 'P', items: ['a', 'b'] },
+    why: 'the SAME variable read INSIDE a context — can the MI scope see it?' },
+  { id: 'mi-outputelement-eq-ctx-var-othername', outputElement: '={"v": myVal}',
+    vars: { myVal: 'M', items: ['a', 'b'] },
+    why: 'the same under another name — control' },
+  { id: 'mi-outputelement-eq-literal', outputElement: '="probeId"',
+    vars: { probeId: 'P', items: ['a', 'b'] },
+    why: 'the LITERAL spelling (the form maintainer warned about) — the text, not the value' },
+  { id: 'mi-outputelement-eq-var-set-in-body', outputElement: '=probeId',
+    vars: { items: ['a', 'b'] }, completeVars: { probeId: 'P' },
+    why: 'the same reference, but the variable is written by the MI BODY itself — scope check' },
+  { id: 'mi-outputelement-eq-item-var', outputElement: '=item',
+    vars: { items: ['a', 'b'] },
+    why: 'a bare reference to the INPUT ELEMENT variable — the per-instance value' },
+  { id: 'mi-outputelement-eq-items-idx', outputElement: '=items[1]',
+    vars: { items: ['a', 'b'] },
+    why: 'a bare reference into the collection — is the collection visible in the MI scope?' },
 ];
 
 function miBpmn(pid, probe) {
@@ -259,7 +301,7 @@ async function runMi(client, probe) {
       for (const job of jobs) {
         const vars = parseVars(job);
         result.miJobs.push({ variablesRaw: job.variables, variables: vars });
-        await complete(client, job, {});
+        await complete(client, job, probe.completeVars || {});
       }
       continue;
     }
