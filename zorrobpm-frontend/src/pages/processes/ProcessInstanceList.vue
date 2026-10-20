@@ -11,6 +11,7 @@ import { debounce } from '@/shared/lib/debounce'
 import { processInstanceStatus } from '@/shared/lib/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Download, RefreshCw } from 'lucide-vue-next'
+import ResetFiltersButton from '@/widgets/shared/ResetFiltersButton.vue'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import type { ProcessDefinition } from '@/types/api'
@@ -23,7 +24,7 @@ const { formatDateTime } = useDateFormat()
 // WO-UI-39: состояние списка живёт в query-параметрах маршрута
 // (?instances.key=…, ?instances.page=…) — переход в карточку и «Назад»
 // возвращают ровно то же состояние, ссылку можно скопировать.
-const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState<{
+const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage, reset, isDefault } = useListState<{
   key: string
 }>(
   'instances',
@@ -98,6 +99,15 @@ onMounted(() => {
 // WO-UI-18 часть B: debounce — текстовый фильтр шлёт запрос на каждую
 // клавишу, без него пачка летит наперегонки.
 watch(() => state.key, debounce(() => { resetPage(); load() }))
+
+// WO-UI-41: сброс фильтров. Watcher фильтра перезагрузит список, только
+// если значение фильтра ИЗМЕНИЛОСЬ; при сбросе одной страницы фильтр
+// остаётся дефолтным — список перезагружаем здесь, иначе таблица
+// показывала бы прежнюю страницу данных.
+function resetFilters() {
+  reset()
+  void load()
+}
 </script>
 
 <template>
@@ -141,6 +151,7 @@ watch(() => state.key, debounce(() => { resetPage(); load() }))
           </SelectItem>
         </SelectContent>
       </Select>
+      <ResetFiltersButton :is-default="isDefault" @reset="resetFilters" />
     </div>
 
     <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>

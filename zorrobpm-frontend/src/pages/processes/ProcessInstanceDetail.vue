@@ -17,7 +17,8 @@ import { cancelProcessInstance } from '@/services/instanceService'
 import type { ProcessVariable, BpmnNode, BpmnFlow, VariableScopeGroup } from '@/types/api'
 import { isTaskActive, processInstanceStatus, isProcessInstanceActive, errorMessage } from '@/shared/lib/utils'
 import { isLongVariableValue, formatVariableValue } from '@/shared/lib/variableDisplay'
-import { RefreshCw, ArrowRight, ArrowLeft, Download, Calendar, OctagonX, Copy, Check } from 'lucide-vue-next'
+import { RefreshCw, ArrowRight, Download, Calendar, OctagonX, Copy, Check } from 'lucide-vue-next'
+import BackToList from '@/widgets/shared/BackToList.vue'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import TruncatedText from '@/widgets/shared/TruncatedText.vue'
 import IoMappingTable from '@/widgets/shared/IoMappingTable.vue'
@@ -1038,9 +1039,7 @@ watch(activeTab, onTabChange)
     <template v-else-if="processStore.currentInstance">
       <!-- WO-UI-14: compact enterprise header -->
       <div class="flex items-center gap-2">
-        <RouterLink :to="{ name: 'process-instances' }" class="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 self-center">
-          <ArrowLeft class="h-5 w-5" />
-        </RouterLink>
+        <BackToList list-key="instances" list-route-name="process-instances" />
         <div class="flex flex-col gap-0.5 flex-1 min-w-0">
           <!-- Row 1: Экземпляры процессов · UUID -->
           <!-- WO-VT-3 раунд 2: flex-wrap — на 360px крошки+UUID+кнопки не

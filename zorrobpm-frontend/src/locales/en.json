@@ -141,6 +141,8 @@
   "resolveIncident": "Resolve Incident",
   "completeSelected": "Complete Selected",
   "showCompleted": "Show completed",
+  "resetFilters": "Reset filters",
+  "backToList": "Back to list",
   "searchPlaceholder": "Search...",
   "noDefinitions": "No definitions deployed yet",
   "noInstances": "No instances found",

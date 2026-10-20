@@ -7,6 +7,7 @@ import { useToast } from '@/composables/useToast'
 import { useProcessStore } from '@/stores/process'
 import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
+import BackToList from '@/widgets/shared/BackToList.vue'
 import SchemaEditorPanel from '@/widgets/shared/SchemaEditorPanel.vue'
 import * as processService from '@/services/processService'
 import { listMembers, changeMemberRole, removeMember, type Member } from '@/services/adminService'
@@ -28,7 +29,7 @@ import {
 import { Button } from '@/components/ui/button'
 import ElementPresetsPanel from '@/widgets/presets/ElementPresetsPanel.vue'
 import { elementToPresetTarget } from '@/shared/lib/presetVariables'
-import { ArrowLeft, Download, Calendar } from 'lucide-vue-next'
+import { Download, Calendar } from 'lucide-vue-next'
 import { Badge } from '@/components/ui/badge'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
@@ -348,9 +349,7 @@ async function downloadBpmn() {
     <template v-else-if="store.currentDefinition">
       <!-- WO-UI-14: compact enterprise header -->
       <div class="flex items-center gap-2">
-        <RouterLink :to="{ name: 'process-definitions' }" class="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 self-center">
-          <ArrowLeft class="h-5 w-5" />
-        </RouterLink>
+        <BackToList list-key="definitions" list-route-name="process-definitions" />
         <div class="flex flex-col gap-0.5 flex-1 min-w-0">
           <!-- Row 1: ← Определения процессов · Key ········································ [Download BPMN] [Upload] [Start] -->
           <div class="flex items-center gap-2">

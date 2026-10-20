@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   fetchInstances: vi.fn(),
   fetchDefinitions: vi.fn(),
   resetPage: vi.fn(),
+  reset: vi.fn(),
+  isDefault: true,
   page: { value: 0 },
 }))
 

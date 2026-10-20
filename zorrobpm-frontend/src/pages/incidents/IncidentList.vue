@@ -9,6 +9,7 @@ import { useListScroll } from '@/composables/useListScroll'
 import { exportToCsv } from '@/shared/lib/export'
 import { debounce } from '@/shared/lib/debounce'
 import { Download, RefreshCw } from 'lucide-vue-next'
+import ResetFiltersButton from '@/widgets/shared/ResetFiltersButton.vue'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import TruncatedText from '@/widgets/shared/TruncatedText.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
@@ -21,7 +22,7 @@ const { formatDateTime } = useDateFormat()
 // unchecked -> only open incidents (server-side resolved=false); checked -> all
 // WO-UI-39: состояние списка живёт в query-параметрах маршрута
 // (?incidents.resolved=1, ?incidents.page=2).
-const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState<{
+const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage, reset, isDefault } = useListState<{
   resolved: boolean
 }>(
   'incidents',
@@ -57,6 +58,15 @@ onMounted(async () => {
 })
 // WO-UI-18 часть B: debounce (тот же паттерн, что TaskList).
 watch(() => state.resolved, debounce(() => { resetPage(); load() }))
+
+// WO-UI-41: сброс фильтров. Watcher фильтра перезагрузит список, только
+// если значение фильтра ИЗМЕНИЛОСЬ; при сбросе одной страницы фильтр
+// остаётся дефолтным — список перезагружаем здесь, иначе таблица
+// показывала бы прежнюю страницу данных.
+function resetFilters() {
+  reset()
+  void load()
+}
 
 function exportData() {
   if (!store.incidents?.data) return
@@ -100,6 +110,7 @@ function exportData() {
         <input v-model="showResolved" type="checkbox" class="rounded" />
         {{ t('showCompleted') }}
       </label>
+      <ResetFiltersButton :is-default="isDefault" @reset="resetFilters" />
     </div>
 
     <div v-if="store.loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>

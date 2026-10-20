@@ -7,12 +7,12 @@ import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useBreadcrumbLabel } from '@/composables/useBreadcrumbLabel'
 import type { ProcessVariable } from '@/types/api'
+import BackToList from '@/widgets/shared/BackToList.vue'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import TruncatedText from '@/widgets/shared/TruncatedText.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 import { useProcessStore } from '@/stores/process'
 import PresetPicker from '@/widgets/presets/PresetPicker.vue'
-import { ArrowLeft } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
@@ -90,9 +90,7 @@ onMounted(async () => {
     <template v-else-if="store.currentIncident">
       <!-- WO-UI-14: compact header -->
       <div class="flex items-center gap-2">
-        <RouterLink :to="{ name: 'incidents' }" class="inline-flex items-center justify-center h-9 w-9 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors shrink-0 self-center">
-          <ArrowLeft class="h-5 w-5" />
-        </RouterLink>
+        <BackToList list-key="incidents" list-route-name="incidents" />
         <div class="flex flex-col gap-0.5 flex-1 min-w-0">
           <!-- Row 1: ← Инциденты · ID ········································ [Resolve] -->
           <div class="flex items-center gap-2">

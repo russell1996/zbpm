@@ -43,6 +43,8 @@ vi.mock('@/composables/useListState', async () => {
       hasNext: false,
       hasPrev: false,
       resetPage: vi.fn(),
+      reset: vi.fn(),
+      isDefault: true,
     }),
   }
 })

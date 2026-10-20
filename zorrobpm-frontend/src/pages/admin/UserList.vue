@@ -7,6 +7,7 @@ import { useListState } from '@/composables/useListState'
 import { useListScroll } from '@/composables/useListScroll'
 import { useI18n } from 'vue-i18n'
 import UserDetailPanel from './UserDetailPanel.vue'
+import ResetFiltersButton from '@/widgets/shared/ResetFiltersButton.vue'
 import TruncatedText from '@/widgets/shared/TruncatedText.vue'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -30,7 +31,7 @@ const editForm = reactive<{ fullName: string; email: string; role: UserRole; act
 // WO-UI-39: состояние списка (поиск + фильтры) живёт в query-параметрах
 // маршрута (?users.search=…, ?users.type=HUMAN, ?users.active=INACTIVE) —
 // состояние переживает перезагрузку страницы и не теряется при возврате.
-const { state } = useListState<{
+const { state, reset, isDefault } = useListState<{
   search: string
   type: 'ALL' | 'HUMAN' | 'SYSTEM'
   active: 'ACTIVE' | 'ALL' | 'INACTIVE'
@@ -175,8 +176,16 @@ async function save() {
     saving.value = false
   }
 }
-
 watch(() => state.active, () => { loadUsers() })
+
+// WO-UI-41: сброс фильтров. Watcher фильтра перезагрузит список, только
+// если значение фильтра ИЗМЕНИЛОСЬ; при сбросе одной страницы фильтр
+// остаётся дефолтным — список перезагружаем здесь, иначе таблица
+// показывала бы прежнюю страницу данных.
+function resetFilters() {
+  reset()
+  void loadUsers()
+}
 
 onMounted(async () => {
   await loadUsers()
@@ -227,6 +236,7 @@ onMounted(async () => {
         </SelectContent>
       </Select>
       <span class="text-sm text-muted-foreground">{{ totalCount }} {{ t('usersCount') }}</span>
+      <ResetFiltersButton :is-default="isDefault" @reset="resetFilters" />
     </div>
 
     <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>

@@ -13,6 +13,7 @@ import { exportToCsv } from '@/shared/lib/export'
 import { debounce } from '@/shared/lib/debounce'
 import ProcessDeploySection from '@/widgets/processes/ProcessDeploySection.vue'
 import MySubmissions from '@/pages/processes/MySubmissions.vue'
+import ResetFiltersButton from '@/widgets/shared/ResetFiltersButton.vue'
 import AppDrawer from '@/widgets/shared/AppDrawer.vue'
 import { Download, RefreshCw, FileText, Upload, Archive, ArchiveRestore } from 'lucide-vue-next'
 
@@ -25,7 +26,7 @@ const toast = useToast()
 // WO-UI-39: состояние списка живёт в query-параметрах маршрута
 // (?definitions.search=…, ?definitions.archived=1, ?definitions.page=2) —
 // переход в карточку определения и «Назад» возвращают то же состояние.
-const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState<{
+const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage, reset, isDefault } = useListState<{
   search: string
   latest: boolean
   archived: boolean
@@ -133,6 +134,15 @@ onMounted(async () => {
 })
 // WO-UI-18 часть B: debounce (тот же паттерн, что ProcessInstanceList).
 watch(() => [state.search, state.latest, state.archived], debounce(() => { resetPage(); load() }))
+
+// WO-UI-41: сброс фильтров. Watcher фильтра перезагрузит список, только
+// если значение фильтра ИЗМЕНИЛОСЬ; при сбросе одной страницы фильтр
+// остаётся дефолтным — список перезагружаем здесь, иначе таблица
+// показывала бы прежнюю страницу данных.
+function resetFilters() {
+  reset()
+  void load()
+}
 </script>
 
 <template>
@@ -205,6 +215,7 @@ watch(() => [state.search, state.latest, state.archived], debounce(() => { reset
           @click="state.mine = true; toggleMyOnly()"
         >{{ t('my') }}</button>
       </div>
+      <ResetFiltersButton :is-default="isDefault" @reset="resetFilters" />
       <span v-if="myMembershipsLoading" class="text-xs text-muted-foreground">{{ t('loading') }}</span>
     </div>
 

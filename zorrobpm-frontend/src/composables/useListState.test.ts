@@ -7,7 +7,7 @@
  * createMemoryHistory) — не по моку useRoute/useRouter: иначе проверка не
  * может упасть по продуктовой причине (см. V11 / P-17).
  */
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createRouter, createMemoryHistory, type Router } from 'vue-router'
@@ -209,5 +209,113 @@ describe('useListState (WO-UI-39)', () => {
     expect(local.state.key).toBe('')
     local.state.key = 'x'
     expect(local.state.key).toBe('x')
+  })
+})
+
+/**
+ * WO-UI-41 — сброс фильтров и память списка о последнем query.
+ */
+describe('useListState: reset() и isDefault (WO-UI-41)', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+  })
+
+  it('isDefault: дефолтное состояние — true; любое отличие — false', async () => {
+    await mountOnUrl('/items')
+    expect(exposed!.isDefault.value).toBe(true)
+
+    exposed!.state.key = 'vacation'
+    await nextTick()
+    await flushPromises()
+    expect(exposed!.isDefault.value).toBe(false)
+
+    exposed!.reset()
+    await nextTick()
+    await flushPromises()
+    expect(exposed!.isDefault.value).toBe(true)
+  })
+
+  it('isDefault: вторая страница — тоже «не дефолт» (сброс возвращает на первую)', async () => {
+    await mountOnUrl('/items?instances.page=3')
+    expect(exposed!.page.value).toBe(2)
+    expect(exposed!.isDefault.value).toBe(false)
+    exposed!.reset()
+    await nextTick()
+    await flushPromises()
+    expect(exposed!.page.value).toBe(0)
+    expect(exposed!.isDefault.value).toBe(true)
+  })
+
+  it('reset(): все поля к дефолту, страница 1, query списка очищен', async () => {
+    const router = await mountOnUrl('/items?instances.key=vacation&instances.completed=1&instances.type=HUMAN&instances.page=3')
+    expect(exposed!.state.key).toBe('vacation')
+    expect(exposed!.page.value).toBe(2)
+
+    exposed!.reset()
+    await nextTick()
+    await flushPromises()
+
+    expect(exposed!.state.key).toBe('')
+    expect(exposed!.state.completed).toBe(false)
+    expect(exposed!.state.type).toBe('ALL')
+    expect(exposed!.page.value).toBe(0)
+    expect(router.currentRoute.value.query['instances.key']).toBeUndefined()
+    expect(router.currentRoute.value.query['instances.completed']).toBeUndefined()
+    expect(router.currentRoute.value.query['instances.type']).toBeUndefined()
+    expect(router.currentRoute.value.query['instances.page']).toBeUndefined()
+  })
+
+  it('reset(): чужие query-параметры не трогаются', async () => {
+    const router = await mountOnUrl('/items?tab=variables&instances.key=vacation')
+    exposed!.reset()
+    await nextTick()
+    await flushPromises()
+    expect(router.currentRoute.value.query.tab).toBe('variables')
+    expect(router.currentRoute.value.query['instances.key']).toBeUndefined()
+  })
+
+  it('список помнит свой последний query (sessionStorage) — по нему стрелка «назад» вернёт фильтры', async () => {
+    const router = await mountOnUrl('/items')
+    exposed!.state.key = 'vacation'
+    exposed!.state.completed = true
+    await nextTick()
+    await flushPromises()
+
+    const saved = JSON.parse(sessionStorage.getItem('zbpm.listState.instances') ?? '{}')
+    expect(saved).toEqual({ 'instances.key': 'vacation', 'instances.completed': '1' })
+  })
+
+  it('после reset() список помнит ПУСТОЕ состояние (стрелка не вернёт старый фильтр)', async () => {
+    await mountOnUrl('/items?instances.key=vacation')
+    exposed!.reset()
+    await nextTick()
+    await flushPromises()
+    const saved = JSON.parse(sessionStorage.getItem('zbpm.listState.instances') ?? '{}')
+    expect(saved).toEqual({})
+  })
+
+  it('query приходит извне (кнопка «Назад» браузера) — список запоминает и его', async () => {
+    const router = await mountOnUrl('/items')
+    await router.replace({ query: { 'instances.key': 'onboarding' } })
+    await nextTick()
+    await flushPromises()
+    const saved = JSON.parse(sessionStorage.getItem('zbpm.listState.instances') ?? '{}')
+    expect(saved).toEqual({ 'instances.key': 'onboarding' })
+  })
+
+  it('уход в карточку НЕ затирает память списка (query карточки — не наш)', async () => {
+    const router = await mountOnUrl('/items?instances.key=vacation')
+    expect(JSON.parse(sessionStorage.getItem('zbpm.listState.instances') ?? '{}')).toEqual({
+      'instances.key': 'vacation',
+    })
+    // Уход в карточку: адрес меняется РАНЬШЕ, чем список размонтируется —
+    // адрес карточки не должен затирать память списка (иначе стрелка «назад»
+    // потеряла бы фильтры).
+    await router.push('/items/42')
+    await nextTick()
+    await flushPromises()
+    expect(JSON.parse(sessionStorage.getItem('zbpm.listState.instances') ?? '{}')).toEqual({
+      'instances.key': 'vacation',
+    })
   })
 })

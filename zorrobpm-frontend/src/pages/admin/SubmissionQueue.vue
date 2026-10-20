@@ -5,6 +5,7 @@ import { useDateFormat } from '@/composables/useDateFormat'
 import { useToast } from '@/composables/useToast'
 import { useListState } from '@/composables/useListState'
 import { useListScroll } from '@/composables/useListScroll'
+import ResetFiltersButton from '@/widgets/shared/ResetFiltersButton.vue'
 import { getPendingSubmissions, approveSubmission, rejectSubmission, getSubmissionBpmn, type ProcessSubmission } from '@/services/submissionService'
 import { translatedError } from '@/shared/lib/utils'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
@@ -26,7 +27,7 @@ const statusOptions = [
 ] as const
 // WO-UI-39: фильтр статуса живёт в query-параметрах маршрута
 // (?submissions.status=APPROVED) — переживает перезагрузку страницы.
-const { state } = useListState<{
+const { state, reset, isDefault } = useListState<{
   status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL'
 }>('submissions', {
   status: { default: 'PENDING', values: ['PENDING', 'APPROVED', 'REJECTED', 'ALL'] },
@@ -135,6 +136,14 @@ onMounted(async () => {
   await load()
   await scroll.restore()
 })
+
+// WO-UI-41: сброс фильтров. Статус-фильтр переключается кнопкой-вкладкой
+// (switchStatus сам перезагружает список), а программный сброс фильтра
+// watcher'а не имеет — перезагружаем список здесь.
+function resetFilters() {
+  reset()
+  void load()
+}
 </script>
 
 <template>
@@ -168,6 +177,7 @@ onMounted(async () => {
         {{ t(opt.label) }}
       </button>
     </div>
+    <ResetFiltersButton :is-default="isDefault" @reset="resetFilters" />
 
     <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
     <div v-else-if="error" class="text-sm text-red-500">{{ error }}</div>

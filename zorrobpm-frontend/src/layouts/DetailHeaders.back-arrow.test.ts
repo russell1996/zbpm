@@ -8,15 +8,16 @@
  * крошки компактными шапками с back-arrow на 5 страницах детализации.
  * Старые сьюты assert'или `nav`/`li` внутри MainLayout — их там больше нет
  * физически, включать их нечего. Замена проверяет актуальное поведение:
- * каждая детальная страница рендерит back-arrow RouterLink на родительский
- * список, и клик реально ведёт туда (настоящий router, настоящие страницы,
+ * каждая детальная страница рендерит back-arrow ССЫЛКОЙ на родительский
+ * список (WO-UI-41: ссылка с сохранёнными фильтрами списка), и клик реально
+ * ведёт туда (настоящий router, настоящие страницы,
  * настоящие Pinia-сторы с замоканными сервисами — стиль P-54, как в
  * `ProcessInstanceDetail.test.ts` / `TaskDetail.test.ts`).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { createRouter, createMemoryHistory, RouterLink } from 'vue-router'
+import { createRouter, createMemoryHistory } from 'vue-router'
 import MainLayout from './MainLayout.vue'
 import ProcessDefinitionDetail from '@/pages/processes/ProcessDefinitionDetail.vue'
 import ProcessInstanceDetail from '@/pages/processes/ProcessInstanceDetail.vue'
@@ -129,16 +130,19 @@ function makeRouter() {
   return createRouter({
     history: createMemoryHistory('/ui/'),
     routes: [
-      { path: '/ui/processes/definitions', name: 'process-definitions', component: { template: '<div/>' } },
-      { path: '/ui/processes/definitions/:id', name: 'process-definition-detail', component: ProcessDefinitionDetail },
-      { path: '/ui/processes/instances', name: 'process-instances', component: { template: '<div/>' } },
-      { path: '/ui/processes/instances/:id', name: 'process-instance-detail', component: ProcessInstanceDetail },
-      { path: '/ui/tasks', name: 'my-tasks', component: { template: '<div/>' } },
-      { path: '/ui/tasks/:id', name: 'task-detail', component: TaskDetail },
-      { path: '/ui/service-tasks', name: 'service-tasks', component: { template: '<div/>' } },
-      { path: '/ui/service-tasks/:id', name: 'service-task-detail', component: ServiceTaskDetail },
-      { path: '/ui/incidents', name: 'incidents', component: { template: '<div/>' } },
-      { path: '/ui/incidents/:id', name: 'incident-detail', component: IncidentDetail },
+      // Пути — как в продовом router.ts (base '/ui/' уже задан историей):
+      // иначе href получался бы '/ui/ui/tasks' и проверка адреса была бы
+      // проверкой артефакта тестового роутера, а не поведения.
+      { path: '/processes/definitions', name: 'process-definitions', component: { template: '<div/>' } },
+      { path: '/processes/definitions/:id', name: 'process-definition-detail', component: ProcessDefinitionDetail },
+      { path: '/processes/instances', name: 'process-instances', component: { template: '<div/>' } },
+      { path: '/processes/instances/:id', name: 'process-instance-detail', component: ProcessInstanceDetail },
+      { path: '/tasks', name: 'my-tasks', component: { template: '<div/>' } },
+      { path: '/tasks/:id', name: 'task-detail', component: TaskDetail },
+      { path: '/service-tasks', name: 'service-tasks', component: { template: '<div/>' } },
+      { path: '/service-tasks/:id', name: 'service-task-detail', component: ServiceTaskDetail },
+      { path: '/incidents', name: 'incidents', component: { template: '<div/>' } },
+      { path: '/incidents/:id', name: 'incident-detail', component: IncidentDetail },
     ],
   })
 }
@@ -149,7 +153,9 @@ const pageStubs = {
   SchemaEditorPanel: { template: '<div class="schema-stub" />' },
 }
 
-/** Mounts a real detail page on its real route and returns the back-arrow link target. */
+/**
+ * Mounts a real detail page on its real route and returns the back-arrow link.
+ */
 async function backArrowTarget(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   page: any,
@@ -162,40 +168,48 @@ async function backArrowTarget(
   await router.isReady()
   const wrapper = mount(page, { global: { stubs: pageStubs, plugins: [pinia, router] } })
   await flushPromises()
-  const links = wrapper.findAllComponents(RouterLink)
-  const back = links.find((l) => {
-    const to = l.props('to') as { name?: string } | undefined
-    return typeof to === 'object' && to !== null && typeof to.name === 'string'
-  })
+  const back = wrapper.find('[data-testid="back-to-list"]')
   return { wrapper, router, back }
 }
 
 describe('WO-UI-17 F25: compact headers carry a working back-arrow (replaces removed breadcrumbs)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    sessionStorage.clear()
   })
 
   it.each([
-    ['definition card', ProcessDefinitionDetail, '/ui/processes/definitions/def1', 'process-definitions'],
-    ['instance card', ProcessInstanceDetail, '/ui/processes/instances/pi-1', 'process-instances'],
-    ['user task card', TaskDetail, '/ui/tasks/task-1', 'my-tasks'],
-    ['service task card', ServiceTaskDetail, '/ui/service-tasks/st-1', 'service-tasks'],
-    ['incident card', IncidentDetail, '/ui/incidents/inc-1', 'incidents'],
-  ] as const)('%s: back-arrow points at the parent list', async (_label, page, detailRoute, parent) => {
+    ['definition card', ProcessDefinitionDetail, '/processes/definitions/def1', '/ui/processes/definitions'],
+    ['instance card', ProcessInstanceDetail, '/processes/instances/pi-1', '/ui/processes/instances'],
+    ['user task card', TaskDetail, '/tasks/task-1', '/ui/tasks'],
+    ['service task card', ServiceTaskDetail, '/service-tasks/st-1', '/ui/service-tasks'],
+    ['incident card', IncidentDetail, '/incidents/inc-1', '/ui/incidents'],
+  ] as const)('%s: back-arrow points at the parent list', async (_label, page, detailRoute, parentPath) => {
     const { back } = await backArrowTarget(page, detailRoute)
-    expect(back, `back-arrow RouterLink must exist on ${detailRoute}`).toBeDefined()
-    expect(back!.props('to')).toEqual({ name: parent })
+    expect(back.exists(), `back-arrow must exist on ${detailRoute}`).toBe(true)
+    expect(back.attributes('href')).toBe(parentPath)
   })
 
   it('clicking the back-arrow really navigates to the parent list', async () => {
-    const { router, back } = await backArrowTarget(TaskDetail, '/ui/tasks/task-1')
-    expect(back).toBeDefined()
-    await back!.trigger('click')
+    const { router, back } = await backArrowTarget(TaskDetail, '/tasks/task-1')
+    expect(back.exists()).toBe(true)
+    await back.trigger('click')
     await flushPromises()
     // The click lands on the parent list route (the wrapper itself stays the
     // mounted page — it is not rendered through <router-view> here — so the
     // route name, not unmounting, is the navigation proof).
     expect(router.currentRoute.value.name).toBe('my-tasks')
+  })
+
+  /**
+   * WO-UI-41: стрелка «назад» ведёт на список С СОХРАНЁННЫМИ ФИЛЬТРАМИ —
+   * список помнит свой последний query (sessionStorage, `useListState`).
+   */
+  it('back-arrow carries the saved list filters (WO-UI-41)', async () => {
+    sessionStorage.setItem('zbpm.listState.tasks', JSON.stringify({ 'tasks.completed': '1' }))
+    const { back } = await backArrowTarget(TaskDetail, '/tasks/task-1')
+    expect(back.exists()).toBe(true)
+    expect(back.attributes('href')).toBe('/ui/tasks?tasks.completed=1')
   })
 
   it('MainLayout renders no BreadcrumbNav (WO-UI-14 criterion 1 still holds)', async () => {
@@ -212,7 +226,7 @@ describe('WO-UI-17 F25: compact headers carry a working back-arrow (replaces rem
     const pinia = createPinia()
     setActivePinia(pinia)
     const router = makeRouter()
-    await router.push('/ui/tasks/task-1')
+    await router.push('/tasks/task-1')
     await router.isReady()
     const wrapper = mount(MainLayout, {
       global: {

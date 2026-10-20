@@ -141,6 +141,8 @@
   "resolveIncident": "Разрешить инцидент",
   "completeSelected": "Завершить выбранные",
   "showCompleted": "Показать завершённые",
+  "resetFilters": "Сбросить фильтры",
+  "backToList": "Назад к списку",
   "searchPlaceholder": "Поиск...",
   "noDefinitions": "Схемы ещё не загружены",
   "noInstances": "Экземпляры не найдены",

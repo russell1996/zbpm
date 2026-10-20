@@ -141,6 +141,8 @@
   "resolveIncident": "Оқиғаны шешу",
   "completeSelected": "Таңдалғанды аяқтау",
   "showCompleted": "Аяқталғанды көрсету",
+  "resetFilters": "Сүзгілерді тастау",
+  "backToList": "Тізімге оралу",
   "searchPlaceholder": "Іздеу...",
   "noDefinitions": "Схемалар әлі орналастырылмаған",
   "noInstances": "Үлгілер табылмады",

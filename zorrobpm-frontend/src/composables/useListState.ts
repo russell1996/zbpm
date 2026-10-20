@@ -56,6 +56,56 @@ export interface UseListStateResult<F extends Record<string, ListFieldValue>> {
   nextPage: () => void
   prevPage: () => void
   resetPage: () => void
+  /**
+   * WO-UI-41: сброс состояния к дефолтам (поля + страница 1). Query списка
+   * очищается тем же watcher'ом, что пишет его при изменении полей.
+   */
+  reset: () => void
+  /**
+   * WO-UI-41: состояние совпадает с дефолтным? (все поля = дефолт И страница 1).
+   * По этому флагу списки показывают кнопку «Сбросить фильтры».
+   */
+  isDefault: ComputedRef<boolean>
+}
+
+/**
+ * WO-UI-41: префикс ключа в sessionStorage, где лежит ПОСЛЕДНИЙ query списка.
+ *
+ * Зачем: query маршрута живёт в адресе, а карточка открывается по адресу БЕЗ
+ * query списка (ссылка «назад к списку» вела на голый маршрут) — фильтры
+ * терялись. Здесь список помнит свой последний query, и стрелка «назад»
+ * возвращает список именно с ним.
+ */
+export const LIST_STATE_STORAGE_PREFIX = 'zbpm.listState.'
+
+/** Прочитать сохранённый query списка (только его собственные параметры). */
+export function readListQuery(listKey: string): Record<string, string> {
+  if (typeof window === 'undefined') return {}
+  try {
+    const raw = window.sessionStorage.getItem(LIST_STATE_STORAGE_PREFIX + listKey)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: Record<string, string> = {}
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === 'string') out[k] = v
+    }
+    return out
+  } catch {
+    // sessionStorage может быть недоступен (приватный режим, переполнение) —
+    // это не повод ломать список: просто фильтры не переживут уход в карточку.
+    return {}
+  }
+}
+
+/** Запомнить query списка (только его собственные параметры). */
+export function writeListQuery(listKey: string, query: Record<string, string>): void {
+  if (typeof window === 'undefined') return
+  try {
+    window.sessionStorage.setItem(LIST_STATE_STORAGE_PREFIX + listKey, JSON.stringify(query))
+  } catch {
+    // см. readListQuery — ошибка хранилища не должна ломать список
+  }
 }
 
 interface FieldMeta {
@@ -153,7 +203,7 @@ export function useListState<F extends Record<string, ListFieldValue>>(
   // --- Роутер необязателен: вне setup-контекста (обычные юнит-тесты) —
   //     состояние остаётся локальным, URL не трогаем.
   const inSetup = getCurrentInstance() !== null
-  let route: { query: Record<string, unknown> } | null = null
+  let route: { query: Record<string, unknown>; name?: unknown; path?: unknown } | null = null
   let router: { replace: (to: unknown) => unknown } | null = null
   if (inSetup) {
     try {
@@ -168,7 +218,7 @@ export function useListState<F extends Record<string, ListFieldValue>>(
         typeof ro === 'object' &&
         typeof (ro as { replace?: unknown }).replace === 'function'
       ) {
-        route = r as { query: Record<string, unknown> }
+        route = r as { query: Record<string, unknown>; name?: unknown; path?: unknown }
         router = ro as { replace: (to: unknown) => unknown }
       }
     } catch {
@@ -177,6 +227,13 @@ export function useListState<F extends Record<string, ListFieldValue>>(
     }
   }
   const synced = route !== null && router !== null
+  /**
+   * Путь маршрута, на котором список живёт. По нему мы узнаём, что текущий
+   * query — ещё НАШ: уход в карточку меняет адрес РАНЬШЕ, чем список
+   * размонтируется, и адрес карточки не должен затирать память списка (иначе
+   * стрелка «назад» потеряла бы фильтры).
+   */
+  const listPath = synced ? route!.path : undefined
 
   // --- Начальные значения: из URL, если он есть, иначе дефолты.
   const initial = {} as Record<string, ListFieldValue>
@@ -211,6 +268,27 @@ export function useListState<F extends Record<string, ListFieldValue>>(
     page.value = 0
   }
 
+  /**
+   * WO-UI-41: сброс к дефолтам. Поля возвращаются к значениям по умолчанию,
+   * страница — к первой. Query списка очищается автоматически: encodeValue()
+   * для дефолта возвращает null (параметр удаляется), а для страницы 1
+   * параметр `*.page` тоже удаляется.
+   */
+  function reset() {
+    for (const meta of metas) {
+      ;(state as Record<string, ListFieldValue>)[meta.field] = meta.default
+    }
+    page.value = 0
+  }
+
+  /** WO-UI-41: состояние == дефолт (поля + первая страница)? */
+  const isDefault = computed(() => {
+    for (const meta of metas) {
+      if ((state[meta.field] as ListFieldValue) !== meta.default) return false
+    }
+    return page.value === 0
+  })
+
   if (synced) {
     const r = route!
     const ro = router!
@@ -230,9 +308,25 @@ export function useListState<F extends Record<string, ListFieldValue>>(
       return query
     }
 
+    /**
+     * WO-UI-41: собственные параметры списка из готового query — их и
+     * запоминаем в sessionStorage (чужие параметры — не наше дело).
+     */
+    function ownParams(query: Record<string, unknown>): Record<string, string> {
+      const out: Record<string, string> = {}
+      const prefix = `${key}.`
+      for (const [param, value] of Object.entries(query)) {
+        if (param.startsWith(prefix) && typeof value === 'string') out[param] = value
+      }
+      return out
+    }
+
     /** Запись состояния в URL (replace — история не растёт). */
     function sync() {
       const query = desiredQuery()
+      // Сначала запоминаем query списка: карточка открывается по адресу БЕЗ
+      // query, и стрелка «назад» возвращает список с последним состоянием.
+      writeListQuery(key, ownParams(query))
       if (sameQuery(r.query, query)) return
       void ro.replace({ query })
     }
@@ -240,6 +334,7 @@ export function useListState<F extends Record<string, ListFieldValue>>(
     // Нормализация URL при монтировании (самопочинка): битые параметры и
     // параметры, равные дефолту, убираются — «чистый URL».
     const canonical = desiredQuery()
+    writeListQuery(key, ownParams(canonical))
     if (!sameQuery(r.query, canonical)) {
       void ro.replace({ query: canonical })
     }
@@ -251,6 +346,11 @@ export function useListState<F extends Record<string, ListFieldValue>>(
     watch(
       () => r.query,
       () => {
+        // Мы больше не на маршруте списка (уход в карточку меняет адрес
+        // раньше, чем список размонтируется): состояние списка и его память
+        // (sessionStorage) трогать нельзя — иначе адрес карточки затрёт
+        // фильтры, и стрелка «назад» вернёт список без них.
+        if (r.path !== listPath) return
         for (const meta of metas) {
           const parsed = parseValue(r.query[meta.param], meta)
           if ((state[meta.field] as ListFieldValue) !== parsed) {
@@ -259,9 +359,22 @@ export function useListState<F extends Record<string, ListFieldValue>>(
         }
         const parsedPage = parsePageParam(r.query[pageParam])
         if (page.value !== parsedPage) page.value = parsedPage
+        // Состояние изменилось → watcher [state, page] сам запишет новый
+        // query и запомнит его (writeListQuery в sync()).
       },
     )
   }
 
-  return { state, page, pageSize, hasNext, hasPrev, nextPage, prevPage, resetPage }
+  return {
+    state,
+    page,
+    pageSize,
+    hasNext,
+    hasPrev,
+    nextPage,
+    prevPage,
+    resetPage,
+    reset,
+    isDefault,
+  }
 }
