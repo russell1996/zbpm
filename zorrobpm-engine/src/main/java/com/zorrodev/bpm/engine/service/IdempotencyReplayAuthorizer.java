@@ -1,6 +1,8 @@
 package com.zorrodev.bpm.engine.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zorrodev.bpm.contract.dto.CreatePresetDTO;
+import com.zorrodev.bpm.contract.dto.PresetImportDTO;
 import com.zorrodev.bpm.contract.dto.PublishMessageDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.engine.entity.ProcessDefinitionEntity;
@@ -67,6 +69,10 @@ public class IdempotencyReplayAuthorizer {
             case "/deployments", "/dmn", "/forms" -> requireSuperAdmin(principal);
             case "/process-instances" -> authorizeStart(principal, onBehalfOf, body);
             case "/messages/publish" -> authorizePublish(principal, body);
+            // WO-AUDIT-14 (F-19): create шаблона — тот же живой гейт, что на
+            // живом пути: право START на process definition ключа шаблона.
+            case "/presets" -> authorizePresetCreate(principal, body, false);
+            case "/presets/import" -> authorizePresetCreate(principal, body, true);
             default -> authorizeMutation(principal, endpoint, onBehalfOf);
         }
     }
@@ -134,6 +140,28 @@ public class IdempotencyReplayAuthorizer {
         if (!principal.isSuperAdmin()) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied");
         }
+    }
+
+    /**
+     * WO-AUDIT-14 (F-19): replay создания шаблона пере-авторизуется тем же
+     * правилом, что живой путь ({@code VariablePresetService.create} →
+     * {@code requireCanLaunch}): право START на ключ определения процесса.
+     * Права могли сузиться после первого запроса — тогда replay обязан
+     * ответить 403, а не отдать устаревший 201 (WO-SEC-74 N06).
+     */
+    private void authorizePresetCreate(Principal principal, byte[] body, boolean importShape) {
+        final String definitionKey;
+        try {
+            definitionKey = importShape
+                ? MAPPER.readValue(body, PresetImportDTO.class).getProcessDefinitionKey()
+                : MAPPER.readValue(body, CreatePresetDTO.class).getProcessDefinitionKey();
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unreadable request body");
+        }
+        if (definitionKey == null || definitionKey.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "processDefinitionKey is required");
+        }
+        requireOperate(principal, definitionKey, AuthorizationService.Action.START);
     }
 
     private void authorizeMutation(Principal principal, String endpoint, String onBehalfOf) {

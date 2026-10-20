@@ -75,7 +75,11 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         "/deployments",
         "/dmn",
         "/forms",
-        "/auth/register"
+        "/auth/register",
+        // WO-AUDIT-14 (F-19): create шаблона — create-путь (ретрай сети создал бы
+        // дубль). Регистрация URL — в IdempotencyFilterConfig.
+        "/presets",
+        "/presets/import"
     );
 
     // Mutation endpoints — full normalized URI is the endpoint (includes resourceId)
