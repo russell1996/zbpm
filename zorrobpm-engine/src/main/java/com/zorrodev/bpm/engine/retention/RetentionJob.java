@@ -62,11 +62,13 @@ public class RetentionJob {
             runEventsPass(passNow, deadlineNanos);
         } else {
             // Проход по events выключен — gauge не должен показывать прошлый.
+            bpmMetrics.setRetentionEventsDeletedLastPass(0L);
         }
         if (config.getOutboxTtlDays() > 0) {
             runOutboxPass(passNow, deadlineNanos);
         } else {
             // То же для outbox.
+            bpmMetrics.setRetentionOutboxDeletedLastPass(0L);
         }
     }
 
