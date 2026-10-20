@@ -41,9 +41,22 @@ vi.mock('@/stores/process', () => ({
     fetchDefinitions: vi.fn().mockResolvedValue(undefined),
   }),
 }))
-vi.mock('@/composables/usePagination', () => ({
-  usePagination: () => ({ page: 0, pageSize: 20, nextPage: vi.fn(), prevPage: vi.fn(), hasNext: false, hasPrev: false, resetPage: vi.fn() }),
-}))
+// WO-UI-39: состояние списка живёт в useListState (query-параметры маршрута).
+vi.mock('@/composables/useListState', async () => {
+  const { reactive } = await import('vue')
+  return {
+    useListState: () => ({
+      state: reactive({ search: '', latest: true, archived: false, mine: false }),
+      page: 0,
+      pageSize: 20,
+      nextPage: vi.fn(),
+      prevPage: vi.fn(),
+      hasNext: false,
+      hasPrev: false,
+      resetPage: vi.fn(),
+    }),
+  }
+})
 vi.mock('@/shared/lib/export', () => ({ exportToCsv: vi.fn() }))
 
 describe('ProcessDefinitionList (WO-ACL-6 criterion 4 / WO-ACL-10 criterion 3)', () => {
