@@ -265,7 +265,11 @@ public class GlobalExceptionHandler {
             case 409 -> "CONFLICT";
             case 415 -> "UNSUPPORTED_MEDIA_TYPE";
             case 429 -> "RATE_LIMITED";
-            default -> "INTERNAL_ERROR";
+            // Neutral fallback: the status was NOT produced by an unhandled exception
+            // (that is handleGenericRuntime's INTERNAL_ERROR) — the request simply
+            // carries a status this table does not name. "HTTP_ERROR" says exactly
+            // that and claims nothing about whose fault it was.
+            default -> "HTTP_ERROR";
         };
         return ResponseEntity.status(ex.getStatusCode()).body(Map.of(
             "code", code,
