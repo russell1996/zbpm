@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-57 S10: completionCondition on a multi-instance TASK (service task).
+     Q: does Zeebe 8.5.0 (a) accept the model at all, (b) terminate the remaining
+     MI instances when the condition fires, (c) refuse a late completion for a
+     terminated instance?
+
+     The MI body is a JOB-based activity (service task) — the C8-41 S9 fixture
+     measured the SUB_PROCESS variant; this one measures the task variant that
+     our engine supports but Zeebe's documented model does not. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="defs-s10" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="s10MiTask" name="S10 MI task completionCondition" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="miTask" />
+    <bpmn:serviceTask id="miTask" name="miTask">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="s10w" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection='=["a","b","c"]' inputElement="item"
+                                     outputCollection="results" outputElement="=item" />
+        </bpmn:extensionElements>
+        <bpmn:completionCondition xsi:type="bpmn:tFormalExpression">=numberOfCompletedInstances >= 1</bpmn:completionCondition>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="miTask" targetRef="dump" />
+    <bpmn:serviceTask id="dump" name="dump">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="s10dump" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="dump" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

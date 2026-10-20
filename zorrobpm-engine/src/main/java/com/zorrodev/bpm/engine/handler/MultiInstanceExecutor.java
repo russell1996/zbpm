@@ -280,16 +280,16 @@ public class MultiInstanceExecutor {
 
         boolean done = (expected != null && arrived >= expected) || completionConditionMet(processInstanceId, token, arrived, expected, mi);
         if (done) {
-            // WO-C8-41 (F4, oracle S9): done РАНЬШЕ всех приходов (arrived <
-            // expected) — сработало completionCondition: оставшиеся сиблинги
-            // терминируются (Zeebe: 0 живых после 1 завершения из 3), их
-            // внутренности гаснут scope-обходом. Только SUB_PROCESS: MI-задачи
-            // с условием сохраняют историческое поведение (без добивки —
-            // отдельный вопрос, не этот WO). При полном done (arrived >=
-            // expected) живых сиблингов нет по определению — no-op по построению.
-            if (element.getType() == BpmnElementType.SUB_PROCESS
-                && expected != null && arrived < expected) {
-                cancelRemainingMiSubInstances(processInstanceId, element, completedActivityId);
+            // WO-C8-41 (F4, oracle S9) + WO-C8-57 (F-15, oracle S10/S10m/S10l/S11):
+            // done РАНЬШЕ всех приходов (arrived < expected) — сработало
+            // completionCondition: оставшиеся живые сиблинги MI ТЕРМИНИРУЮТСЯ.
+            // Zeebe 8.5 (живая запись, docs 8.9 «Any instances that are still active
+            // are terminated»): 0 живых после 1 завершения из 3 — и для MI-подпроцесса
+            // (S9), и для MI-ЗАДАЧИ (S10: job'ов сиблингов больше не активировать).
+            // ЕДИНЫЙ механизм для всех типов MI-элемента. При полном done
+            // (arrived >= expected) живых сиблингов нет по определению — no-op.
+            if (expected != null && arrived < expected) {
+                cancelRemainingMiInstances(processInstanceId, element, completedActivityId);
             }
             dbService.clearParallelGatewayArrivals(processInstanceId, gatewayKey);
             return true;
@@ -307,20 +307,28 @@ public class MultiInstanceExecutor {
     }
 
     /**
-     * WO-C8-41 (F4): гашение живых сиблингов MI-подпроцесса после раннего
-     * срабатывания completionCondition. Только SUB_PROCESS-строки того же
-     * элемента (вложенные контейнеры — другой id, не трогаем); внутренности
-     * каждого — по его scope-цепочке (зеркало
-     * {@code EventTrigger.cancelMiSubProcessInScope}). Частичная агрегация уже
-     * записана позиционно (слоты терминированных — null) и НЕ удаляется (S9-2).
+     * WO-C8-41 (F4) + WO-C8-57 (F-15): гашение живых сиблингов MI после раннего
+     * срабатывания completionCondition. ЕДИНЫЙ механизм для всех типов MI-элемента:
+     * <ul>
+     *   <li>{@code SUB_PROCESS} (WO-C8-41, oracle S9): гасится строка инстанса и
+     *       ВСЯ его scope-цепочка (внутренности — зеркало
+     *       {@code EventTrigger.cancelMiSubProcessInScope});</li>
+     *   <li>{@code SERVICE_TASK}/{@code USER_TASK} (WO-C8-57, oracle S10/S10m/S10l):
+     *       гасится строка инстанса и его JOB (см. {@link #terminateSiblingJob}) —
+     *       иначе у задачи остаётся живая работа (job в брокере / открытая задача
+     *       в инбоксе), а поздний результат воркера приходит на «мёртвый» инстанс.</li>
+     * </ul>
+     * Только строки того же элемента (вложенные контейнеры — другой id, не трогаем).
+     * Частичная агрегация уже записана позиционно (слоты терминированных — null)
+     * и НЕ удаляется (S9-2/S10-2).
      */
-    private void cancelRemainingMiSubInstances(UUID processInstanceId, BpmnElementModel subProcessElement,
+    private void cancelRemainingMiInstances(UUID processInstanceId, BpmnElementModel miElement,
             UUID completedInstanceId) {
         List<com.zorrodev.bpm.engine.dto.Activity> live = dbService.getActiveActivities(processInstanceId);
         List<com.zorrodev.bpm.engine.dto.Activity> siblings = live.stream()
             .filter(a -> a != null && a.getId() != null
                 && !a.getId().equals(completedInstanceId)
-                && subProcessElement.getId().equals(a.getBpmnElementId())
+                && miElement.getId().equals(a.getBpmnElementId())
                 && (a.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.CREATED
                     || a.getStatus() == com.zorrodev.bpm.engine.entity.ActivityStatus.IN_PROGRESS))
             .toList();
@@ -333,9 +341,33 @@ public class MultiInstanceExecutor {
                 dbService.cancelActivity(inner.getId());
             }
             dbService.cancelActivity(sibling.getId());
+            terminateSiblingJob(sibling);
         }
-        log.info("{}/{}: completionCondition terminated {} remaining MI-subprocess instance(s)",
-            processInstanceId, subProcessElement.getId(), siblings.size());
+        log.info("{}/{}: completionCondition terminated {} remaining MI instance(s)",
+            processInstanceId, miElement.getId(), siblings.size());
+    }
+
+    /**
+     * WO-C8-57 (F-15): гашение JOB'а терминированного сиблинга MI-задачи.
+     *
+     * <p>Zeebe 8.5: у терминированного инстанса job УДАЛЯЕТСЯ — его нельзя ни
+     * активировать, ни завершить (живая запись oracle S10: late completion →
+     * {@code NOT_FOUND}). У нас job MI-задачи — это строка {@code service_tasks}
+     * (service task) либо {@code user_tasks} (user task): «больше не outstanding»
+     * = проставленный {@code completed_at}. Без этого счётчик «активных заданий»
+     * по определению (WO-C8-57) висел бы на терминированных сиблингах вечно.
+     *
+     * <p>Поздний результат воркера по такой задаче отвергается существующим
+     * идемпотентным guard'ом {@code CompletionService.isCompletionAllowed}
+     * (activity в статусе CANCELLED → completion поглощается как replay,
+     * {@code alreadyCompleted=true}, состояние не меняется).
+     */
+    private void terminateSiblingJob(com.zorrodev.bpm.engine.dto.Activity sibling) {
+        if (sibling.getType() == BpmnElementType.SERVICE_TASK) {
+            dbService.completeServiceTask(sibling.getId());
+        } else if (sibling.getType() == BpmnElementType.USER_TASK) {
+            dbService.completeUserTask(sibling.getId());
+        }
     }
 
     /**

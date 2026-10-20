@@ -62,8 +62,17 @@ public class UserTaskDbOperationsImpl implements UserTaskDbOperations {
 
     @Override
     public void completeUserTask(UUID userTaskId) {
-        UserTaskEntity ut = userTaskRepository.findById(userTaskId).orElseThrow();
+        // WO-C8-57 (F-15): null-SAFE. Путь «терминировать задачу» (добивка сиблингов
+        // MI по completionCondition) закрывает задачу, строки которой может не быть
+        // (задача ещё не создана — creating-фаза C8-21). orElseThrow здесь откатывал бы
+        // ВСЮ транзакцию завершения инстанса — цена одного отсутствующего мусора была бы
+        // непропорциональна. Строка есть → закрываем и шлём событие; строки нет →
+        // закрывать нечего (setCompletedAt — UPDATE, 0 строк, без ошибки).
+        UserTaskEntity ut = userTaskRepository.findById(userTaskId).orElse(null);
         userTaskRepository.setCompletedAt(userTaskId, Instant.now());
+        if (ut == null) {
+            return;
+        }
         domainEventEmitter.emitUserTaskCompleted(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), userTaskId, ut.getAssignee());
     }
 

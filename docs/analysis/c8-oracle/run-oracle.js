@@ -5,7 +5,7 @@
  *
  * Usage:
  *   npm ci                 # one-time: install @camunda8/sdk@8.5.9 + @grpc/*
- *   node run-oracle.js s1|s2a|s2b|s3|s4|s5|s6|s7|s8a|s8b|s9|all|cleanup
+ *   node run-oracle.js s1|s2a|s2b|s3|s4|s5|s6|s7|s8a|s8b|s9|s10|s10m|s10l|s11|all|cleanup
  *
  * The Zeebe stack must be up (see README.md / stack/docker-compose.yml); the gateway is
  * reached at localhost:36500 by default (override with C8_ORACLE_GW=<host:port>).
@@ -18,9 +18,11 @@ const O = require('./lib/oracle');
 
 const client = O.buildClient();
 const BPMN = path.join(__dirname, 'bpmn');
+const SCEN = path.join(__dirname, 'scenarios');
 
 // Thin wrappers so the scenario bodies below read exactly like the original runner.
 const deploy = (file) => O.deploy(client, path.join(BPMN, file));
+const deployScen = (dir, file) => O.deploy(client, path.join(SCEN, dir, file || 'process.bpmn'));
 const start = (id) => O.start(client, id);
 const poll = (type, minCount, tries, piKey) => O.poll(client, type, minCount, tries, piKey);
 const activate = (type) => O.activate(client, type);
@@ -190,9 +192,72 @@ const S = {
     await show('S9 dump (S9-2: expect partial results)', d);
     for (const j of d) await complete(j, {});
   },
+  /**
+   * WO-C8-57 S10: completionCondition on a multi-instance SERVICE TASK (job-based MI body).
+   * Q (Zeebe 8.5.0): does Zeebe (a) accept the model, (b) terminate the remaining MI
+   * instances when the condition fires, (c) refuse a late completion of a terminated instance?
+   *
+   * `idx` selects WHICH instance completes first (0 = first, 1 = middle, 2 = last) — the
+   * termination must not depend on the position of the completing instance.
+   */
+  async miTaskCc(which, idx) {
+    const seq = which === 'seq';
+    const type = seq ? 's11w' : 's10w';
+    const dumpType = seq ? 's11dump' : 's10dump';
+    const processId = seq ? 's11MiTaskSeq' : 's10MiTask';
+    await deployScen('mi-task-cc-siblings', seq ? 'process-seq.bpmn' : 'process.bpmn');
+    const pi = await start(processId);
+    await sleep(1500);
+    const w = (await activate(type)).filter((j) => String(j.processInstanceKey) === String(pi));
+    await show(`${which.toUpperCase()} initial ${type} (expect ${seq ? 1 : 3})`, w);
+    if (w.length === 0) {
+      console.log(`${which.toUpperCase()} NO JOBS — nothing to measure`);
+      await cancelPi(pi).catch(() => {});
+      return;
+    }
+    const target = w[Math.min(idx, w.length - 1)];
+    const terminated = w.filter((j) => j.key !== target.key);
+    console.log(
+      `${which.toUpperCase()} completing item=${itemOf(target)} (position ${idx}) — ` +
+        `siblings that must be terminated: ${terminated.length}`,
+    );
+    await complete(target, {});
+    await sleep(2500);
+    const rest = (await activate(type)).filter((j) => String(j.processInstanceKey) === String(pi));
+    await show(`${which.toUpperCase()} ${type} AFTER one completion (expect 0 — siblings terminated)`, rest);
+    const dump = (await activate(dumpType)).filter((j) => String(j.processInstanceKey) === String(pi));
+    await show(`${which.toUpperCase()} ${dumpType} (expect 1 — MI body closed early)`, dump);
+    if (dump.length) {
+      console.log(`${which.toUpperCase()} DUMP vars: ${JSON.stringify(O.parseVars(dump[0]))}`);
+      await complete(dump[0], {});
+    }
+    // Late completion of a terminated sibling — Zeebe must REJECT it (no such job).
+    for (const j of terminated) {
+      try {
+        await complete(j, { late: true });
+        console.log(`${which.toUpperCase()} LATE COMPLETE of terminated sibling key=${j.key}: ACCEPTED (!!) — no rejection`);
+      } catch (e) {
+        console.log(`${which.toUpperCase()} LATE COMPLETE of terminated sibling key=${j.key}: REJECTED -> ${e.message}`);
+      }
+    }
+    await cancelPi(pi).catch(() => {});
+  },
+  async s10() {
+    await S.miTaskCc('par', 0);
+  },
+  async s10m() {
+    await S.miTaskCc('par', 1);
+  },
+  async s10l() {
+    await S.miTaskCc('par', 2);
+  },
+  async s11() {
+    await S.miTaskCc('seq', 0);
+  },
   async cleanup() {
     // Cancel leftover instances from a crashed/partial run (stranded active jobs).
-    for (const t of ['s1w', 's1w2', 's2aw', 's2bw', 's3w', 's5w', 's6w', 's7w', 's8aw', 's8bw', 's9w']) {
+    for (const t of ['s1w', 's1w2', 's2aw', 's2bw', 's3w', 's5w', 's6w', 's7w', 's8aw', 's8bw', 's9w',
+      's10w', 's11w']) {
       const jobs = await activate(t);
       for (const j of jobs) {
         try {
@@ -208,7 +273,8 @@ const S = {
 
 (async () => {
   const which = process.argv[2] || 'all';
-  const order = ['s1', 's2a', 's2b', 's3', 's4', 's5', 's6', 's7', 's8a', 's8b', 's9'];
+  const order = ['s1', 's2a', 's2b', 's3', 's4', 's5', 's6', 's7', 's8a', 's8b', 's9',
+    's10', 's10m', 's10l', 's11'];
   const list = which === 'all' ? order : [which];
   try {
     const topo = await O.topology(client);

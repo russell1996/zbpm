@@ -200,8 +200,9 @@ class DeactivationWakeupCoverageTest {
         + "же signal(), где перепроверка припаркованных join-ов уже стоит "
         + "(CompletionService.signal, после proceedToOutgoing) ";
     private static final String R18 =
-        "WO-C8-41 (F4): раннее срабатывание completionCondition MI-подпроцесса: "
-        + "гасятся СИБЛИНГИ того же MI-тела (их scope-цепочки целиком). Завершившийся "
+        "WO-C8-41 (F4) + WO-C8-57 (F-15): раннее срабатывание completionCondition MI: "
+        + "гасятся СИБЛИНГИ того же MI-тела (у MI-подпроцесса — их scope-цепочки "
+        + "целиком; у MI-задачи — строка инстанса и его job). Завершившийся "
         + "инстанс в ТОЙ ЖЕ ветке продолжает исходящий поток МИ-ТЕЛА (join собран — "
         + "multiInstanceContinue вернул done=true, вызывающий FlowNavigator "
         + "продолжает), то есть доставщик ветви НЕ умирает — он и есть продолжение. "
@@ -350,10 +351,13 @@ class DeactivationWakeupCoverageTest {
         // WO-AUDIT-11 (F-09): тот же scope-цикл, что и в throwError (см. выше) —
         // token-wide запись удалена, вызова на диске больше нет.
         WHITELIST.put("ErrorEscalationThrower.java#throwEscalation[} else {]|dbService.cancelActivity(scope.getId())", R08);
-        // ── WO-C8-41 (F4): ранняя добивка сиблингов при completionCondition ──
+        // ── WO-C8-41 (F4) + WO-C8-57 (F-15): ранняя добивка сиблингов при
+        // completionCondition — ЕДИНЫЙ механизм (метод переименован в
+        // cancelRemainingMiInstances: он обслуживает и MI-подпроцесс (C8-41), и
+        // MI-ЗАДАЧИ (F-15)) ──
         // (ключи — дословно из вывода сканера, см. его сообщение при падении).
-        WHITELIST.put("MultiInstanceExecutor.java#cancelRemainingMiSubInstances[for (com.zorrodev.bpm.engine.dto.Activity sibling : siblings) {]|dbService.cancelActivity(sibling.getId())", R18);
-        WHITELIST.put("MultiInstanceExecutor.java#cancelRemainingMiSubInstances[processInstanceId, live, sibling.getId())) {]|dbService.cancelActivity(inner.getId())", R18);
+        WHITELIST.put("MultiInstanceExecutor.java#cancelRemainingMiInstances[for (com.zorrodev.bpm.engine.dto.Activity sibling : siblings) {]|dbService.cancelActivity(sibling.getId())", R18);
+        WHITELIST.put("MultiInstanceExecutor.java#cancelRemainingMiInstances[processInstanceId, live, sibling.getId())) {]|dbService.cancelActivity(inner.getId())", R18);
         // ── WO-C8-43: per-branch complete MI-подпроцесса ─────────────────────────
         // Контейнер инстанса completes в момент СВОЕГО внутреннего end — это закрытие
         // живой ветви (join/агрегация собраны только на последнем прибывшем; см. R19:
