@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
-public class CallActivityRecursionIT {
+public class CallActivityRecursionIntegrationTests {
 
     @Autowired private ProcessDefinitionService processDefinitionService;
     @Autowired private RuntimeService runtimeService;

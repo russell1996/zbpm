@@ -65,7 +65,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
-public class Eng29FeelNullIoMappingIncidentIT {
+public class Eng29FeelNullIoMappingIncidentIntegrationTests {
 
     @Autowired
     private ProcessDefinitionService processDefinitionService;

@@ -84,7 +84,7 @@
 | intermediate throw + link | `:2049-2050` | `LinkThrowHandler.java:31` | `LinkEventIntegrationTests` (test-link-events.bpmn) | нет |
 | intermediate throw + compensate | `:2051-2061` (waitForCompletion `:490`) | `CompensationThrowHandler.java:40` (read `:80`) | `CompensationIntegrationTests` (test-compensation.bpmn, test-compensation-targeted.bpmn) | не знаю |
 | intermediate throw (bare) | `:2062-2063` | `IntermediateThrowEventHandler.java:27` | `ActivityServiceImplTests` (test-throw.bpmn) | не знаю |
-| call activity | `:336-342, :2086-2110` (calledElement `:2096-2104`, ioMapping `:2107`) | `CallActivityHandler.java:40` | `CallActivityVariablePropagationIntegrationTests` (test-c8-call-*.bpmn, test-eng11-*.bpmn), `PropagateChildVariablesIntegrationTests`, `CallActivityNullSafetyIntegrationTests`, `CallActivityRecursionIT` | нет |
+| call activity | `:336-342, :2086-2110` (calledElement `:2096-2104`, ioMapping `:2107`) | `CallActivityHandler.java:40` | `CallActivityVariablePropagationIntegrationTests` (test-c8-call-*.bpmn, test-eng11-*.bpmn), `PropagateChildVariablesIntegrationTests`, `CallActivityNullSafetyIntegrationTests`, `CallActivityRecursionIntegrationTests` | нет |
 | subProcess (embedded) | `:344-359`, `toSubProcessElement :560-638` (flatten `:625`, MI `:632`) | `SubProcessHandler.java:35` | `SubProcessIntegrationTests` (test-subprocess.bpmn), `NestedTokenPendingBranchesIntegrationTests` (test-nested-token-*.bpmn), `Diff1IoMappingScopeReproTest` | `NestedTokenPendingBranchesIntegrationTests` — **да** (live=2); `SubProcessIntegrationTests` — нет |
 | subProcess + MI | `:560-638` (MI `:632`; хост разрешён — в `MULTI_INSTANCE_UNSUPPORTED_HOSTS` `BpmnSupportScanner.java:61-62` его нет) | `MultiInstanceExecutor` (создание копий/слотов) | `MiSubProcessIntegrationTests` (test-c840-*.bpmn), `MiSubProcessMinimalPgIT`, `MiSubProcessRaceIntegrationTests`, `MiSubProcessApprovalRouteIntegrationTests` | **да** — `MiSubProcessIntegrationTests:457-460,:491,:524-566,:591-596` («no live activities left»), `MiSubProcessCamunda8ParityIntegrationTests:431,:528` (jobs отменены, siblings завершены), `MiSubProcessLoopVarVisibilityIntegrationTests:283,:377,:479` (нет stale root rows), `MiSubProcessApprovalRouteIntegrationTests:227-229` (остатки CREATED) |
 | subProcess + MI + Camunda8-parity | фикстуры `test-c841-parity-*.bpmn` | `MultiInstanceExecutor` | `MiSubProcessCamunda8ParityIntegrationTests` (11–12 тестов) | **да** (`:431,:528`) |
@@ -138,7 +138,7 @@
 | compensate: waitForCompletion | `:490` | `CompensationThrowHandler.java:80` | `CompensationWaitIntegrationTests` | не знаю |
 | start event: formDefinition/formKey | `:175-192` | start-форма | `BpmnParseStartFormTest`, `Camunda8FormsIntegrationTests` | н/д |
 | end/throw: job-based (`zeebe:taskDefinition` на end event) | `:1912` (end), `:2066` (throw) | `ActivityServiceImpl.isJobBasedEvent.java:187-197` | `Camunda8ParityCharacterizationTests` (test-c8-job-end.bpmn, test-c8-job-throw.bpmn) | не знаю |
-| ioMapping input/output (общий) | `:1597-1614` (`toMappings :1616-1626`), вызовы: service `:1485`, userTask `:1865`, subProcess `:354`, callActivity `:2107` | `ElementSupport` | `IoMappingIntegrationTests` (test-io-mapping.bpmn), `Eng29FeelNullIoMappingIncidentIT`, `Eng30LenientModeNoIncidentIT`, `Diff1IoMappingScopeReproTest`, `Eng33NowIoMappingIT` | нет |
+| ioMapping input/output (общий) | `:1597-1614` (`toMappings :1616-1626`), вызовы: service `:1485`, userTask `:1865`, subProcess `:354`, callActivity `:2107` | `ElementSupport` | `IoMappingIntegrationTests` (test-io-mapping.bpmn), `Eng29FeelNullIoMappingIncidentIntegrationTests`, `Eng30LenientModeNoIncidentIntegrationTests`, `Diff1IoMappingScopeReproTest`, `Eng33NowIoMappingIntegrationTests` | нет |
 | script: zeebe:script (expression/resultVariable) | `:1650-1656` | `SyncTaskHandler.ScriptTask` | `ScriptTaskIntegrationTests` | не знаю |
 | script: inline `<script>` | `:1657-1662` | `SyncTaskHandler.ScriptTask` | `ScriptTaskIntegrationTests` | не знаю |
 | businessRule: zeebe:calledDecision (decisionId/resultVariable/bindingType/versionTag) | `:1685-1689` | DMN-вызов | `BusinessRuleTaskIntegrationTests` | не знаю |
@@ -203,7 +203,7 @@
   `NestedEventSubprocessCancelScopeIntegrationTests`, `EventSubProcessInclusiveJoinIntegrationTests`.
 - **test-adhoc-*.bpmn** — `AdHocSubProcessIntegrationTests`, `AdHocJobWorkerIntegrationTests`, `AdHocCompleteEndpointIT`.
 - **test-c8-call-*/test-eng11-*/test-propagate-*** — call activity: `CallActivityVariablePropagationIntegrationTests`,
-  `PropagateChildVariablesIntegrationTests`, `CallActivityNullSafetyIntegrationTests`, `CallActivityRecursionIT`.
+  `PropagateChildVariablesIntegrationTests`, `CallActivityNullSafetyIntegrationTests`, `CallActivityRecursionIntegrationTests`.
 - **test-transaction-cancel / test-implicit-fork-*/test-diff1-*/test-diff2-*/test-diff9-*/test-diff10-*** —
   `TransactionCancelIntegrationTests`, `ImplicitForkPendingBranchesIntegrationTests`, `Diff1IoMappingScopeReproTest`,
   `Diff2ExclusiveGatewayOrderTest`, `Diff10GatewayNoConditionNpeTest`, `BpmnStructureCoverageTest`.

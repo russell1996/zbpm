@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(classes = TestMain.class,
     properties = "zorrobpm.security.rate-limit.register-ip-capacity=2")
 @ActiveProfiles("test")
-class RegistrationRateLimitWiringIT {
+class RegistrationRateLimitWiringIntegrationTests {
 
     @Autowired
     @Qualifier("registrationRateLimiter")

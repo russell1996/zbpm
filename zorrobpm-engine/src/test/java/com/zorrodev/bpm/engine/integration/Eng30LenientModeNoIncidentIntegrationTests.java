@@ -45,7 +45,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code strict-missing} стал OBSOLETE (см. {@code ElementSupport}).
  *
  * <p>Та же BPMN-фикстура и тот же сценарий, что criterion1 в
- * {@code Eng29FeelNullIoMappingIncidentIT} — дельта поведения доказывается
+ * {@code Eng29FeelNullIoMappingIncidentIntegrationTests} — дельта поведения доказывается
  * парой тестов на одном прод-пути.
  *
  * <p>POF: вернуть прежнее поведение (тихая пустая строка в lenient) или
@@ -55,7 +55,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(classes = TestMain.class,
     properties = "zorrobpm.engine.io-mapping.strict-missing=false")
 @ActiveProfiles("test")
-public class Eng30LenientModeNoIncidentIT {
+public class Eng30LenientModeNoIncidentIntegrationTests {
 
     @Autowired
     private ProcessDefinitionService processDefinitionService;

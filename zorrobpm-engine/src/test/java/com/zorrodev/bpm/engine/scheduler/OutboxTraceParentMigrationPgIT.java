@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * WO-OBS-8 (G-N, PG half): changeset {@code 20260918-113} applied by Liquibase on a
  * REAL PostgreSQL — {@code COMMENT ON COLUMN} + insert/read-back through the real
  * {@code trace_parent} column. H2 accepts comment syntax the PG catalogue may reject
- * (and vice versa), so the H2 twin ({@link OutboxTraceParentMigrationIT}) is not
+ * (and vice versa), so the H2 twin ({@link OutboxTraceParentMigrationIntegrationTests}) is not
  * sufficient proof for the {@code dbms: postgresql} branch.
  *
  * <p>Run: {@code ci/run-pg-tests.sh} (or the {@code pg-it-run.md} command verbatim).

@@ -49,7 +49,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
-public class Eng33NowIoMappingIT {
+public class Eng33NowIoMappingIntegrationTests {
 
     @Autowired
     private ProcessDefinitionService processDefinitionService;

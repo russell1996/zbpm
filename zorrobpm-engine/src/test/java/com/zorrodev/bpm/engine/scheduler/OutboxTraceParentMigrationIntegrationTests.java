@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest
 @ActiveProfiles("test")
-class OutboxTraceParentMigrationIT {
+class OutboxTraceParentMigrationIntegrationTests {
 
     @Autowired
     private JdbcTemplate jdbc;

@@ -48,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 @SpringBootTest(classes = TestMain.class)
 @ActiveProfiles("test")
-class DomainTransactionalBoundaryIT {
+class DomainTransactionalBoundaryIntegrationTests {
 
     @Autowired ProcessDefinitionService processDefinitionService;
     @Autowired RuntimeService runtimeService;
