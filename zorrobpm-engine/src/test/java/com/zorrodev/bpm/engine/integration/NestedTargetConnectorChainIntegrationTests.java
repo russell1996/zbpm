@@ -8,8 +8,10 @@ import com.zorrodev.bpm.engine.TestMain;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
+import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,6 +63,12 @@ public class NestedTargetConnectorChainIntegrationTests {
 
     @Autowired
     private VariableRepository variableRepository;
+
+    @Autowired
+    private TokenRepository tokenRepository;
+
+    @Autowired
+    private QueryService queryService;
 
     private static String bpmn() {
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
@@ -177,5 +185,46 @@ public class NestedTargetConnectorChainIntegrationTests {
         // (семантика live 8.5 для «нет такого контекста»), а НЕ 200.
         assertThat(variableRepository.findByNameAndProcessInstanceId("status", piFlat))
             .get().extracting("textValue").isEqualTo("null");
+    }
+
+    /**
+     * G-P, инвариант утечек: вложенный target меняет исполнение BPMN (запись
+     * переменных), поэтому после прохождения проверяем, что не осталось НИЧЕГО живого:
+     * инстанс завершён, ни одной activity в CREATED/IN_PROGRESS, ни одного токена.
+     *
+     * <p>Особенность этого WO: вложенный контекст пишется в ТОТ ЖЕ скоуп, что и
+     * раньше (плоский ключ → плоский ключ, вложенный → родитель), поэтому число
+     * переменных и их жизнь не меняются — меняется только ФОРМА имени.
+     */
+    @Transactional
+    @Test
+    void nestedTarget_leavesNoLeftovers() {
+        UUID pi = start();
+
+        runtimeService.completeServiceTask(active(pi, "work").getId(), List.of());
+        runtimeService.completeServiceTask(active(pi, "conn").getId(),
+            List.of(json("http", CONNECTOR_HTTP_CONTEXT)));
+        runtimeService.completeServiceTask(active(pi, "dump").getId(), List.of());
+
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt())
+            .as("the instance is finished").isNotNull();
+        assertThat(activityRepository.findAll().stream()
+            .filter(a -> pi.equals(a.getProcessInstanceId()))
+            .filter(a -> a.getStatus() == ActivityStatus.CREATED || a.getStatus() == ActivityStatus.IN_PROGRESS)
+            .toList())
+            .as("no activity left active").isEmpty();
+        // Строка токена остаётся В ИСТОРИИ (fk_activities__token; «TERMINAL-ROW INVARIANT»
+        // в DBService — токен с историей не удаляется). Живым считается неразобранный
+        // форк: pendingBranches > 0. У завершённого инстанса таких быть не должно.
+        List<UUID> tokenIds = activityRepository.findAll().stream()
+            .filter(a -> pi.equals(a.getProcessInstanceId()))
+            .map(ActivityEntity::getToken)
+            .filter(java.util.Objects::nonNull)
+            .toList();
+        assertThat(tokenRepository.findAllById(tokenIds))
+            .as("no unconsumed fork left in the token counters")
+            .allSatisfy(t -> assertThat(t.getPendingBranches() == null || t.getPendingBranches() <= 0)
+                .as("token %s has pending branches", t.getId())
+                .isTrue());
     }
 }
