@@ -10,6 +10,8 @@ import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.TokenRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
+import com.zorrodev.bpm.engine.service.DBService;
+import com.zorrodev.bpm.engine.service.db.VariableHistoryEntry;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
@@ -70,6 +72,9 @@ public class NestedTargetConnectorChainIntegrationTests {
     @Autowired
     private QueryService queryService;
 
+    @Autowired
+    private DBService dbService;
+
     private static String bpmn() {
         return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
             + "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\" "
@@ -83,6 +88,7 @@ public class NestedTargetConnectorChainIntegrationTests {
             + "<bpmn:extensionElements><zeebe:taskDefinition type=\"c858Work\"/>"
             + "<zeebe:ioMapping>"
             + "<zeebe:input source=\"=1\" target=\"a.b\"/>"
+            + "<zeebe:input source=\"=2\" target=\"a.c\"/>"
             + "<zeebe:output source=\"=a.b\" target=\"o\"/>"
             + "</zeebe:ioMapping></bpmn:extensionElements>"
             + "<bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing></bpmn:serviceTask>"
@@ -185,6 +191,32 @@ public class NestedTargetConnectorChainIntegrationTests {
         // (семантика live 8.5 для «нет такого контекста»), а НЕ 200.
         assertThat(variableRepository.findByNameAndProcessInstanceId("status", piFlat))
             .get().extracting("textValue").isEqualTo("null");
+    }
+
+    /**
+     * Инвариант записи: имена переменных внутри ОДНОГО вызова {@code setVariables}
+     * уникальны (это прямо сказано в {@code VariableDbOperationsImpl}). Два маппинга
+     * в одного родителя ({@code a.b} и {@code a.c}) — это ОДНА переменная {@code a},
+     * значит и в истории переменных должна быть ОДНА запись (CREATE), а не две
+     * (CREATE + UPDATE от второго апсерта того же имени).
+     */
+    @Transactional
+    @Test
+    void twoMappingsIntoOneParent_areWrittenAsOneVariable() {
+        UUID pi = start();
+
+        // Input-mapping применяется при АКТИВАЦИИ элемента, а её скоуп удаляется в
+        // конце хвоста задачи — поэтому проверяем, пока задача ещё жива.
+        assertThat(active(pi, "work")).isNotNull();
+        assertThat(variableRepository.findByNameAndProcessInstanceId("a", pi))
+            .get().extracting("textValue").isEqualTo("{\"b\":1,\"c\":2}");
+        assertThat(variableRepository.findByNameAndProcessInstanceId("a.b", pi))
+            .as("the flat key must not exist any more").isEmpty();
+        List<VariableHistoryEntry> history = dbService.getVariableHistory(pi, "a");
+        assertThat(history).as("one variable — one history row").hasSize(1);
+        assertThat(history.get(0).source())
+            .as("the kind of the change must be CREATE, not UPDATE")
+            .isEqualTo("CREATE");
     }
 
     /**

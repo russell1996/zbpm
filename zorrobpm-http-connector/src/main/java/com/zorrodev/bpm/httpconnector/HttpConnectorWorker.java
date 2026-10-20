@@ -346,7 +346,7 @@ public class HttpConnectorWorker implements JobHandler {
             // контекстом http — тогда «=http.status» в output io-mapping разрешается
             // (сегодня он даёт null: FEEL ищет контекст http, а ключ плоский).
             // Плоская тройка остаётся: контракт воркера не меняется (аддитивно).
-            result.add(jsonVar("http", nestedHttpJson(status, responseHeaders, responseBody, bodyType)));
+            result.add(jsonVar("http", nestedHttpJson(status, responseHeaders, responseBody, bodyType, null)));
             return result;
         }
         // Решение maintainer п.3 — строго: non-2xx без молчаливого success.
@@ -359,7 +359,8 @@ public class HttpConnectorWorker implements JobHandler {
         errorVars.add(contractErrorVar("HTTP " + status));
         // Тот же вложенный контекст на ошибочной ветке: обработчик boundary/инцидента
         // читает «=http.status» так же, как обработчик успеха.
-        errorVars.add(contractJsonVar("http", nestedHttpJson(status, responseHeaders, responseBody, bodyType)));
+        errorVars.add(contractJsonVar("http",
+            nestedHttpJson(status, responseHeaders, responseBody, bodyType, "HTTP " + status)));
         activityService.throwServiceTaskError(model.getServiceTaskId(), "HTTP_" + status, errorVars);
         return List.of();
     }
@@ -375,11 +376,17 @@ public class HttpConnectorWorker implements JobHandler {
      * форме.
      */
     private String nestedHttpJson(long status, Map<String, String> responseHeaders,
-            String responseBody, String bodyType) {
+            String responseBody, String bodyType, String error) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("status", status);
         context.put("headers", responseHeaders);
         context.put("body", "JSON".equals(bodyType) ? parseJsonOrRaw(responseBody) : responseBody);
+        // На ошибочной ветке плоская тройка дополнена http.error — вложенный контекст
+        // должен быть ЕЁ ЗЕРКАЛОМ, иначе «=http.error» не разрешится, хотя плоский
+        // ключ http.error опубликован (асимметрия форм).
+        if (error != null) {
+            context.put("error", error);
+        }
         try {
             return objectMapper.writeValueAsString(context);
         } catch (JsonProcessingException e) {

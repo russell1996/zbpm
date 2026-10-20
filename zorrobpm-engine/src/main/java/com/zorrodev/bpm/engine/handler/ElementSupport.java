@@ -781,7 +781,12 @@ public class ElementSupport {
             ProcessVariable result = evaluateMapping(mapping, variables);
             if (result != null) {
                 // WO-C8-58: target с точкой → вложенный контекст (Zeebe 8.5).
-                results.put(result.getName(), writer.persist(result));
+                // Ключ — ИМЯ ЗАПИСИ (родителя), а не имя target'а: иначе в одном
+                // вызове setVariables окажутся две строки с одинаковым именем
+                // (инвариант «имена внутри одного вызова уникальны» —
+                // VariableDbOperationsImpl).
+                ProcessVariable stored = writer.persist(result);
+                results.put(stored.getName(), stored);
             }
         }
         if (!results.isEmpty()) {
@@ -1276,7 +1281,12 @@ public class ElementSupport {
             ProcessVariable result = evaluateMapping(mapping, variables);
             if (result != null) {
                 // WO-C8-58: target с точкой → вложенный контекст (Zeebe 8.5).
-                results.put(result.getName(), writer.persist(result));
+                // Ключ — ИМЯ ЗАПИСИ (родителя), а не имя target'а: иначе в одном
+                // вызове setVariables окажутся две строки с одинаковым именем
+                // (инвариант «имена внутри одного вызова уникальны» —
+                // VariableDbOperationsImpl).
+                ProcessVariable stored = writer.persist(result);
+                results.put(stored.getName(), stored);
             }
         }
         if (!results.isEmpty()) {

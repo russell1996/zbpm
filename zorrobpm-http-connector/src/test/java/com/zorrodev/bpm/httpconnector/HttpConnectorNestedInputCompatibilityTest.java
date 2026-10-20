@@ -66,9 +66,17 @@ class HttpConnectorNestedInputCompatibilityTest {
             lastRequestMethod = exchange.getRequestMethod();
             exchange.getRequestHeaders().forEach((k, v) -> lastRequestHeaders.put(k.toLowerCase(), String.join(",", v)));
             lastRequestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-            byte[] body = "{\"paid\":true}".getBytes(StandardCharsets.UTF_8);
+            String path = exchange.getRequestURI().getPath();
+            byte[] body;
+            int status = 200;
+            if ("/missing".equals(path)) {
+                status = 404;
+                body = "nope".getBytes(StandardCharsets.UTF_8);
+            } else {
+                body = "{\"paid\":true}".getBytes(StandardCharsets.UTF_8);
+            }
             exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, body.length);
+            exchange.sendResponseHeaders(status, body.length);
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(body);
             }
@@ -203,6 +211,32 @@ class HttpConnectorNestedInputCompatibilityTest {
         verify(activityService).throwServiceTaskError(any(), eq("HTTP_CONNECTOR_CONFIG"), any());
         // ни одного байта в сокет: отказ ДО обращения
         assertThat(lastRequestMethod).isNull();
+    }
+
+    /**
+     * Ошибочная ветка: вложенный контекст `http` — ЗЕРКАЛО плоских переменных
+     * ошибки, значит в нём есть и `error` (иначе «=http.error» не разрешился бы,
+     * хотя плоский ключ `http.error` опубликован).
+     */
+    @Test
+    void errorBranch_publishesNestedHttpContextWithErrorLeaf() {
+        List<ProcessVariable> result = localWorker().handleJob(job(
+            pv("http.url", baseUrl + "/missing", "STRING")));
+
+        ArgumentCaptor<List<com.zorrodev.bpm.contract.model.ProcessVariable>> captor =
+            ArgumentCaptor.forClass(List.class);
+        verify(activityService).throwServiceTaskError(any(), eq("HTTP_404"), captor.capture());
+        com.zorrodev.bpm.contract.model.ProcessVariable nested = captor.getValue().stream()
+            .filter(v -> "http".equals(v.getName()))
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no nested http context in the error variables"));
+        assertThat(nested.getValue())
+            .contains("\"status\":404")
+            .contains("\"error\":\"HTTP 404\"");
+        // плоские переменные ошибки на месте — контракт не сломан
+        assertThat(result).isEmpty();
+        assertThat(captor.getValue().stream().map(v -> v.getName()))
+            .contains("http.status", "http.headers", "http.body", "http.error");
     }
 
     /**
