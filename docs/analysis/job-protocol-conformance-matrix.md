@@ -53,5 +53,5 @@ WO-OPS-30 Ф2а. Поведение измерено на **живом Zeebe 8.5
   в failsafe). Сырые наблюдения — `zorrobpm-engine/target/job-protocol-observed.json`,
   ожидания — в `job-protocol-cases.json` (`expect.observations`); значения берутся из измерения
   на живом 8.5, а не из нашей реализации (G-Q).
-* **POF** (мутации прода, RED→GREEN) — в отчёте `docs/internal` §6.
+* **POF** (мутации прода, RED→GREEN) — в отчёте `docs/internal` §PRE-DONE.2.
 
