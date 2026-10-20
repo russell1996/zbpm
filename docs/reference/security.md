@@ -90,7 +90,7 @@ completion'ы: сообщение, которому движок не смог �
 2. **Все воркеры — свои и доверенные.** Внешние/сторонние консьюмеры к каналу
    завершений не подключаются (см. триггеры пересмотра).
 3. **Креды — per-worker, с минимальными правами.** Права воркера выдаёт движок
-   (`zorrobpm-engine/.../RabbitMqProvisioningService.java:287`): `write` — только на
+   (`zorrobpm-engine/.../RabbitMqProvisioningService.java:286`): `write` — только на
    `^zorrobpm\.completions$` (не на `amq.default`: право на default exchange открыло бы
    запись в любую очередь), `read` — на очереди job'ов этого воркера, их DLQ и на
    poison-очередь, `configure` — на объявление своих очередей. Юзер без членства ни в
