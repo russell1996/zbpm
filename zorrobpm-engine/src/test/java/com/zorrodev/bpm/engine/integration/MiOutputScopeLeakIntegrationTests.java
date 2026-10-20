@@ -100,7 +100,7 @@ public class MiOutputScopeLeakIntegrationTests {
     @Transactional
     @Test
     void miParallel_outputElement_isInstanceLocal_andOnlyCollectionPropagates() throws Exception {
-        Set<UUID> baseline = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbcTemplate);
+        LeakInvariantChecker.Baseline baseline = LeakInvariantChecker.snapshot(jdbcTemplate);
         UUID pi = start("test-c853-mi-service-output.bpmn", Map.of("items", List.of("a", "b")));
 
         List<ActivityEntity> jobs = live(pi, "miTask");
@@ -131,7 +131,7 @@ public class MiOutputScopeLeakIntegrationTests {
     @Transactional
     @Test
     void miSequential_outputElement_isNotVisibleToNextInstance() throws Exception {
-        Set<UUID> baseline = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbcTemplate);
+        LeakInvariantChecker.Baseline baseline = LeakInvariantChecker.snapshot(jdbcTemplate);
         UUID pi = start("test-c853-mi-service-output-sequential.bpmn",
             Map.of("items", List.of("a", "b", "c")));
 
@@ -167,7 +167,7 @@ public class MiOutputScopeLeakIntegrationTests {
     @Transactional
     @Test
     void miEmptyOutput_jobsCarryNullOutputElement() throws Exception {
-        Set<UUID> baseline = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbcTemplate);
+        LeakInvariantChecker.Baseline baseline = LeakInvariantChecker.snapshot(jdbcTemplate);
         UUID pi = start("test-c853-mi-service-output.bpmn", Map.of("items", List.of("a", "b")));
 
         List<ActivityEntity> jobs = live(pi, "miTask");
@@ -194,7 +194,7 @@ public class MiOutputScopeLeakIntegrationTests {
     @Transactional
     @Test
     void outputMapping_completionVariable_doesNotLeakToRoot() throws Exception {
-        Set<UUID> baseline = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbcTemplate);
+        LeakInvariantChecker.Baseline baseline = LeakInvariantChecker.snapshot(jdbcTemplate);
         UUID pi = start("test-c853-output-completion.bpmn", Map.of());
 
         ActivityEntity work = single(pi, "work");
@@ -220,7 +220,7 @@ public class MiOutputScopeLeakIntegrationTests {
     @Transactional
     @Test
     void outputMappings_areOrdered_targetVisibleToLaterMapping() throws Exception {
-        Set<UUID> baseline = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbcTemplate);
+        LeakInvariantChecker.Baseline baseline = LeakInvariantChecker.snapshot(jdbcTemplate);
         UUID pi = start("test-c853-output-ordered.bpmn", Map.of());
 
         ActivityEntity work = single(pi, "work");
@@ -243,7 +243,7 @@ public class MiOutputScopeLeakIntegrationTests {
     @Transactional
     @Test
     void miWithOutputMappings_onlyMappedTargetsLeaveTheBody() throws Exception {
-        Set<UUID> baseline = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbcTemplate);
+        LeakInvariantChecker.Baseline baseline = LeakInvariantChecker.snapshot(jdbcTemplate);
         UUID pi = start("test-c853-mi-service-output-mapping.bpmn", Map.of("items", List.of("a", "b")));
 
         List<ActivityEntity> jobs = live(pi, "miTask");
@@ -280,7 +280,7 @@ public class MiOutputScopeLeakIntegrationTests {
     @Transactional
     @Test
     void miWithoutMappings_outputElementLocal_otherCompletionVarsReachRoot() throws Exception {
-        Set<UUID> baseline = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbcTemplate);
+        LeakInvariantChecker.Baseline baseline = LeakInvariantChecker.snapshot(jdbcTemplate);
         UUID pi = start("test-c853-mi-output-and-gateway.bpmn", Map.of("items", List.of("a", "b")));
 
         List<ActivityEntity> jobs = live(pi, "miTask");
@@ -444,10 +444,10 @@ public class MiOutputScopeLeakIntegrationTests {
         return incidentRepository.findByActivityIdInAndCompletedAtIsNull(activityIds);
     }
 
-    private void assertNoLeaks(UUID pi, Set<UUID> baseline) {
+    private void assertNoLeaks(UUID pi, LeakInvariantChecker.Baseline baseline) {
         assertThat(openIncidents(pi)).as("no incidents on a successfully completed instance").isEmpty();
         List<LeakInvariantChecker.Violation> violations =
-            LeakInvariantChecker.check(jdbcTemplate, baseline).stream()
+            LeakInvariantChecker.check(jdbcTemplate, baseline).own().stream()
                 .filter(v -> pi.equals(v.instanceId()))
                 .toList();
         assertThat(violations).as("G-P leak invariant for " + pi).isEmpty();

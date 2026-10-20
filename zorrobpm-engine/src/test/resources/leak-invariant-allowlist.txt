@@ -1,3 +1,33 @@
-# WO-OPS-26: allowlist тестов, намеренно оставляющих мусор в завершённом инстансе.
+# WO-OPS-32: allowlist инварианта утечек (режим enforce).
 # Формат построчно: <SimpleClass | FQN>[#метод] :: <причина>.
-# Пусто: в режиме report нарушений, требующих allowlist, пока не зафиксировано.
+# Причина обязана называть WO-id: молчаливых исключений здесь нет — каждая
+# запись это известная, названная находка с конкретным владельцем.
+#
+# Все записи ниже — подтверждённые дефекты движка, найденные инвариантом
+# (WO-OPS-32, полный прогон engine в режиме report). Запись снимается, когда
+# соответствующий WO закрыт; до тех пор нарушение видно в отчёте как
+# «allowed | <тест> | …» и НИКОГДА не роняет сборку.
+#
+# Тест самого инварианта крафтит живую activity намеренно (иначе детектор нечем
+# проверять) — энд-тоенд «сборка красная на живой утечке» доказан мутацией
+# (отчёт WO-OPS-32, раздел POF).
+LeakInvariantListenerTests :: WO-OPS-26 — тест самого инварианта намеренно оставляет живую activity в завершённом инстансе (orderProbe и проверки детектора); энд-тоенд «сборка красная» доказан мутацией в отчёте WO-OPS-32 (POF).
+InclusiveJoinReadinessMatrixIntegrationTests#joinReadinessFollowsTheOneRule :: WO-OPS-33 — прерывающая граница с продолжением в end event двойно расходует счётчик ветвей форка: инстанс завершается преждевременно, движок затем резюмит parked join и создаёт taskAfter в завершённом инстансе (204 нарушения на 60 инстансов); WO-OPS-34 — подписка s1 нормально завершённого инстанса не удаляется (14 нарушений).
+ForkBoundaryScopeIntegrationTests#interruptingBoundaryOnForkHost_siblingSurvives :: WO-OPS-33 — тот же двойной расход счётчика ветвей на прерывающей границе: соседняя ветвь форка (siblingTask) остаётся живой в завершённом инстансе.
+ForkBoundaryScopeIntegrationTests#interruptingBoundaryOnMiHostInsideFork_cancelsMiSiblingsButNotForkBranch :: WO-OPS-33 — тот же двойной расход счётчика ветвей: ветвь форка вне MI-хоста (otherTask) остаётся живой в завершённом инстансе.
+AdHocScopeTokenIntegrationTests#interruptingBoundary_killsOnlyScopeSubtree_siblingSurvives :: WO-OPS-33 — тот же двойной расход счётчика ветвей: продолжение прерывающей границы ad-hoc скоупа ведёт в end event, инстанс завершается, а соседняя ветвь (outerTask, taskA) остаётся живой.
+InclusiveJoinDeactivationWakeupIntegrationTests#deferredCancelingTailOnTheBoundaryHost_wakesTheParkedJoin :: WO-OPS-33 — тот же двойной расход счётчика ветвей: deferred-tail прерывающей границы ведёт в end event, инстанс завершается, parked join резюмится уже после завершения и создаёт taskAfter в мёртвом инстансе.
+ConditionalEventIntegrationTests#conditionalFilterFiresBoundaryOnRelevantChange :: WO-OPS-33 — условная граница с продолжением в end event: инстанс завершается преждевременно, arrival-строка parked join остаётся в завершённом инстансе.
+ConditionalEventIntegrationTests#conditionalBoundaryFiresInterruptingWhenItsConditionBecomesTrue :: WO-OPS-33 — условная граница с продолжением в end event: инстанс завершается преждевременно, arrival-строка parked join остаётся в завершённом инстансе.
+EventSubProcessIntegrationTests#mainFlowCompletesNormallyWhenNoTriggeringMessageArrives :: WO-OPS-34 — нормальное завершение инстанса не удаляет его message-подписку (cancelOrder остаётся consumed=false).
+EventSubProcessIntegrationTests#nonInterruptingMessageEventSubProcessRunsAlongsideMainFlowAndCanFireRepeatedly :: WO-OPS-34 — нормальное завершение инстанса не удаляет его message-подписку (ping остаётся consumed=false).
+EventSubProcessInclusiveJoinIntegrationTests#nonInterruptingEventSubProcess_doesNotHoldTheParentScopeJoinForever :: WO-OPS-34 — нормальное завершение инстанса не удаляет его message-подписку (ping остаётся consumed=false).
+AdhocScopeArrivalCleanupIntegrationTests#cancelEnd_cancelsAdhocScopeWithParkedJoin_neighbourFiresOnce :: WO-OPS-34 — отмена ad-hoc скоупа не чистит arrival-строки его собственного join'а (A::…, E::…) — в завершённом инстансе.
+AdhocScopeArrivalCleanupIntegrationTests#errorScopeWalk_cancelsAdhocScopeWithParkedJoin_neighbourFiresOnce :: WO-OPS-34 — отмена ad-hoc скоупа (error-walk) не чистит arrival-строки его собственного join'а.
+AdhocScopeArrivalCleanupIntegrationTests#interruptingEscalation_cancelsAdhocScopeWithParkedJoin_neighbourFiresOnce :: WO-OPS-34 — отмена ad-hoc скоупа (interrupting escalation) не чистит arrival-строки его собственного join'а.
+AdhocScopeArrivalCleanupIntegrationTests#terminateInScope_cancelsAdhocScopeWithParkedJoin_neighbourFiresOnce :: WO-OPS-34 — отмена ad-hoc скоупа (terminate) не чистит arrival-строки его собственного join'а.
+CompensationWaitIntegrationTests#waitForCompletionFalse_throwContinuesWithoutWaitingForHandler :: WO-OPS-35 — компенсация без ожидания: handler-задача (service_task compHandler) остаётся жить в завершённом инстансе, её job уйдёт воркеру по мёртвому инстансу.
+AdHocJobWorkerIntegrationTests#fulfilledResult_withoutCancelLeavesRestAlive :: WO-OPS-35 — ad-hoc scope закрыт с cancelRemaining=false: внутренняя задача taskY остаётся жить, инстанс при этом завершается.
+AdHocSubProcessIntegrationTests#cancelFalse_scopeFinishesImmediatelyAndSecondLivesOn :: WO-OPS-35 — ad-hoc scope закрыт с cancelRemaining=false: внутренняя задача taskD2 остаётся жить, инстанс при этом завершается.
+MetricsWiringIntegrationTests#cancelInstance_decrementsActiveGaugeWithoutCompleted :: WO-OPS-35 — низкоуровневый DBService.cancelProcessInstance помечает инстанс отменённым, но не гасит его activity (taskM остаётся CREATED); гашение делает вызывающий (REST-путь делает, прямой вызов — нет).
+MetricsWiringIntegrationTests#incidentRaise_complete_incidentFailedAndStuckPair :: WO-OPS-35 — низкоуровневый DBService.cancelProcessInstance помечает инстанс отменённым, но не гасит его activity (taskM остаётся CREATED).
