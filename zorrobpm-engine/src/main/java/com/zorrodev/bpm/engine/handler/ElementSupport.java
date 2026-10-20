@@ -1445,6 +1445,25 @@ public class ElementSupport {
      *       (JSON null), no incident — the live-8.5 behaviour;</li>
      *   <li>a value WITH a suppressed failure → the value (unchanged).</li>
      * </ul></p>
+     * <p>WO-C8-55: a source WITHOUT a leading {@code =} is a STATIC VALUE, not a FEEL
+     * expression — the rule live Zeebe 8.5 applies (measured on the live oracle,
+     * {@code docs/analysis/c8-oracle/feel-iomapping-static-nested.js}): the source text is
+     * delivered VERBATIM and is always a STRING — {@code hello} → {@code "hello"},
+     * {@code present} → {@code "present"} even when a variable of that name exists,
+     * {@code 42} → {@code "42"} (not the number 42), {@code {"a":1}} → the string
+     * {@code "{\"a\":1}"} (not a parsed context), {@code "  hello  "} → the string with its
+     * spaces kept. Before this the engine evaluated such a source as FEEL: a bare word became
+     * a variable reference (resolved, or a null value), a number became a number, a JSON text
+     * became a parsed context ({@code {"a":1}} IS legal FEEL — it deployed and delivered the
+     * CONTEXT), and a value with a space in it ({@code hello world}) was refused at deploy as
+     * unparseable FEEL.</p>
+     *
+     * <p>The mirror rule on the OUTPUT side is a DEPLOY refusal (live 8.5: an output source is
+     * an EXPRESSION, never a static value — «Expected expression but found static value
+     * 'hello'. An expression must start with '='»); the deploy gate is
+     * {@code FeelSyntaxValidator}. A model deployed BEFORE that gate keeps running here with
+     * the same static-value rule — the same treatment as every other already-deployed model
+     * (the refusal is deploy-time only).</p>
      */
     public ProcessVariable evaluateMapping(IoMappingExtensionModel.Mapping mapping, List<ProcessVariable> variables) {
         if (mapping.getSource() == null || mapping.getTarget() == null || mapping.getTarget().isBlank()) {
@@ -1457,7 +1476,12 @@ public class ElementSupport {
             Object legacy = scriptService.evaluateExpression(source, variables);
             return toProcessVariable(mapping.getTarget(), legacy);
         }
-        String expression = source.startsWith("=") ? source.substring(1) : source;
+        if (!source.startsWith("=")) {
+            // WO-C8-55: a static value — the source text verbatim, always a STRING.
+            // Not FEEL, not a variable name, not a number, not a parsed context.
+            return toProcessVariable(mapping.getTarget(), source);
+        }
+        String expression = source.substring(1);
         Map<String, Object> context = toFeelContext(variables, objectMapper);
         // WO-ENG-20: same budget entry point (pool/timeout/bulkhead) as every other
         // FeelEngineApi caller — resolveExpression and DmnServiceImpl.

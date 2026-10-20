@@ -581,10 +581,14 @@ public abstract class FeelIoMappingConformanceSupport {
     }
 
     private static String loopCharacteristics(Map<String, Object> c) {
+        // WO-C8-55: inputCollection is a case field, not a constant — on live 8.5 a collection
+        // written WITHOUT '=' is a static value and the model is refused at deploy (the
+        // mi-inputcollection-noeq probe); the default stays the legal '=items' form.
         return "<bpmn:multiInstanceLoopCharacteristics isSequential=\""
             + (Boolean.TRUE.equals(c.get("isSequential")) ? "true" : "false") + "\">"
             + "<bpmn:extensionElements><zeebe:loopCharacteristics "
-            + "inputCollection=\"=items\" inputElement=\"item\" "
+            + "inputCollection=\"" + esc(String.valueOf(c.getOrDefault("inputCollection", "=items")))
+            + "\" inputElement=\"" + esc(String.valueOf(c.getOrDefault("inputElement", "item"))) + "\" "
             + "outputCollection=\"" + esc(String.valueOf(c.getOrDefault("outputCollection", "results"))) + "\" "
             + "outputElement=\"" + esc(String.valueOf(c.getOrDefault("outputElement", "=r"))) + "\"/>"
             + "</bpmn:extensionElements></bpmn:multiInstanceLoopCharacteristics>";

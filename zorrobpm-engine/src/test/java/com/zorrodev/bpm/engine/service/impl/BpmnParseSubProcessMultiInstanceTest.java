@@ -44,8 +44,11 @@ class BpmnParseSubProcessMultiInstanceTest {
         assertThat(zeebe.getInputCollection()).isEqualTo("=activities");
         assertThat(zeebe.getInputElement()).isEqualTo("activity");
         assertThat(zeebe.getOutputCollection()).isEqualTo("decisions");
+        // WO-C8-55: the fixture carries the Zeebe-legal "={...}" form of outputElement (without
+        // the '=' live 8.5 reads a static value and refuses the model at deploy) — the original
+        // consumer spelling is in docs/internal
         assertThat(zeebe.getOutputElement())
-            .isEqualTo("{\"decision\": decision, \"comment\": comment}");
+            .isEqualTo("={\"decision\": decision, \"comment\": comment}");
     }
 
     @Test

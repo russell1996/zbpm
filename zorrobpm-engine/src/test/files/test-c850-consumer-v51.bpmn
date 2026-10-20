@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-55: outputElement переписан в зееб-легальную форму "={...}" — на live 8.5
+     outputElement без "=" это СТАТИЧЕСКОЕ ЗНАЧЕНИЕ, и такая модель отвергается
+     на деплое (замер: docs/analysis/c8-oracle/scenarios/feel-iomapping-static-nested).
+     ОРИГИНАЛЬНЫЕ байты модели консьюмера (с outputElement без "=") лежат рядом:
+     docs/internal (C8-42) и test-c855-consumer-noeq-output-element.bpmn;
+     отказ на них закреплён MiExpressionFieldDeployValidationIntegrationTests. -->
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:modeler="http://camunda.org/schema/modeler/1.0" id="Definitions_0agny33" targetNamespace="http://bpmn.io/schema/bpmn" exporter="Camunda Modeler" exporterVersion="5.51.1" modeler:executionPlatform="Camunda Cloud" modeler:executionPlatformVersion="8.9.0">
   <bpmn:process id="testApprovalRouteProcess" name="Маршрут согласования" isExecutable="true">
     <bpmn:startEvent id="startRoute" name="Запуск маршрута">
@@ -107,7 +113,7 @@ Join инстансов собирает решения в decisions (масси
       <bpmn:extensionElements>
         <bpmn:multiInstanceLoopCharacteristics>
           <bpmn:extensionElements>
-            <zeebe:loopCharacteristics inputCollection="=openActivities" inputElement="activity" outputCollection="decisions" outputElement="{&#34;decision&#34;: decision, &#34;comment&#34;: comment}" />
+            <zeebe:loopCharacteristics inputCollection="=openActivities" inputElement="activity" outputCollection="decisions" outputElement="={&#34;decision&#34;: decision, &#34;comment&#34;: comment}" />
           </bpmn:extensionElements>
           <bpmn:completionCondition xsi:type="bpmn:tFormalExpression">some d in decisions satisfies d.decision = "REJECTED"</bpmn:completionCondition>
         </bpmn:multiInstanceLoopCharacteristics>

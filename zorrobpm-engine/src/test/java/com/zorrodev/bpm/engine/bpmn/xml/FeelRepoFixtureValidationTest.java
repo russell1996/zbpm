@@ -38,6 +38,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       the list is asserted in BOTH directions — an unknown file with a finding fails the
  *       test, and a whitelisted file that no longer produces a finding is stale and fails it
  *       too.</li>
+ *   <li>{@link #KNOWN_REFUSED_BY_THE_C8_55_PARITY_GATE} — the consumer's own models, kept
+ *       byte-identical because the WO-C8-55 deploy gate refuses them exactly as live 8.5 does
+ *       (the multi-instance {@code outputElement} written as a static value). Same two-way
+ *       assertion.</li>
  * </ul>
  */
 class FeelRepoFixtureValidationTest {
@@ -63,6 +67,29 @@ class FeelRepoFixtureValidationTest {
             "WO-C8-56 RED fixture: assignee '=user = \'x\''",
         "zorrobpm-engine/src/test/files/test-c856-invalid-feel-two-broken.bpmn",
             "WO-C8-56 RED fixture: broken condition AND assignee in one model");
+
+    /**
+     * WO-C8-55: models that live 8.5 REFUSES at deploy and this engine now refuses too — but
+     * they are not broken FEEL, they are the CONSUMER'S OWN BYTES, kept in the tree on purpose:
+     * the multi-instance {@code outputElement} written as a static value (no leading {@code =}).
+     * They are the evidence for the refusal (the prod corpus uses that spelling — the ACTIVE
+     * {@code testApprovalRouteProcess} v73 on prod), so they must stay byte-identical to what
+     * the consumer sent; the working copies of that model in {@code zorrobpm-engine/src/test/files}
+     * carry the Zeebe-legal {@code ={...}} form, which behaves identically in this engine.
+     *
+     * <p>Asserted in BOTH directions, exactly like the map above: a file that stops producing a
+     * finding is stale and fails the test; an unknown file with a finding fails it too.</p>
+     */
+    private static final java.util.Map<String, String> KNOWN_REFUSED_BY_THE_C8_55_PARITY_GATE = java.util.Map.of(
+        "docs/internal",
+            "the consumer's approval-route v2, ORIGINAL bytes (WO-C8-42 attachment): "
+            + "mi.outputElement without '=' — refused at deploy, like on live 8.5",
+        "docs/internal",
+            "the consumer's v51, ORIGINAL bytes (WO-C8-50 attachment): mi.outputElement without '=' "
+            + "— refused at deploy, like on live 8.5",
+        "zorrobpm-engine/src/test/files/test-c855-consumer-noeq-output-element.bpmn",
+            "the consumer's mi.outputElement spelling without '=' in isolation — the evidence for "
+            + "the WO-C8-55 refusal (asserted by MiExpressionFieldDeployValidationIntegrationTests)");
 
     private final BpmnParseServiceImpl parser = new BpmnParseServiceImpl();
 
@@ -103,12 +130,14 @@ class FeelRepoFixtureValidationTest {
             .as("the scan must actually see the repo's fixtures, not an empty set")
             .hasSizeGreaterThan(300);
 
-        // every finding must be one of the deliberately-broken fixtures — a broken expression
-        // in ANY other model would mean the gate eats a model the project already ships
+        // every finding must be one of the known files — a broken expression (or a refused
+        // static value) in ANY other model would mean the gate eats a model the project
+        // already ships
+        java.util.Map<String, String> known = new java.util.TreeMap<>(KNOWN_INTENTIONALLY_BROKEN);
+        known.putAll(KNOWN_REFUSED_BY_THE_C8_55_PARITY_GATE);
         assertThat(findings)
-            .as("only the known intentionally-broken fixtures may carry unparseable FEEL")
-            .allSatisfy(f -> assertThat(KNOWN_INTENTIONALLY_BROKEN)
-                .containsKey(f.elementId()));
+            .as("only the known fixtures may carry a FEEL finding")
+            .allSatisfy(f -> assertThat(known).containsKey(f.elementId()));
 
         // and the whitelist must be live: a fixture that no longer produces a finding is stale
         // (or the validator silently lost coverage) — the entry must go away
@@ -119,6 +148,12 @@ class FeelRepoFixtureValidationTest {
             assertThat(findingFiles)
                 .as("whitelist entry is stale: " + knownFile
                     + " (reason: " + KNOWN_INTENTIONALLY_BROKEN.get(knownFile) + ")")
+                .contains(knownFile);
+        }
+        for (String knownFile : KNOWN_REFUSED_BY_THE_C8_55_PARITY_GATE.keySet()) {
+            assertThat(findingFiles)
+                .as("WO-C8-55 whitelist entry is stale: " + knownFile
+                    + " (reason: " + KNOWN_REFUSED_BY_THE_C8_55_PARITY_GATE.get(knownFile) + ")")
                 .contains(knownFile);
         }
     }

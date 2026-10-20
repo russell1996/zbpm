@@ -25,7 +25,8 @@ import java.util.Set;
  * the same case list, the same live-8.5 expectations, the other profile.</p>
  *
  * <p>The cases run here are the root-1 cases of WO-C8-54 (the ones whose live-8.5
- * value is a null) — the strict profile runs the whole list
+ * value is a null) and the root-3 cases of WO-C8-55 (the static-value rule) — the strict
+ * profile runs the whole list
  * ({@link FeelIoMappingConformanceIntegrationTests}). Both write their own observed
  * snapshot, so the matrix keeps one column per profile.</p>
  */
@@ -34,11 +35,21 @@ import java.util.Set;
 @ActiveProfiles("test")
 public class FeelIoMappingNullSemanticsIntegrationTests extends FeelIoMappingConformanceSupport {
 
-    /** The root-1 cases of WO-C8-54 (live 8.5 → a null value). */
+    /**
+     * The root-1 cases of WO-C8-54 (live 8.5 → a null value) plus the root-3 cases of
+     * WO-C8-55 (a source without {@code =} → a static value; an output source without
+     * {@code =} → refused at deploy). Both sets are the ones whose live-8.5 value is pinned
+     * for the PRODUCTION default profile — the flag itself is obsolete since WO-C8-54 (both
+     * profiles follow live 8.5), and this class is the guard that the profile which actually
+     * runs in production does too.
+     */
     private static final Set<String> NULL_SEMANTICS_CASES = Set.of(
         "num-round", "str-null", "null-literal", "missing-bare", "present-null",
         "missing-default", "path-missing", "mixed-string-num", "mixed-lt",
-        "path-index-zero", "path-oob");
+        "path-index-zero", "path-oob",
+        // WO-C8-55 (root 3): the static-value rule must hold under the production default too
+        "noeq-literal", "noeq-var", "noeq-number", "noeq-json", "noeq-spaces",
+        "noeq-output-static", "noeq-output-static-var");
 
     @Override
     protected Set<String> includedCaseIds() {

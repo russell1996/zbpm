@@ -9,7 +9,7 @@ WO-OPS-30 Ф1. Поведение измерено на **живом Zeebe 8.5.0
 lenient — текущий production default (`false`, WO-ENG-30). Live-значения — **сырой JSON** из `variablesRaw`;
 JS-объект `variables` теряет точность int64 (см. `num-large-long`), поэтому для чисел 2^53+ используйте raw.
 
-**Итог: 65 `match`, 17 `ours differs`, 2 `docs≠8.5` (84 кейса).** WO-C8-54 (2026-10-20): строки 8, 16, 19, 20, 21, 22, 27, 29, 30, 48, 49 (корень 1 Ф1) — `match` после фикса null-семантики io-mapping; +12 строк условий гейтвеев (G-Q п.3). WO-C8-56 (2026-10-19): строки 10 (`str-single`), 23 (`missing-coalesce`), 60 (`eq-only`) переизмерены — отказ на деплое вместо runtime. WO-C8-53: строки #63/#65/#70/#71/#72 — `match` после фикса. (Сводка пересчитана maintainer при слиянии веток: 45 исходных match + 2 (C8-56) + 5 (C8-53).)
+**Итог: 77 `match`, 15 `ours differs`, 2 `docs≠8.5` (94 кейса).** WO-C8-54 (2026-10-20): строки 8, 16, 19, 20, 21, 22, 27, 29, 30, 48, 49 (корень 1 Ф1) — `match` после фикса null-семантики io-mapping; +12 строк условий гейтвеев (G-Q п.3). WO-C8-56 (2026-10-19): строки 10 (`str-single`), 23 (`missing-coalesce`), 60 (`eq-only`) переизмерены — отказ на деплое вместо runtime. WO-C8-53: строки #63/#65/#70/#71/#72 — `match` после фикса. WO-C8-55 (2026-10-20, корень 3 Ф1): строки 57 (`noeq-literal`), 58 (`noeq-var`) — `match` после фикса «source без «=» — статическое значение»; +5 новых строк 85–89 (тот же корень: число, JSON-текст, пробелы, output-отказ на деплое ×2) + 3 новых строки 90–92 (MI-поля: `inputCollection`/`outputElement` без «=» → отказ на деплое, текст live-8.5) + 2 новых строки 93–94 (формы, которые консьюмер пишет ВМЕСТО отвергнутой: голая ссылка и контекст — обе `match`, обе на live-8.5). (Сводка пересчитана maintainer при слиянии веток: 45 исходных match + 2 (C8-56) + 5 (C8-53) + 2 (C8-55) + 5 (C8-55, новые кейсы) + 3 (C8-55, MI-поля) + 2 (C8-55, формы замены).)
 
 Вердикты: `match` — поведение совпадает (с оговоркой в примечании, если она есть);
 `docs≠8.5` — 8.9-документация расходится с живым 8.5, дефолт — живой 8.5;
@@ -101,8 +101,8 @@ JS-объект `variables` теряет точность int64 (см. `num-larg
 
 | # | case | 8.9 docs | Zeebe 8.5 live (raw) | ours strict | ours lenient | verdict / finding |
 |---:|---|---|---|---|---|---|
-| 57 | <code>noeq-literal</code> | 8.9 expressions: without '=' the source is a static value, not FEEL | <code>completed: work {"r":"hello"} \| dump {}</code> | <code>noWorkJob: FeelEvaluationException: io-mapping source 'hello' failed to evaluate for target 'r': [NO_VARIABLE_FOUND] No variable found with name 'hello'</code> | <code>completed: work {r=STRING:""} \| dump {}</code> | **ours differs** — live treats source as static `hello`; ours evaluates as FEEL → incident / `""` |
-| 58 | <code>noeq-var</code> | 8.9 expressions: without '=' the source is a static string, even if it matches a variable name | <code>completed: work {"r":"present","present":"V"} \| dump {"present":"V"}</code> | <code>completed: work {r=STRING:"V", present=STRING:"V"} \| dump {present=STRING:"V"}</code> | <code>completed: work {r=STRING:"V", present=STRING:"V"} \| dump {present=STRING:"V"}</code> | **ours differs** — live treats source as static `present`; ours resolves variable `V` |
+| 57 | <code>noeq-literal</code> | 8.9 expressions: without '=' the source is a static value, not FEEL | <code>completed: work {"r":"hello"} \| dump {}</code> | <code>completed: work {r=STRING:"hello"} \| dump {}</code> | <code>completed: work {r=STRING:"hello"} \| dump {}</code> | **match** (WO-C8-55) — a source without '=' is a static value: the text is delivered verbatim, not evaluated as FEEL |
+| 58 | <code>noeq-var</code> | 8.9 expressions: without '=' the source is a static string, even if it matches a variable name | <code>completed: work {"r":"present","present":"V"} \| dump {"present":"V"}</code> | <code>completed: work {r=STRING:"present", present=STRING:"V"} \| dump {present=STRING:"V"}</code> | <code>completed: work {r=STRING:"present", present=STRING:"V"} \| dump {present=STRING:"V"}</code> | **match** (WO-C8-55) — the literal wins over the variable of the same name (ours resolved the variable `V` before the fix) |
 | 59 | <code>empty-source</code> | 8.9 variables: an ioMapping source is optional; an omitted/empty source yields null (live 8.5 rejects at deploy) | <code>deployError: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors:\n'f1_empty_source.bpmn': - Elemen</code> | <code>noWorkJob: RuntimeException: javax.script.ScriptException: failed to parse expression '': Expected (start-of-input \| ifOp \| forOp \| quantifiedOp \| disjunction):1…</code> | <code>noWorkJob: RuntimeException: javax.script.ScriptException: failed to parse expression '': Expected (start-of-input \| ifOp \| forOp \| quantifiedOp \| disjunction):1…</code> | **docs≠8.5** — 8.9: optional source → null; live 8.5 DEPLOY-rejects; ours runtime-rejects; design target — not implemented without owner |
 | 60 | <code>eq-only</code> | 8.9 expressions: '=' introduces a FEEL expression; an empty expression is not valid FEEL | <code>completed: work {"r":"="} \| dump {}</code> | <code>deployError: ApiException: Invalid FEEL expression: work.ioMapping.input.source (=): failed to parse expression '': Expected (start…</code> | <code>deployError: ApiException: Invalid FEEL expression: work.ioMapping.input.source (=): failed to parse expression '': Expected (start…</code> | **docs≠8.5** — 8.9: `=` needs an expression; live treats `=` as static (completes); ours rejects at DEPLOY после WO-C8-56 (2026-10-19; раньше — runtime) |
 | 61 | <code>target-nested</code> | 8.9 variables: a target with dots creates a nested context in the element scope | <code>completed: work {"a":{"b":1}} \| dump {}</code> | <code>completed: work {a.b=LONG:1} \| dump {}</code> | <code>completed: work {a.b=LONG:1} \| dump {}</code> | **ours differs** — live creates nested `a:{b:1}`; ours writes flat key `a.b` |
@@ -152,7 +152,74 @@ default-поток (`defaultFlow=true`), либо никогда не берты
 | 83 | <code>cond-unknown-function-default</code> | 8.9 conditions: a condition that does not evaluate to true is not taken; the default flow is taken, or the instance is parked on an incident | <code>stuck (no job activated — the instance is parked)</code> | <code>flowA</code> | <code>flowA</code> | **ours differs** — our condition path TAKES the branch, live 8.5 parks the instance on an incident (the condition path evaluates through the FEEL UNARY-TEST engine — see the note below) |
 | 84 | <code>cond-unknown-function-no-default</code> | 8.9 conditions: a condition that does not evaluate to true is not taken; the default flow is taken, or the instance is parked on an incident | <code>stuck (no job activated — the instance is parked)</code> | <code>flowA</code> | <code>flowA</code> | **ours differs** — our condition path TAKES the branch, live 8.5 parks the instance on an incident (the condition path evaluates through the FEEL UNARY-TEST engine — see the note below) |
 
+## Статическое значение: source без «=» (корень 3 Ф1, WO-C8-55)
+
+Замеры — на живом Zeebe 8.5.0 (`docs/analysis/c8-oracle/feel-iomapping-static-nested.js`, 22 пробы:
+15 io-mapping + 7 MI-поля) и
+на нашем движке (те же кейсы в `feel-iomapping-cases.json`, те же live-8.5 ожидания в харнессе).
+Правило live 8.5: source БЕЗ ведущего «=» — это СТАТИЧЕСКОЕ ЗНАЧЕНИЕ (текст дословно, всегда строка),
+а не FEEL-выражение. На стороне output — наоборот: output source ОБЯЗАН быть выражением, иначе
+live 8.5 отказывает модели НА ДЕПЛОЕ («Expected expression but found static value 'hello'. An
+expression must start with '=' (e.g. '=hello')»).
+
+| # | case | 8.9 docs | Zeebe 8.5 live (raw) | ours strict | ours lenient | verdict / finding |
+|---:|---|---|---|---|---|---|
+| 85 | <code>noeq-number</code> | 8.9 expressions: without '=' the source is a static value, not FEEL — the value keeps its TEXT form | <code>completed: work {"r":"42"} \| dump {}</code> | <code>completed: work {r=STRING:"42"} \| dump {}</code> | <code>completed: work {r=STRING:"42"} \| dump {}</code> | **match** (WO-C8-55) — a bare number stays a STRING (ours evaluated it as FEEL → the number 42 before the fix) |
+| 86 | <code>noeq-json</code> | 8.9 expressions: without '=' the source is a static value; a JSON text is not parsed implicitly | <code>completed: work {"r":"{\"a\":1}"} \| dump {}</code> | <code>completed: work {r=STRING:"{\"a\":1}"} \| dump {}</code> | <code>completed: work {r=STRING:"{\"a\":1}"} \| dump {}</code> | **match** (WO-C8-55) — the JSON text stays a STRING (ours parsed it as a FEEL context before the fix) |
+| 87 | <code>noeq-spaces</code> | 8.9 expressions: without '=' the source is a static value — the text VERBATIM | <code>completed: work {"r":"  hello  "} \| dump {}</code> | <code>completed: work {r=STRING:"  hello  "} \| dump {}</code> | <code>completed: work {r=STRING:"  hello  "} \| dump {}</code> | **match** (WO-C8-55) — the surrounding spaces are kept (ours trimmed them by evaluating as FEEL) |
+| 88 | <code>noeq-output-static</code> | 8.9 variables: an output mapping source is an EXPRESSION | <code>deployError: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors:\n'c855_src_noeq_output.bpmn': - Element: work > extensionElements > ioMapping > output\n    - ERROR: Expected expression but found static value 'hello'. An expression must start with '=' (e.g. '=hello').</code> | <code>deployError: ApiException: Invalid FEEL expression: work.ioMapping.output.source (hello): Expected expression but found static value 'hello'. An expression must start with '=' (e.g. '=hello').</code> | <code>deployError: ApiException: Invalid FEEL expression: work.ioMapping.output.source (hello): Expected expression but found static value 'hello'. An expression must start with '=' (e.g. '=hello').</code> | **match** (WO-C8-55) — both refuse at DEPLOY; live: INVALID_ARGUMENT, ours: 400 INVALID_FEEL_EXPRESSION |
+| 89 | <code>noeq-output-static-var</code> | 8.9 variables: an output mapping source is an EXPRESSION — a variable of the same name does not make it one | <code>deployError: 3 INVALID_ARGUMENT: … Expected expression but found static value 'present'. An expression must start with '=' (e.g. '=present').</code> | <code>deployError: ApiException: Invalid FEEL expression: work.ioMapping.output.source (present): Expected expression but found static value 'present'. An expression must start with '=' (e.g. '=present').</code> | <code>deployError: ApiException: Invalid FEEL expression: work.ioMapping.output.source (present): Expected expression but found static value 'present'. An expression must start with '=' (e.g. '=present').</code> | **match** (WO-C8-55) — both refuse at DEPLOY |
+
+## MI-поля: те же два правила, но на ОТКАЗ (корень 3 Ф1, WO-C8-55)
+
+Правило live 8.5 для multi-instance: `inputCollection` и `outputElement` — это **выражения**;
+записанные без «=» они считаются СТАТИЧЕСКИМ ЗНАЧЕНИЕМ, и модель отвергается **на деплое**
+(а не доставляется литералом — это принципиально другое поведение, чем у input source).
+`inputElement` и `outputCollection` — **имена переменных**, а не выражения: правило на них
+не распространяется (live 8.5, проба `mi-inputelement-plain` → `completed`).
+
+| # | case | 8.9 docs | Zeebe 8.5 live (raw) | ours strict | ours lenient | verdict / finding |
+|---:|---|---|---|---|---|---|
+| 90 | <code>mi-noeq-input-collection</code> | 8.9 multi-instance: inputCollection is a FEEL expression — without '=' it is a static value | <code>deployError: 3 INVALID_ARGUMENT: … - Element: miWork > multiInstanceLoopCharacteristics > extensionElements > loopCharacteristics\n    - ERROR: Expected expression but found static value 'items'. An expression must start with '=' (e.g. '=items').</code> | <code>deployError: ApiException: Invalid FEEL expression: miWork.multiInstance.inputCollection (items): Expected expression but found static value 'items'. An expression must start with '=' (e.g. '=items').</code> | <code>deployError: ApiException: Invalid FEEL expression: miWork.multiInstance.inputCollection (items): Expected expression but found static value 'items'. An expression must start with '=' (e.g. '=items').</code> | **match** (WO-C8-55) — both refuse at DEPLOY; live: INVALID_ARGUMENT, ours: 400 INVALID_FEEL_EXPRESSION |
+| 91 | <code>mi-noeq-output-element</code> | 8.9 multi-instance: outputElement is a FEEL expression — without '=' it is a static value | <code>deployError: 3 INVALID_ARGUMENT: … - ERROR: Expected expression but found static value 'probeId'. An expression must start with '=' (e.g. '=probeId').</code> | <code>deployError: ApiException: Invalid FEEL expression: miWork.multiInstance.outputElement (probeId): Expected expression but found static value 'probeId'. An expression must start with '=' (e.g. '=probeId').</code> | <code>deployError: ApiException: Invalid FEEL expression: miWork.multiInstance.outputElement (probeId): Expected expression but found static value 'probeId'. An expression must start with '=' (e.g. '=probeId').</code> | **match** (WO-C8-55) — both refuse at DEPLOY |
+| 92 | <code>mi-noeq-output-element-json</code> | 8.9 multi-instance: outputElement is a FEEL expression — the production corpus writes it without '=', which live 8.5 reads as a static value | <code>deployError: 3 INVALID_ARGUMENT: … - ERROR: Expected expression but found static value '{"decision": decision, "comment": comment}'. An expression must start with '=' (e.g. '={"decision": decision, "comment": comment}').</code> | <code>deployError: ApiException: Invalid FEEL expression: miWork.multiInstance.outputElement ({"decision": decision, "comment": comment}): Expected expression but found static value '{"decision": decision, "comment": comment}'. An expression must start with '=' (e.g. '={"decision": decision, "comment": comment}').</code> | <code>deployError: ApiException: Invalid FEEL expression: miWork.multiInstance.outputElement ({"decision": decision, "comment": comment}): Expected expression but found static value '{"decision": decision, "comment": comment}'. An expression must start with '=' (e.g. '={"decision": decision, "comment": comment}').</code> | **match** (WO-C8-55) — both refuse at DEPLOY; **это форма из ПРОД-корпуса** (активная `testApprovalRouteProcess` v73) — см. раздел «ВЛИЯНИЕ НА ПРОД» в отчёте WO-C8-55 |
+
+## Формы, которые консьюмер пишет ВМЕСТО отвергнутой (ответ maintainer, 2026-10-20)
+
+Отвергнутая форма (`outputElement="probeId"` / `outputElement='{"decision": decision, …}'`) на live 8.5
+не деплоится вообще, поэтому консьюмеру нужна РАБОЧАЯ замена. Ниже — две формы, измеренные на
+живом 8.5 (пробы `mi-outputelement-eq-var`, `mi-outputelement-eq-ctx-var` оракула
+`feel-iomapping-static-nested.js`) и на нашем движке. Обе совпадают с live 8.5 байт в байт.
+
+| # | case | 8.9 docs | Zeebe 8.5 live (raw) | ours strict | ours lenient | verdict / finding |
+|---:|---|---|---|---|---|---|
+| 93 | <code>mi-outputelement-bare-parent-var</code> | 8.9 multi-instance: the output element is a FEEL expression; a bare identifier is pre-created as NULL in the MI scope (F1 root 6), so a process-level variable of the same name is shadowed | <code>completed: miJobs {"item":"a","probeId":null,"loopCounter":1,"results":[null,null],"items":["a","b"]} \| dump {"items":["a","b"],"probeId":"P","results":[null,null]}</code> | <code>completed: miJobs {item=STRING:"a", probeId=JSON:null, loopCounter=LONG:1, results=JSON:[null,null], items=JSON:["a","b"]} \| dump {probeId=STRING:"P", items=JSON:["a","b"], results=JSON:[null,null]}</code> | <code>completed: miJobs {item=STRING:"a", probeId=JSON:null, loopCounter=LONG:1, results=JSON:[null,null], items=JSON:["a","b"]} \| dump {probeId=STRING:"P", items=JSON:["a","b"], results=JSON:[null,null]}</code> | **match** (WO-C8-55) — минимальная легальная замена консьюмера (`outputElement="=probeId"`): модель деплоится, но значение в output collection — **null** (предсозданная null-переменная корня 6 перекрывает переменную процесса) — и на 8.5, и у нас |
+| 94 | <code>mi-outputelement-ctx-parent-var</code> | 8.9 multi-instance: a context expression is not pre-created, so the process-level value stays visible | <code>completed: miJobs {"item":"a","probeId":"P","loopCounter":1,"results":[null,null],"items":["a","b"]} \| dump {"items":["a","b"],"probeId":"P","results":[{"v":"P"},{"v":"P"}]}</code> | <code>completed: miJobs {item=STRING:"a", probeId=STRING:"P", loopCounter=LONG:1, results=JSON:[null,null], items=JSON:["a","b"]} \| dump {probeId=STRING:"P", items=JSON:["a","b"], results=JSON:[{"v":"P"},{"v":"P"}]}</code> | <code>completed: miJobs {item=STRING:"a", probeId=STRING:"P", loopCounter=LONG:1, results=JSON:[null,null], items=JSON:["a","b"]} \| dump {probeId=STRING:"P", items=JSON:["a","b"], results=JSON:[{"v":"P"},{"v":"P"}]}</code> | **match** (WO-C8-55) — форма, которая ДЕЙСТВИТЕЛЬНО несёт значение процесса (`outputElement='={"v": probeId}'`); контекст не предсоздаётся, поэтому переменная видна |
+
 ## Примечания и ограничения
+
+- `target-nested` (строка 61, корень 4 Ф1) — **НЕ ЧИНИТСЯ в этом WO**: по правилу самого WO
+  («если prod-корпус меняет поведение — СТОП и эскалация ДО реализации») исполнитель остановил
+  корень 4 и вынес его maintainer (`docs/internal`, «WO-C8-55 — ЭСКАЛАЦИА», 2026-10-20):
+  на проде 2 живых инстанса с плоскими ключами `http.*` + 11 живых переменных с точкой в имени,
+  а `HttpConnectorWorker`/`CamundaHttpJsonWorker` читают плоские `http.url`/`http.method`/
+  `http.authType` — это КОНТРАКТ коннектора, и вложенный target без правки коннектора его ломает.
+  Замеры по теме (вложенность, родитель-строка, родитель-контекст, два маппинга в одного родителя)
+  — `docs/analysis/c8-oracle/feel-iomapping-static-nested.js`, сценарий
+  `feel-iomapping-static-nested` (результат: `{"a":{"b":1}}`, родитель ЗАМЕНЯЕТСЯ, оба маппинга
+  в одного родителя выживают). Решение — за maintainer; матрица пересчитается вместе с ним.
+- Правило «source без «=» — статическое значение» НЕ переносится на MI-поля
+  (`inputCollection`/`inputElement`/`outputElement`) — там своя семантика, и live 8.5 отказывает
+  такой модели НА ДЕПЛОЕ («Expected expression but found static value 'probeId'…»), а не доставляет
+  литерал. Замер: тот же оракул, сценарии `mi-outputelement-noeq`, `mi-inputcollection-noeq`.
+  Это ровно то, чего требует WO («НЕ переноси правило «статика» туда, куда Zeebe его не применяет»).
+  **WO-C8-55 (2026-10-20, решение maintainer) реализовал именно ОТКАЗ, а не доставку литерала:**
+  `inputCollection`/`outputElement` без «=» → 400 `INVALID_FEEL_EXPRESSION` на деплое, текст
+  live-8.5 (строки 90–92). `inputElement`/`outputCollection` — имена, не выражения: не
+  отвергаются (живой 8.5, проба `mi-inputelement-plain` → `completed`; в нашем корпусе это
+  покрыто всеми MI-кейсами — `mi-basic`/`mi-sequential`/`mi-empty-output` пишут их без «=»).
+- Пустой source (`empty-source`, строка 59) — НЕ менялся: он и раньше шёл по legacy-ветке
+  (пустая строка), а не по статике; live 8.5 отказывает ему на деплое (строка остаётся `docs≠8.5`).
 
 - `path-quoted` oracle отработал как `cancelled/noWorkJob`; Operate API не включён, поэтому сообщения инцидента в oracle-файле нет. Наш strict даёт `[INVALID_TYPE]`, lenient — `""`; обе стороны считают форму невалидной, различие — в фазе/диагностике. Перепроверено 2026-10-19 на живом 8.5.0 (`docs/analysis/c8-oracle`, `node feel-iomapping.js path-quoted`): деплой проходит, инстанс стартует, на runtime — `cancelled/noWorkJob` (как в F1), backtick/get-value формы — `completed` с `r="V"` → **deploy-отсечение для этой формы НЕ нужно** (WO-C8-56, item 4); расхождение остаётся только в runtime-оценке (другой корень).
 - `datetime-literal` / `string-now` — осознанно принятое расхождение WO-ENG-33 (`ElementSupport.toProcessVariable` → ISO-offset; слой `string(now())` с `@Zone` не чинится, паритет с Camunda).
@@ -201,6 +268,11 @@ mvn -B -ntp -pl zorrobpm-engine -am test-compile failsafe:integration-test fails
 
 # G-Q п.3: 42 пробы прод-корпуса + 12 условий гейтвея + 4 inputCollection на живом 8.5
 node docs/analysis/c8-oracle/feel-null-semantics.js
+
+# корень 3 Ф1 (WO-C8-55): 22 пробы (15 io-mapping + 7 MI-поля) — source без «=» (слово/число/JSON/пробелы/верхний регистр),
+# target с точкой (вложенность, родитель-строка, родитель-контекст, два маппинга),
+# output source без «=», MI-поля (outputElement/inputCollection без «=»)
+node docs/analysis/c8-oracle/feel-iomapping-static-nested.js
 ```
 
 Источники: `docs/analysis/c8-oracle/scenarios/feel-iomapping/result-8.5.json`,

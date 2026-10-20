@@ -52,10 +52,17 @@ import java.util.Optional;
  *       {@code ElementSupport.resolveExpression*}: FEEL only when the value starts with {@code =}
  *       ({@code ${var}} and literals are not FEEL);</li>
  *   <li>service-task + process default priority — same {@code =}-only rule;</li>
- *   <li>ioMapping input/output source — always FEEL when non-blank (strip a leading {@code =});</li>
+ *   <li>ioMapping input source — FEEL only when it starts with {@code =} (a source without
+ *       {@code =} is a STATIC VALUE the runtime copies verbatim — live 8.5, WO-C8-55);</li>
+ *   <li>ioMapping output source — an EXPRESSION: it must start with {@code =}, a static value
+ *       is refused at deploy (live 8.5, WO-C8-55);</li>
  *   <li>message correlationKey — always FEEL when non-blank (strip a leading {@code =});</li>
- *   <li>multi-instance inputCollection/outputElement — raw: the PARSER already stripped the
- *       {@code =} ({@code BpmnParseServiceImpl} attachMultiInstance), the runtime evaluates raw;</li>
+ *   <li>multi-instance inputCollection/outputElement — the RUNTIME evaluates the model value raw
+ *       (the PARSER already stripped the {@code =}, {@code BpmnParseServiceImpl}
+ *       attachMultiInstance), but the field is an EXPRESSION on live 8.5: a static value there
+ *       is refused at DEPLOY (WO-C8-55). The model carries a marker of the original spelling,
+ *       because the stripped value alone cannot tell {@code =items} from {@code items};
+ *       inputElement/outputCollection are variable NAMES, not expressions — not validated;</li>
  *   <li>multi-instance loopCardinality — FEEL only while inputCollection is blank (the collection
  *       path wins, {@code MultiInstanceExecutor}); strip a leading {@code =};</li>
  *   <li>multi-instance + ad-hoc completionCondition — MI: strip a leading {@code =} (runtime
@@ -189,19 +196,61 @@ public class FeelSyntaxValidator {
         if (io == null) {
             return;
         }
-        collectMappingSources(element, io.getInputs(), "ioMapping.input.source", ext, findings, io);
-        collectMappingSources(element, io.getOutputs(), "ioMapping.output.source", ext, findings, io);
+        // WO-C8-55: an INPUT source without a leading '=' is a STATIC VALUE (live 8.5), not FEEL —
+        // the runtime delivers the source text verbatim, so the parser has nothing to say about it
+        // (and a static value that is not parseable as FEEL at all — 'hello world' — must still
+        // deploy, exactly as it does on live 8.5).
+        collectInputMappingSources(element, io.getInputs(), "ioMapping.input.source", findings);
+        // an OUTPUT source is an EXPRESSION — live 8.5 refuses a static value there at DEPLOY.
+        collectOutputMappingSources(element, io.getOutputs(), "ioMapping.output.source", findings);
     }
 
-    private void collectMappingSources(BpmnElementModel element, List<IoMappingExtensionModel.Mapping> mappings,
-                                       String field, BpmnElementExtensionModel ext,
-                                       List<InvalidFeelExpression> findings, IoMappingExtensionModel io) {
+    /**
+     * WO-C8-55: input sources are FEEL only when written as {@code =expr}. A source without
+     * {@code =} is a static value the runtime copies verbatim — nothing to parse, nothing to
+     * refuse (live 8.5 deploys {@code hello} and delivers {@code "hello"}).
+     *
+     * <p>What this buys concretely: a static value that is NOT parseable as FEEL
+     * ({@code hello world} — two atoms) used to be refused at deploy, because the validator
+     * parsed it as an expression. Now it deploys and is delivered verbatim, like on live 8.5.
+     * A JSON text ({@code {"a":1}}) IS legal FEEL — it always deployed, but its VALUE was the
+     * parsed context instead of the text; the static-value rule fixed that (the runtime, not
+     * this validator).</p>
+     */
+    private void collectInputMappingSources(BpmnElementModel element, List<IoMappingExtensionModel.Mapping> mappings,
+                                            String field, List<InvalidFeelExpression> findings) {
         if (mappings == null) {
             return;
         }
         for (IoMappingExtensionModel.Mapping mapping : mappings) {
             String source = mapping.getSource();
             if (source == null || source.isBlank()) {
+                continue;
+            }
+            checkFeelOnlyIfPrefixed(element.getId(), field, source, findings);
+        }
+    }
+
+    /**
+     * WO-C8-55: an output source is an EXPRESSION — a static value there is refused at deploy,
+     * with the live Zeebe 8.5 wording («Expected expression but found static value 'hello'.
+     * An expression must start with '=' (e.g. '=hello')»), measured on the live oracle
+     * ({@code docs/analysis/c8-oracle/feel-iomapping-static-nested.js}).
+     */
+    private void collectOutputMappingSources(BpmnElementModel element, List<IoMappingExtensionModel.Mapping> mappings,
+                                             String field, List<InvalidFeelExpression> findings) {
+        if (mappings == null) {
+            return;
+        }
+        for (IoMappingExtensionModel.Mapping mapping : mappings) {
+            String source = mapping.getSource();
+            if (source == null || source.isBlank()) {
+                continue;
+            }
+            if (!source.startsWith("=")) {
+                findings.add(new InvalidFeelExpression(element.getId(), field, source,
+                    "Expected expression but found static value '" + source
+                        + "'. An expression must start with '=' (e.g. '=" + source + "')."));
                 continue;
             }
             parseError(FeelExpressionKind.FEEL_EXPRESSION, source)
@@ -218,8 +267,17 @@ public class FeelSyntaxValidator {
         }
         // raw: the parser stripped the leading '=' at parse (attachMultiInstance), the runtime
         // evaluates the model value as-is
-        checkPlain(element.getId(), "multiInstance.inputCollection", mi.getInputCollection(), findings);
-        checkPlain(element.getId(), "multiInstance.outputElement", mi.getOutputElement(), findings);
+        // WO-C8-55: these two are EXPRESSIONS on live 8.5 — a static value is refused at DEPLOY
+        // («Expected expression but found static value 'items'. An expression must start with '='»).
+        // The parser stripped the leading '=', so the model carries a marker of the original
+        // spelling: the value alone cannot tell '=items' from 'items'.
+        checkExpressionRequired(element.getId(), "multiInstance.inputCollection",
+            mi.getInputCollection(), mi.isInputCollectionExpression(), findings);
+        checkExpressionRequired(element.getId(), "multiInstance.outputElement",
+            mi.getOutputElement(), mi.isOutputElementExpression(), findings);
+        // inputElement and outputCollection are variable NAMES, not expressions — live 8.5
+        // accepts them as they are (probe mi-inputelement-plain completes), so they are not
+        // validated at all.
         // cardinality is FEEL only while inputCollection is blank — the collection path wins
         // (MultiInstanceExecutor), so a broken cardinality next to a good collection never runs
         String cardinality = mi.getCardinality();
@@ -376,5 +434,36 @@ public class FeelSyntaxValidator {
         }
         parseError(FeelExpressionKind.FEEL_EXPRESSION, raw)
             .ifPresent(error -> findings.add(new InvalidFeelExpression(elementId, field, raw, error)));
+    }
+
+    /**
+     * WO-C8-55: the field must be an EXPRESSION — live Zeebe 8.5 refuses a static value at
+     * DEPLOY, with the wording «Expected expression but found static value 'items'. An expression
+     * must start with '=' (e.g. '=items')» (measured on the live oracle,
+     * {@code docs/analysis/c8-oracle/feel-iomapping-static-nested.js}: probes
+     * {@code mi-inputcollection-noeq}, {@code mi-outputelement-noeq},
+     * {@code mi-outputelement-json} — all {@code deployError}).
+     *
+     * <p>The rule is «must start with '='», NOT «must be valid FEEL»: the text of a refused
+     * static value may well be a legal FEEL expression ({@code items} is a variable reference,
+     * {@code {"a":1}} is a context) — live 8.5 refuses it anyway, because without {@code =} it
+     * is a static value there. So the spelling decides, and the spelling is what the parser
+     * recorded ({@code expression} flag).</p>
+     *
+     * <p>An expression form still has to PARSE — a broken {@code =coll = 'x'} stays a deploy
+     * refusal (the same rule as before this WO).</p>
+     */
+    private void checkExpressionRequired(String elementId, String field, String raw, boolean expression,
+                                          List<InvalidFeelExpression> findings) {
+        if (raw == null || raw.isBlank()) {
+            return;
+        }
+        if (!expression) {
+            findings.add(new InvalidFeelExpression(elementId, field, raw,
+                "Expected expression but found static value '" + raw
+                    + "'. An expression must start with '=' (e.g. '=" + raw + "')."));
+            return;
+        }
+        checkPlain(elementId, field, raw, findings);
     }
 }

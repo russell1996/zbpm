@@ -22,8 +22,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class FeelIoMappingCaseSetTest {
 
-    /** 72 кейса Ф1 + 12 кейсов условий гейтвея (WO-C8-54). */
-    private static final int EXPECTED_CASES = 84;
+    /** 72 кейса Ф1 + 12 кейсов условий гейтвея (WO-C8-54) + 5 кейсов корня 3 (WO-C8-55)
+     *  + 3 кейса MI-полей корня 3 (WO-C8-55) + 2 кейса «правильная форма правки outputElement»
+     *  (WO-C8-55, ответ maintainer: что консьюмеру писать вместо статичного значения). */
+    private static final int EXPECTED_CASES = 94;
     private static final Set<String> WRAPPERS = Set.of("subprocess", "mi", "gateway");
     private static final List<String> OPERATION_FIELDS = List.of(
         "input", "output", "completionVars", "containerInput", "containerOutput", "outputElement"
@@ -93,6 +95,17 @@ class FeelIoMappingCaseSetTest {
             .extracting(c -> c.get("id"))
             .contains("num-round", "str-null", "null-literal", "missing-bare", "present-null",
                 "missing-default", "path-missing", "mixed-string-num", "mixed-lt",
-                "path-index-zero", "path-oob");
+                "path-index-zero", "path-oob",
+                // WO-C8-55: the root-3 cases (a source without '=' is a static value; an
+                // output source without '=' is refused at deploy)
+                "noeq-literal", "noeq-var", "noeq-number", "noeq-json", "noeq-spaces",
+                "noeq-output-static", "noeq-output-static-var",
+                // WO-C8-55: the MI half of root 3 (the MI fields are EXPRESSIONS on live 8.5 —
+                // a static value there is refused at deploy)
+                "mi-noeq-input-collection", "mi-noeq-output-element", "mi-noeq-output-element-json",
+                // WO-C8-55: the two forms the CONSUMER must write instead of the refused
+                // spelling — a bare reference (the value is shadowed by the pre-created null)
+                // and a context (the value stays visible). Both measured on live 8.5.
+                "mi-outputelement-bare-parent-var", "mi-outputelement-ctx-parent-var");
     }
 }

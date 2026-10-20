@@ -42,8 +42,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 2026-10-14, дополнение к {@code zorrobpm-mi-subprocess-defect.md}).
  *
  * <p>Фикстура — реальный v2 консьюмера
- * ({@code test-c842-approval-route-v2.bpmn} — побайтовая копия
+ * ({@code test-c842-approval-route-v2.bpmn} — копия
  * {@code docs/internal}).
+ * Одно отличие от оригинала, сделанное в WO-C8-55: {@code mi.outputElement} переписан в
+ * зееб-легальную форму {@code ={...}} — на live 8.5 поле без {@code =} это СТАТИЧЕСКОЕ
+ * ЗНАЧЕНИЕ и такая модель отвергается на деплое, а наш гейт деплоя теперь отвергает её
+ * так же. Поведение в движке ИДЕНТИЧНО (парсер снимает {@code =}, рантайм оценивает тот
+ * же текст). Оригинальные байты консьюмера лежат в дереве как есть (вложение
+ * {@code docs/internal} и
+ * {@code test-c855-consumer-noeq-output-element.bpmn}) — отказ на них закреплён
+ * {@code MiExpressionFieldDeployValidationIntegrationTests}.
  * Внешних воркеров нет: service task'и завершаем через
  * {@code runtimeService.completeServiceTask} (тот же путь, что worker-callback),
  * ответы воркеров эмулируем переменными завершения — включая вариант H1, где
