@@ -836,7 +836,8 @@
           {
             "step": "observeIncident",
             "element": "work",
-            "outcome": "noIncident"
+            "outcome": "notReadable",
+            "note": "инцидент на живом 8.5 не читается (Gateway API не отдаёт инциденты, Operate вне стенда); ВЫВОД «инцидента нет» — по документации 8.9 (job queuing) и по отсутствию следующего задания"
           }
         ],
         "note": "ОСОЗНАННОЕ РАСХОЖДЕНИЕ (корень R3, by design — WO-REL-27): live-8.5 молча ждёт — задание в очереди брокера, через 5 с оно ПРЕДЛАГАЕТСЯ воркеру снова (jobObserved), инцидента НЕТ. У нас задание тоже остаётся dispatched, но по dispatch-timeout (15 мин) поднимается инцидент SERVICE_TASK_DISPATCH_TIMEOUT: воркера нет — это сигнал оператору, а не тишина.",
