@@ -57,6 +57,25 @@ class IdempotencyResponseHeadersPgIT extends PostgresIT {
     }
 
     @Test
+    void migration122_commentOnColumn_isInRussian() {
+        // Правило проекта: новая колонка несёт COMMENT на русском. Проверяем
+        // САМ артефакт (текст комментария в каталоге PostgreSQL), а не наличие
+        // вызова в changeset'е — комментарий мог не примениться.
+        String comment = jdbcTemplate.queryForObject(
+            "SELECT col_description('idempotency_record'::regclass, attnum) "
+                + "FROM pg_attribute "
+                + "WHERE attrelid = 'idempotency_record'::regclass AND attname = 'response_headers'",
+            String.class);
+        assertThat(comment)
+            .as("the new column must carry a comment (project rule: Russian)")
+            .isNotNull()
+            .isNotBlank();
+        assertThat(comment)
+            .as("the comment must explain the column for the DBA reading the schema")
+            .contains("идемпотентного replay");
+    }
+
+    @Test
     void responseHeaders_roundTripOnPostgres() {
         String headers = "{\"Location\":\"/process-instances/"
             + UUID.randomUUID() + "\",\"ETag\":\"\\\"v1\\\"\"}";
