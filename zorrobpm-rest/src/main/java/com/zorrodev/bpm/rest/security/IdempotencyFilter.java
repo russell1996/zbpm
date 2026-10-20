@@ -1,5 +1,8 @@
 package com.zorrodev.bpm.rest.security;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zorrodev.bpm.engine.entity.IdempotencyRecord;
 import com.zorrodev.bpm.engine.repository.IdempotencyRecordRepository;
 import com.zorrodev.bpm.engine.security.Principal;
@@ -9,6 +12,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -22,6 +26,8 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
@@ -46,11 +52,23 @@ import java.util.regex.Pattern;
  * actor-based (stable userId/ownerUserId), never the raw credential (F05).
  */
 @RequiredArgsConstructor
+@Slf4j
 public class IdempotencyFilter extends OncePerRequestFilter {
 
     static final String HEADER = "Idempotency-Key";
     private static final int MAX_KEY_LENGTH = 255;
     static final int MAX_BODY_BYTES = 5 * 1024 * 1024;
+
+    /**
+     * WO-AUDIT-14 (F-16): заголовки ответа, которые ПЕРСИСТЯТСЯ для replay.
+     * Allowlist, а не «всё, что отдал сервер»: {@code Set-Cookie} в таблице
+     * идемпотентности — это session-cookie в общем хранилище, его там быть не
+     * должно. {@code Location} нужен, чтобы повтор с тем же ключом был ТЕМ ЖЕ
+     * ответом (иначе клиент получает 201 с тем же id, но без Location).
+     */
+    static final Set<String> REPLAYABLE_HEADERS = Set.of("Location", "ETag");
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private static final Set<String> EXACT_PATHS = Set.of(
         "/process-instances",
@@ -138,6 +156,63 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         return status == 400 || status == 413;
     }
 
+    /**
+     * WO-AUDIT-14 (F-16): заголовки ответа, которые разрешено персистить.
+     * Только allowlist — {@code Set-Cookie} и любые служебные заголовки
+     * отбрасываются здесь, а не «где-то дальше».
+     */
+    static Map<String, String> collectReplayableHeaders(HttpServletResponse response) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        for (String name : REPLAYABLE_HEADERS) {
+            String value = response.getHeader(name);
+            if (value != null && !value.isBlank()) {
+                headers.put(name, value);
+            }
+        }
+        return headers;
+    }
+
+    /** JSON-объект заголовков для колонки {@code response_headers}; null — когда сохранять нечего. */
+    static String serializeReplayableHeaders(Map<String, String> headers) {
+        if (headers == null || headers.isEmpty()) {
+            return null;
+        }
+        try {
+            return MAPPER.writeValueAsString(headers);
+        } catch (JsonProcessingException e) {
+            // Нечего терять: тело/статус ответ всё равно персистятся, теряется
+            // только заголовок. Ответ клиенту не портим.
+            log.warn("Cannot serialize replayable headers — storing the response without them: {}", e.toString());
+            return null;
+        }
+    }
+
+    /**
+     * Разбор сохранённых заголовков. Fail-soft: битое значение НЕ ломает
+     * replay (тело/статус отдаются как есть, заголовок теряется). Allowlist
+     * применяется и на чтении — строка, записанная другой версией кода или
+     * руками, не может подсунуть произвольный заголовок.
+     */
+    static Map<String, String> parseReplayableHeaders(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Map<String, String> parsed = MAPPER.readValue(json,
+                new TypeReference<LinkedHashMap<String, String>>() { });
+            Map<String, String> filtered = new LinkedHashMap<>();
+            for (Map.Entry<String, String> entry : parsed.entrySet()) {
+                if (REPLAYABLE_HEADERS.contains(entry.getKey()) && entry.getValue() != null) {
+                    filtered.put(entry.getKey(), entry.getValue());
+                }
+            }
+            return filtered;
+        } catch (Exception e) {
+            log.warn("Unreadable stored response headers — replaying without them: {}", e.toString());
+            return Map.of();
+        }
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
                                     FilterChain chain) throws IOException, jakarta.servlet.ServletException {
@@ -198,7 +273,8 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                                 return;
                             }
                             replay.set(new Replay(rec.getResponseStatus(),
-                                rec.getResponseBody(), rec.getResponseContentType()));
+                                rec.getResponseBody(), rec.getResponseContentType(),
+                                rec.getResponseHeaders()));
                             return;
                         } else if (isLegacyBodyHash(rec.getRequestHash(), body)) {
                             // Pre-SEC-74 record (hash of body alone, no OBO binding):
@@ -216,7 +292,8 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                             }
                             rec.setRequestHash(hash);
                             replay.set(new Replay(rec.getResponseStatus(),
-                                rec.getResponseBody(), rec.getResponseContentType()));
+                                rec.getResponseBody(), rec.getResponseContentType(),
+                                rec.getResponseHeaders()));
                             return;
                         } else {
                             mismatchMessage.set("Idempotency-Key already used with a different request body");
@@ -255,6 +332,10 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                         record.setResponseStatus(responseStatus);
                         record.setResponseBody(bodyStr);
                         record.setResponseContentType(contentType);
+                        // WO-AUDIT-14 (F-16): заголовки ответа (allowlist) — чтобы
+                        // replay был ТЕМ ЖЕ ответом, а не только тем же телом.
+                        record.setResponseHeaders(serializeReplayableHeaders(
+                            collectReplayableHeaders(cachedResponse)));
                         record.setCreatedAt(Instant.now());
                         repository.save(record);
                     } catch (DataIntegrityViolationException dup) {
@@ -318,7 +399,8 @@ public class IdempotencyFilter extends OncePerRequestFilter {
                     rec.setRequestHash(hash);
                     repository.save(rec);
                 }
-                return new Replay(rec.getResponseStatus(), rec.getResponseBody(), rec.getResponseContentType());
+                return new Replay(rec.getResponseStatus(), rec.getResponseBody(),
+                    rec.getResponseContentType(), rec.getResponseHeaders());
             } else {
                 throw new ErrorSpec(HttpStatus.UNPROCESSABLE_ENTITY.value(),
                     "IDEMPOTENCY_KEY_REUSED", "Idempotency-Key already used with a different request body");
@@ -350,6 +432,11 @@ public class IdempotencyFilter extends OncePerRequestFilter {
     private void writeReplay(HttpServletResponse response, Replay replay) throws IOException {
         response.setStatus(replay.status());
         if (replay.contentType() != null) response.setContentType(replay.contentType());
+        // WO-AUDIT-14 (F-16): вернуть сохранённые заголовки (allowlist) — иначе
+        // повтор с тем же ключом отдаёт 201 с тем же телом, но без Location.
+        for (Map.Entry<String, String> header : parseReplayableHeaders(replay.headersJson()).entrySet()) {
+            response.setHeader(header.getKey(), header.getValue());
+        }
         byte[] body = replay.body() != null ? replay.body().getBytes(StandardCharsets.UTF_8) : new byte[0];
         response.setContentLength(body.length);
         response.getOutputStream().write(body);
@@ -377,7 +464,8 @@ public class IdempotencyFilter extends OncePerRequestFilter {
         copyBodyOrThrow(cached, response, true);
     }
 
-    private record Replay(int status, String body, String contentType) {}
+    /** headersJson — JSON-объект заголовков для replay (F-16); null = заголовков нет. */
+    private record Replay(int status, String body, String contentType, String headersJson) {}
     private record Buffered(int status, String body, String contentType) {}
     private record ReplayDenied(int status, String message) {}
 

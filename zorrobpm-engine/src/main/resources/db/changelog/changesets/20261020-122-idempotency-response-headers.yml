@@ -1,0 +1,37 @@
+databaseChangeLog:
+  - logicalFilePath: 20261020-122
+  - changeSet:
+      id: 20261020-122
+      author: zorrodev
+      comment: >-
+        WO-AUDIT-14 (F-16): idempotency_record.response_headers — заголовки
+        ответа для идемпотентного replay. Раньше персистились только status/body/
+        contentType, и повтор с тем же Idempotency-Key отдавал 201 с тем же
+        телом, но БЕЗ Location — то есть не тот же ответ, а другой. Хранится
+        JSON-объект {"Location":...,"ETag":...}; allowlist задан в коде
+        (IdempotencyFilter), Set-Cookie не хранится никогда (session-cookie в
+        идемпотентной таблице = утечка учётных данных). Колонка NULLABLE:
+        записи, созданные до миграции, остаются без заголовков, и replay для
+        них работает как раньше. Только expand, rollback — dropColumn.
+      changes:
+        - addColumn:
+            tableName: idempotency_record
+            columns:
+              - column:
+                  name: response_headers
+                  type: TEXT
+      rollback:
+        - dropColumn:
+            tableName: idempotency_record
+            columnName: response_headers
+  - changeSet:
+      id: 20261020-122-pg-comment
+      author: zorrodev
+      dbms: postgresql
+      comment: >-
+        Комментарий к колонке response_headers (текст на русском — правило
+        проекта к новым колонкам БД).
+      changes:
+        - sql:
+            sql: >-
+              COMMENT ON COLUMN idempotency_record.response_headers IS 'Заголовки ответа для идемпотентного replay (JSON-объект; allowlist: Location, ETag; Set-Cookie не сохраняется)';
