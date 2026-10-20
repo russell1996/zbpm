@@ -6,12 +6,17 @@ import { nextTick, onBeforeUnmount } from 'vue'
  * В ZorroBPM список прокручивается НЕ окном, а внутренним контейнером
  * `<main class="flex-1 overflow-auto">` в MainLayout — поэтому штатный
  * `scrollBehavior` роутера (он работает с window.scrollTo) позицию списка
- * не восстанавливает. Здесь позиция сохраняется в памяти по ключу списка и
- * возвращается после загрузки данных.
- *
- * Позиция сохраняется при размонтировании списка (уход в карточку) и
- * восстанавливается после того, как данные доехали и список перерисовался
+ * не восстанавливает. Здесь позиция сохраняется по ключу списка и
+ * возвращается после того, как данные доехали и список перерисовался
  * (иначе контейнер ещё пустой и браузер обрежет позицию в ноль).
+ *
+ * Порядок событий важен и зафиксирован тестами:
+ * - позиция читается в `onBeforeUnmount` — в этот момент DOM списка ещё
+ *   на месте, `scrollTop` точный (браузер обрежет его уже после удаления
+ *   строк, то есть позже);
+ * - сразу после сохранения позиция сбрасывается в 0 — карточка (или любая
+ *   следующая страница) открывается с начала, а не с середины списка;
+ * - `restore()` вызывается ПОСЛЕ загрузки данных (страница ждёт `load()`).
  */
 
 /** Контейнер прокрутки приложения — помечен в MainLayout. */
@@ -20,44 +25,56 @@ export const SCROLL_CONTAINER_SELECTOR = '[data-scroll-container]'
 /** Сохранённые позиции: ключ списка → scrollTop. */
 const positions = new Map<string, number>()
 
-function scrollContainer(): HTMLElement | null {
-  if (typeof document === 'undefined') return null
-  return document.querySelector<HTMLElement>(SCROLL_CONTAINER_SELECTOR)
+export interface UseListScrollOptions {
+  /**
+   * Резолвер контейнера прокрутки ЭТОГО списка. По умолчанию — контейнер
+   * приложения (`<main>` в MainLayout). Для списка с ВНУТРЕННИМ контейнером
+   * (собственная прокрутка внутри страницы) передаётся свой элемент.
+   */
+  container?: () => HTMLElement | null
 }
 
 export interface UseListScroll {
-  /** Сохранить текущую позицию (вызывается автоматически при размонтировании). */
+  /** Сохранить текущую позицию (вызывается автоматически при уходе со списка). */
   save: () => void
   /** Восстановить сохранённую позицию (после загрузки данных). */
   restore: () => Promise<void>
-  /** Забыть сохранённую позицию (например, список перезагрузили с другим фильтром). */
-  forget: () => void
 }
 
-export function useListScroll(key: string): UseListScroll {
-  function save() {
-    const el = scrollContainer()
+/**
+ * @param key ключ списка — состояние одного списка не должно протекать в другой
+ */
+export function useListScroll(key: string, options: UseListScrollOptions = {}): UseListScroll {
+  function resolve(): HTMLElement | null {
+    if (options.container) return options.container()
+    if (typeof document === 'undefined') return null
+    return document.querySelector<HTMLElement>(SCROLL_CONTAINER_SELECTOR)
+  }
+
+  function save(): void {
+    const el = resolve()
     if (!el) return
     positions.set(key, el.scrollTop)
   }
 
   async function restore(): Promise<void> {
-    const saved = positions.get(key)
-    if (saved === undefined) return
     // Ждём перерисовку списка: контейнер должен быть достаточно высоким,
     // иначе браузер обрежет позицию в ноль.
     await nextTick()
-    const el = scrollContainer()
+    const el = resolve()
     if (!el) return
-    el.scrollTop = saved
+    // Нет сохранённой позиции — список (или страница после него) открывается
+    // с начала, а не с середины предыдущей страницы.
+    el.scrollTop = positions.get(key) ?? 0
   }
 
-  function forget() {
-    positions.delete(key)
-  }
+  onBeforeUnmount(() => {
+    save()
+    // Уход со списка: следующая страница открывается с начала. Позиция списка
+    // уже сохранена выше — её восстановит `restore()` при возврате «Назад».
+    const el = resolve()
+    if (el) el.scrollTop = 0
+  })
 
-  // Уход в карточку размонтирует список — запоминаем позицию.
-  onBeforeUnmount(save)
-
-  return { save, restore, forget }
+  return { save, restore }
 }

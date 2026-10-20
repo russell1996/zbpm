@@ -4,6 +4,7 @@ import type { User, UserRole, CreationMode } from '@/entities/user/User'
 import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
 import { useListState } from '@/composables/useListState'
+import { useListScroll } from '@/composables/useListScroll'
 import { useI18n } from 'vue-i18n'
 import UserDetailPanel from './UserDetailPanel.vue'
 import TruncatedText from '@/widgets/shared/TruncatedText.vue'
@@ -41,6 +42,11 @@ const { state } = useListState<{
   active: { default: 'ACTIVE', values: ['ACTIVE', 'ALL', 'INACTIVE'] },
 })
 const activeParam = computed(() => (state.active === 'ACTIVE' ? true : state.active === 'INACTIVE' ? false : undefined))
+
+// WO-UI-39 п.2: у этого списка СВОЙ контейнер прокрутки (таблица в
+// max-h-[60vh]), а не контейнер страницы — позицию восстанавливаем именно его.
+const listScrollEl = ref<HTMLElement | null>(null)
+const scroll = useListScroll('users', { container: () => listScrollEl.value })
 
 const visibleUsers = computed(() =>
   state.type === 'ALL' ? users.value : users.value.filter((u) => u.userType === state.type),
@@ -172,7 +178,10 @@ async function save() {
 
 watch(() => state.active, () => { loadUsers() })
 
-onMounted(loadUsers)
+onMounted(async () => {
+  await loadUsers()
+  await scroll.restore()
+})
 </script>
 
 <template>
@@ -222,7 +231,7 @@ onMounted(loadUsers)
 
     <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
-    <div v-else class="border border-border rounded-lg overflow-y-auto max-h-[60vh]">
+    <div v-else ref="listScrollEl" class="border border-border rounded-lg overflow-y-auto max-h-[60vh]">
       <table class="w-full text-sm">
         <thead class="bg-muted">
           <tr>

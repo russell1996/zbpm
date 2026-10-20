@@ -24,10 +24,14 @@ const DETAIL_MARKER = 'DETAIL-PAGE-MARKER'
 
 let router: Router
 
+/** Ключ списка у каждого теста — свой: хранилище позиций общее для модуля,
+ *  общий ключ сделал бы тесты зависимыми друг от друга. */
+let listKey = 'items'
+
 const ListHarness = defineComponent({
   setup() {
-    const { state } = useListState<{ key: string }>('items', { key: '' })
-    const scroll = useListScroll('items')
+    const { state } = useListState<{ key: string }>(listKey, { key: '' })
+    const scroll = useListScroll(listKey)
     const rows = ref(0)
     async function load() {
       // Данные приходят асинхронно — как от бэкенда.
@@ -85,6 +89,28 @@ function makeRouter(): Router {
   return router
 }
 
+/** Карточка ВЫСОКАЯ — иначе браузер сам обрежет scrollTop в 0 и проверка
+ *  «карточка открылась с начала» прошла бы и без нашего сброса. */
+function makeTallDetailRouter(): Router {
+  router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/items', component: ListHarness },
+      {
+        path: '/items/:id',
+        component: defineComponent({
+          setup: () => () =>
+            h('div', [
+              DETAIL_MARKER,
+              ...Array.from({ length: 40 }, (_, i) => h('div', { key: i, style: 'height:40px' }, `detail-${i}`)),
+            ]),
+        }),
+      },
+    ],
+  })
+  return router
+}
+
 /** Хост приложения: контейнер прокрутки живёт ВНЕ router-view (как MainLayout). */
 const AppHost = defineComponent({
   setup: () => () =>
@@ -134,6 +160,7 @@ function until(cond: () => boolean, timeout = 8000, what = 'condition'): Promise
 
 describe('WO-UI-39: список переживает «Назад» (реальный браузер)', () => {
   it('позиция прокрутки восстанавливается после list → detail → back', async () => {
+    listKey = 'items-scroll'
     const r = makeRouter()
     await r.push('/items')
     await r.isReady()
@@ -178,6 +205,7 @@ describe('WO-UI-39: список переживает «Назад» (реаль
   })
 
   it('фильтр списка переживает «Назад»', async () => {
+    listKey = 'items-filter'
     const r = makeRouter()
     await r.push('/items')
     await r.isReady()
@@ -190,7 +218,7 @@ describe('WO-UI-39: список переживает «Назад» (реаль
     await until(() => wrapper.get('[data-testid="rows"]').element.childElementCount === ROWS)
 
     await wrapper.get('[data-testid="filter-btn"]').trigger('click')
-    await until(() => r.currentRoute.value.query['items.key'] === 'vacation')
+    await until(() => r.currentRoute.value.query[`${listKey}.key`] === 'vacation')
     expect(wrapper.get('[data-testid="filter"]').text()).toBe('filter:vacation')
 
     await wrapper.get('[data-testid="to-detail"]').trigger('click')
@@ -200,6 +228,35 @@ describe('WO-UI-39: список переживает «Назад» (реаль
     await r.back()
     await flushPromises()
     await until(() => wrapper.get('[data-testid="filter"]').text() === 'filter:vacation')
-    expect(r.currentRoute.value.query['items.key']).toBe('vacation')
+    expect(r.currentRoute.value.query[`${listKey}.key`]).toBe('vacation')
+  })
+
+  it('карточка открывается с начала, а не с середины списка', async () => {
+    listKey = 'items-top'
+    const r = makeTallDetailRouter()
+    await r.push('/items')
+    await r.isReady()
+    const wrapper = mount(AppHost, {
+      attachTo: mountHost(),
+      global: { plugins: [r] },
+    })
+    mounted.push(wrapper)
+    await flushPromises()
+    await until(() => wrapper.get('[data-testid="rows"]').element.childElementCount === ROWS)
+
+    const container = document.querySelector<HTMLElement>('[data-scroll-container]')
+    expect(container).not.toBeNull()
+    await until(() => container!.scrollHeight > container!.clientHeight)
+
+    container!.scrollTop = 400
+    await until(() => container!.scrollTop > 0)
+    expect(container!.scrollTop).toBeGreaterThan(0)
+
+    await wrapper.get('[data-testid="to-detail"]').trigger('click')
+    await until(() => wrapper.text().includes(DETAIL_MARKER), 8000, 'карточка открылась')
+    // Карточка ВЫСОКАЯ — контейнер не обрежет позицию сам, значит ноль
+    // может получиться только если позицию сбросили мы (уход со списка).
+    await until(() => container!.scrollHeight > container!.clientHeight)
+    expect(container!.scrollTop).toBe(0)
   })
 })

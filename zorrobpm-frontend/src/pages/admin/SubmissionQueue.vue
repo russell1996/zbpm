@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useToast } from '@/composables/useToast'
 import { useListState } from '@/composables/useListState'
+import { useListScroll } from '@/composables/useListScroll'
 import { getPendingSubmissions, approveSubmission, rejectSubmission, getSubmissionBpmn, type ProcessSubmission } from '@/services/submissionService'
 import { translatedError } from '@/shared/lib/utils'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
@@ -127,7 +128,13 @@ async function confirmReject() {
   }
 }
 
-onMounted(load)
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
+const scroll = useListScroll('submissions')
+
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 </script>
 
 <template>

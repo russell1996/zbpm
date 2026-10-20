@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { getMySubmissions, type ProcessSubmission } from '@/services/submissionService'
 import { translatedError } from '@/shared/lib/utils'
+import { useListScroll } from '@/composables/useListScroll'
 import { AlertCircle, RefreshCw } from 'lucide-vue-next'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
@@ -26,7 +27,13 @@ async function load() {
   }
 }
 
-onMounted(load)
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход со страницы.
+const scroll = useListScroll('mySubmissions')
+
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 </script>
 
 <template>
