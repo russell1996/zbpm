@@ -128,14 +128,6 @@ class VariablePresetsPgIT extends PostgresIT {
 
     // ==================== helpers ====================
 
-    private int recordedChangeSets() throws Exception {
-        try (Connection c = open(); Statement s = c.createStatement();
-             ResultSet rs = s.executeQuery("SELECT count(*) FROM " + SCHEMA + ".databasechangelog")) {
-            rs.next();
-            return rs.getInt(1);
-        }
-    }
-
     private boolean tableExists(String table) throws Exception {
         try (Connection c = open(); Statement s = c.createStatement();
              ResultSet rs = s.executeQuery("SELECT count(*) FROM information_schema.tables "
@@ -206,9 +198,11 @@ class VariablePresetsPgIT extends PostgresIT {
         // Б-3: наши позиции — по id, а не «последние два» (следующая миграция
         // этот тест не роняет: 120 идёт раньше 121, остальное неважно).
         runMaster();
-        assertThat(orderOf("20261007-120"))
+        int order120 = orderOf("20261007-120");
+        int order121 = orderOf("20261007-121");
+        assertThat(order120)
             .as("120 записан раньше 121")
-            .isLessThan(orderOf("20261007-121"));
+            .isLessThan(order121);
 
         runMasterUpToBefore("20261007-120");
 
@@ -227,18 +221,21 @@ class VariablePresetsPgIT extends PostgresIT {
     @Test
     void rollbackLastTwo_dropsOurs_keepsNeighbours() throws Exception {
         runMaster();
-        assertThat(orderOf("20261007-120"))
+        int order120 = orderOf("20261007-120");
+        int order121 = orderOf("20261007-121");
+        assertThat(order120)
             .as("120 записан раньше 121")
-            .isLessThan(orderOf("20261007-121"));
+            .isLessThan(order121);
 
-        // Откатываем от вершины до 120 ВКЛЮЧИТЕЛЬНО — сколько бы миграций ни
-        // встало после нас (своя схема, чужого не трогаем); затем накат обратно.
-        int tip = recordedChangeSets();
-        int backToOurs = tip - orderOf("20261007-120") + 1;
-        assertThat(backToOurs).as("120 входит в откат").isPositive();
+        // Откатываем РОВНО свои changesets (121 и 120), а не «всё от вершины»:
+        // чужая миграция, вставленная после нас, не обязана иметь обратного
+        // действия (WO-AUDIT-14 F-16: changeset с RawSQLChange-комментарием
+        // ронял откат, который проходил через него). Позиции — ПО ID, не «последние N».
+        int backToOurs = order121 - order120 + 1;
+        assertThat(backToOurs).as("120 и 121 — ровно два changesets").isEqualTo(2);
 
         createOwnSchema();
-        runMaster();
+        runMasterUpTo(order121);
         assertThat(tableExists("variable_presets")).isTrue();
 
         rollbackLast(backToOurs);

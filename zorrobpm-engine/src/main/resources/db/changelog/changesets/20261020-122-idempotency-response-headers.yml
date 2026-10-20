@@ -13,6 +13,10 @@ databaseChangeLog:
         идемпотентной таблице = утечка учётных данных). Колонка NULLABLE:
         записи, созданные до миграции, остаются без заголовков, и replay для
         них работает как раньше. Только expand, rollback — dropColumn.
+        Комментарий к колонке (текст на русском — правило проекта к новым
+        колонкам БД) — ВНУТРИ этого же changeset'а: отдельный changeset с
+        RawSQLChange не имеет обратного действия, и любой откат, проходящий
+        через него, падал бы с RollbackImpossibleException.
       changes:
         - addColumn:
             tableName: idempotency_record
@@ -20,18 +24,11 @@ databaseChangeLog:
               - column:
                   name: response_headers
                   type: TEXT
+        - sql:
+            dbms: postgresql
+            sql: >-
+              COMMENT ON COLUMN idempotency_record.response_headers IS 'Заголовки ответа для идемпотентного replay (JSON-объект; allowlist: Location, ETag; Set-Cookie не сохраняется)';
       rollback:
         - dropColumn:
             tableName: idempotency_record
             columnName: response_headers
-  - changeSet:
-      id: 20261020-122-pg-comment
-      author: zorrodev
-      dbms: postgresql
-      comment: >-
-        Комментарий к колонке response_headers (текст на русском — правило
-        проекта к новым колонкам БД).
-      changes:
-        - sql:
-            sql: >-
-              COMMENT ON COLUMN idempotency_record.response_headers IS 'Заголовки ответа для идемпотентного replay (JSON-объект; allowlist: Location, ETag; Set-Cookie не сохраняется)';
