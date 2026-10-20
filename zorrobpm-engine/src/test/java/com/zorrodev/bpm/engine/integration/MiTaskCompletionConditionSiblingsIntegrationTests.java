@@ -188,8 +188,7 @@ public class MiTaskCompletionConditionSiblingsIntegrationTests {
     private void assertNoLeaks(UUID pi) {
         assertThat(liveInstances(pi, "miTask"))
             .as("LEAK-INVARIANT: no live MI instances left").isEmpty();
-        assertThat(activities(pi, "dump", ActivityStatus.CREATED)
-            .stream().filter(a -> a.getStatus() == ActivityStatus.CREATED || a.getStatus() == ActivityStatus.IN_PROGRESS).toList())
+        assertThat(liveInstances(pi, "dump"))
             .as("LEAK-INVARIANT: no live downstream activity").isEmpty();
         assertThat(openServiceTasks(pi))
             .as("LEAK-INVARIANT: no open service task (job) left").isZero();
