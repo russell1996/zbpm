@@ -48,8 +48,14 @@ describe('WO-UI-28 criterion 1: non-empty JSON collapsed by default', () => {
     expect(w.find('textarea[id^="pv-value-"]').exists()).toBe(false)
     // Превью — одна строка с обрезкой, без горизонтального скролла.
     const preview = w.find('[data-testid="ve-json-preview-0"]')
-    expect((preview.element.textContent ?? '').includes('\n')).toBe(false)
+    const previewText = preview.element.textContent ?? ''
+    expect(previewText.includes('\n')).toBe(false)
     expect(preview.classes()).toContain('overflow-hidden')
+    // WO-UI-42 п.2 (UI-28 О-2): пустое превью тоже прошло бы по двум
+    // ассертам выше (нет '\n' + overflow-hidden) — значит тест не доказывал,
+    // что пользователь вообще видит содержимое свёрнутой строки. Превью
+    // обязано быть НЕПУСТЫМ (реальная фикстура владельца, 5543 байта).
+    expect(previewText.length, 'превью непустое (видно содержимое строки)').toBeGreaterThan(0)
   })
 
   it('each JSON row collapses independently; two rows = two previews', async () => {
@@ -185,6 +191,7 @@ describe('WO-UI-28 criterion 4: empty value opens editor; validation error expan
     const toggle = w.find('[data-testid="ve-json-toggle-0"]')
     expect(toggle.attributes('disabled')).toBeDefined()
   })
+
 })
 
 describe('WO-UI-28 criterion 5: collapse does not mutate the value', () => {
