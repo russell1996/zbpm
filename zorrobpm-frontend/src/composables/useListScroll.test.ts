@@ -9,6 +9,8 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { defineComponent, h, nextTick, onMounted } from 'vue'
 import { mount } from '@vue/test-utils'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import { useListScroll } from './useListScroll'
 
 function makeContainer(): HTMLElement {
@@ -173,5 +175,40 @@ describe('useListScroll', () => {
     // Ничего не падает, restore без сохранённой позиции — no-op
     const el = document.querySelector('[data-scroll-container]')
     expect(el).toBeNull()
+  })
+})
+
+/** Рекурсивный обход каталога страниц. */
+function vueFiles(dir: string): string[] {
+  const out: string[] = []
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry)
+    if (statSync(full).isDirectory()) out.push(...vueFiles(full))
+    else if (entry.endsWith('.vue')) out.push(full)
+  }
+  return out
+}
+
+describe('useListScroll: проводка «страница списка → restore()»', () => {
+  // Страница, которая взяла любой из композаблов состояния списка, обязана
+  // восстанавливать позицию прокрутки. Без этого охранного теста мутация
+  // «убрать await scroll.restore() из страницы» оставляла весь набор зелёным
+  // (риск P-11/G-N: символ в файле ≠ работает).
+  const pagesDir = join(__dirname, '..', 'pages')
+
+  it('каждая страница со состоянием списка вызывает scroll.restore()', () => {
+    const offenders: string[] = []
+    const checked: string[] = []
+    for (const file of vueFiles(pagesDir)) {
+      const src = readFileSync(file, 'utf-8')
+      const usesState = src.includes('useListState(')
+      const usesScroll = src.includes('useListScroll(')
+      if (!usesState && !usesScroll) continue
+      checked.push(file)
+      if (!src.includes('scroll.restore()')) offenders.push(file)
+    }
+    // Охват не пустой — иначе тест проходит вхолостую.
+    expect(checked.length).toBeGreaterThanOrEqual(11)
+    expect(offenders).toEqual([])
   })
 })
