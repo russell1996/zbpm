@@ -1993,6 +1993,15 @@ public class BpmnParseServiceImpl implements BpmnParseService {
         return stripped.startsWith("=") ? stripped.substring(1).strip() : stripped;
     }
 
+    /**
+     * WO-C8-55: was the value written as a FEEL EXPRESSION ({@code =expr})? The same spelling
+     * rule {@link #stripLeadingEquals} applies — leading blanks are ignored, then a single
+     * leading {@code =}. Kept as a separate method so the marker can never drift from the strip.
+     */
+    private boolean isExpression(String value) {
+        return value != null && value.strip().startsWith("=");
+    }
+
     private BpmnElementModel toElementModel(BpmnBusinessRuleTaskModel businessRuleTask) {
         BpmnElementModel element = new BpmnElementModel();
         element.setId(businessRuleTask.getId());
@@ -2208,9 +2217,14 @@ public class BpmnParseServiceImpl implements BpmnParseService {
             : mi.getExtensionElements().getLoopCharacteristics();
         if (loop != null) {
             ext.setInputCollection(stripLeadingEquals(loop.getInputCollection()));
+            // WO-C8-55: remember the ORIGINAL spelling — the stripped value alone cannot tell
+            // '=items' (the only legal form, live 8.5) from 'items' (a static value the deploy
+            // gate refuses). The runtime keeps evaluating the stripped value exactly as before.
+            ext.setInputCollectionExpression(isExpression(loop.getInputCollection()));
             ext.setInputElement(loop.getInputElement());
             ext.setOutputCollection(loop.getOutputCollection());
             ext.setOutputElement(stripLeadingEquals(loop.getOutputElement()));
+            ext.setOutputElementExpression(isExpression(loop.getOutputElement()));
         }
         if (element.getExtensions() == null) {
             element.setExtensions(new BpmnElementExtensionModel());

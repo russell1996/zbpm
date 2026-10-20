@@ -23,4 +23,20 @@ public class MultiInstanceExtensionModel {
     private String outputCollection;
     /** FEEL expression for the per-instance result added to {@code outputCollection} (pending). */
     private String outputElement;
+
+    /**
+     * WO-C8-55: was {@code inputCollection} written as an EXPRESSION ({@code =…}) in the source
+     * XML? The parser strips that leading {@code =}, so the {@link #inputCollection} VALUE alone
+     * cannot tell {@code =items} from {@code items} — and live Zeebe 8.5 treats the two
+     * differently: the first is the only legal form, the second is a static value the model is
+     * REFUSED for at deploy («Expected expression but found static value 'items'. An expression
+     * must start with '='»). The deploy gate needs the original spelling, the runtime does not.
+     */
+    private boolean inputCollectionExpression;
+    /**
+     * WO-C8-55: the same marker for {@code outputElement} — see
+     * {@link #inputCollectionExpression}. {@code inputElement} and {@code outputCollection} need
+     * no marker: they are variable NAMES, not expressions, and live 8.5 accepts them as they are.
+     */
+    private boolean outputElementExpression;
 }

@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-55: outputElement переписан в зееб-легальную форму "={...}" — на live 8.5
+     outputElement без "=" это СТАТИЧЕСКОЕ ЗНАЧЕНИЕ, и такая модель отвергается
+     на деплое (замер: docs/analysis/c8-oracle/scenarios/feel-iomapping-static-nested).
+     ОРИГИНАЛЬНЫЕ байты модели консьюмера (с outputElement без "=") лежат рядом:
+     docs/internal (C8-42) и test-c855-consumer-noeq-output-element.bpmn;
+     отказ на них закреплён MiExpressionFieldDeployValidationIntegrationTests. -->
 <!-- WO-C8-42 F-1 (security review r1, a130e522b): вложенные MI-подпроцессы. outputElement
      ВНУТРЕННЕГО тела ссылается на цикл-переменную activity ВНЕШНЕГО инстанса
      (внутренний inputElement называется item — в собственном скоупе внутреннего
@@ -24,7 +30,7 @@
         <bpmn:extensionElements>
           <zeebe:loopCharacteristics inputCollection="=outerActs" inputElement="activity"
                                      outputCollection="outerResults"
-                                     outputElement="{&#34;uuid&#34;: activity.uuid, &#34;decisions&#34;: decisions}" />
+                                     outputElement="={&#34;uuid&#34;: activity.uuid, &#34;decisions&#34;: decisions}" />
         </bpmn:extensionElements>
       </bpmn:multiInstanceLoopCharacteristics>
       <bpmn:incoming>f1</bpmn:incoming>
@@ -36,7 +42,7 @@
           <bpmn:extensionElements>
             <zeebe:loopCharacteristics inputCollection="=innerActs" inputElement="item"
                                        outputCollection="decisions"
-                                       outputElement="{&#34;employee&#34;: activity.employeeId, &#34;decision&#34;: decision, &#34;comment&#34;: comment}" />
+                                       outputElement="={&#34;employee&#34;: activity.employeeId, &#34;decision&#34;: decision, &#34;comment&#34;: comment}" />
           </bpmn:extensionElements>
         </bpmn:multiInstanceLoopCharacteristics>
         <bpmn:incoming>of1</bpmn:incoming>

@@ -57,8 +57,12 @@ import java.util.Optional;
  *   <li>ioMapping output source — an EXPRESSION: it must start with {@code =}, a static value
  *       is refused at deploy (live 8.5, WO-C8-55);</li>
  *   <li>message correlationKey — always FEEL when non-blank (strip a leading {@code =});</li>
- *   <li>multi-instance inputCollection/outputElement — raw: the PARSER already stripped the
- *       {@code =} ({@code BpmnParseServiceImpl} attachMultiInstance), the runtime evaluates raw;</li>
+ *   <li>multi-instance inputCollection/outputElement — the RUNTIME evaluates the model value raw
+ *       (the PARSER already stripped the {@code =}, {@code BpmnParseServiceImpl}
+ *       attachMultiInstance), but the field is an EXPRESSION on live 8.5: a static value there
+ *       is refused at DEPLOY (WO-C8-55). The model carries a marker of the original spelling,
+ *       because the stripped value alone cannot tell {@code =items} from {@code items};
+ *       inputElement/outputCollection are variable NAMES, not expressions — not validated;</li>
  *   <li>multi-instance loopCardinality — FEEL only while inputCollection is blank (the collection
  *       path wins, {@code MultiInstanceExecutor}); strip a leading {@code =};</li>
  *   <li>multi-instance + ad-hoc completionCondition — MI: strip a leading {@code =} (runtime
@@ -263,8 +267,17 @@ public class FeelSyntaxValidator {
         }
         // raw: the parser stripped the leading '=' at parse (attachMultiInstance), the runtime
         // evaluates the model value as-is
-        checkPlain(element.getId(), "multiInstance.inputCollection", mi.getInputCollection(), findings);
-        checkPlain(element.getId(), "multiInstance.outputElement", mi.getOutputElement(), findings);
+        // WO-C8-55: these two are EXPRESSIONS on live 8.5 — a static value is refused at DEPLOY
+        // («Expected expression but found static value 'items'. An expression must start with '='»).
+        // The parser stripped the leading '=', so the model carries a marker of the original
+        // spelling: the value alone cannot tell '=items' from 'items'.
+        checkExpressionRequired(element.getId(), "multiInstance.inputCollection",
+            mi.getInputCollection(), mi.isInputCollectionExpression(), findings);
+        checkExpressionRequired(element.getId(), "multiInstance.outputElement",
+            mi.getOutputElement(), mi.isOutputElementExpression(), findings);
+        // inputElement and outputCollection are variable NAMES, not expressions — live 8.5
+        // accepts them as they are (probe mi-inputelement-plain completes), so they are not
+        // validated at all.
         // cardinality is FEEL only while inputCollection is blank — the collection path wins
         // (MultiInstanceExecutor), so a broken cardinality next to a good collection never runs
         String cardinality = mi.getCardinality();
@@ -421,5 +434,36 @@ public class FeelSyntaxValidator {
         }
         parseError(FeelExpressionKind.FEEL_EXPRESSION, raw)
             .ifPresent(error -> findings.add(new InvalidFeelExpression(elementId, field, raw, error)));
+    }
+
+    /**
+     * WO-C8-55: the field must be an EXPRESSION — live Zeebe 8.5 refuses a static value at
+     * DEPLOY, with the wording «Expected expression but found static value 'items'. An expression
+     * must start with '=' (e.g. '=items')» (measured on the live oracle,
+     * {@code docs/analysis/c8-oracle/feel-iomapping-static-nested.js}: probes
+     * {@code mi-inputcollection-noeq}, {@code mi-outputelement-noeq},
+     * {@code mi-outputelement-json} — all {@code deployError}).
+     *
+     * <p>The rule is «must start with '='», NOT «must be valid FEEL»: the text of a refused
+     * static value may well be a legal FEEL expression ({@code items} is a variable reference,
+     * {@code {"a":1}} is a context) — live 8.5 refuses it anyway, because without {@code =} it
+     * is a static value there. So the spelling decides, and the spelling is what the parser
+     * recorded ({@code expression} flag).</p>
+     *
+     * <p>An expression form still has to PARSE — a broken {@code =coll = 'x'} stays a deploy
+     * refusal (the same rule as before this WO).</p>
+     */
+    private void checkExpressionRequired(String elementId, String field, String raw, boolean expression,
+                                          List<InvalidFeelExpression> findings) {
+        if (raw == null || raw.isBlank()) {
+            return;
+        }
+        if (!expression) {
+            findings.add(new InvalidFeelExpression(elementId, field, raw,
+                "Expected expression but found static value '" + raw
+                    + "'. An expression must start with '=' (e.g. '=" + raw + "')."));
+            return;
+        }
+        checkPlain(elementId, field, raw, findings);
     }
 }

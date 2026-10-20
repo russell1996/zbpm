@@ -284,8 +284,7 @@ class FeelSyntaxValidatorTest {
 
     @Test
     @DisplayName("multi-instance: inputCollection/outputElement raw (parser-stripped); cardinality only without a collection")
-    void multiInstance() {
-        // broken collection + output element; cardinality 2 is fine
+    void multiInstance() {        // broken collection + output element; cardinality 2 is fine
         BpmnProcessDefinitionModel broken = parser.parse(process(
             "<bpmn:userTask id=\"task\">"
                 + "<bpmn:extensionElements><zeebe:userTask/></bpmn:extensionElements>"
@@ -329,6 +328,71 @@ class FeelSyntaxValidatorTest {
         assertThat(validator.validate(cardWithCollection))
             .as("cardinality is dead FEEL while inputCollection exists — refusing it would eat a working model")
             .noneMatch(f -> f.field().equals("multiInstance.loopCardinality"));
+    }
+
+    /**
+     * WO-C8-55 (root 3, the MI half): live Zeebe 8.5 refuses a model whose
+     * {@code inputCollection} / {@code outputElement} are written as a static value — they are
+     * EXPRESSIONS there, and the refusal happens at DEPLOY with the wording «Expected expression
+     * but found static value 'items'. An expression must start with '=' (e.g. '=items')»
+     * (live oracle: {@code mi-inputcollection-noeq}, {@code mi-outputelement-noeq},
+     * {@code mi-outputelement-json} — all {@code deployError}).
+     *
+     * <p>The parser strips the leading {@code =}, so the model value alone cannot tell
+     * {@code =items} from {@code items} — the walk must ask the PARSER what the original
+     * spelling was. That is what this case pins: the two spellings of the same text are two
+     * different verdicts.</p>
+     */
+    @Test
+    @DisplayName("multi-instance: inputCollection/outputElement must be EXPRESSIONS (live 8.5 refuses a static value)")
+    void multiInstanceExpressionFields() {
+        BpmnProcessDefinitionModel noeqCollection = parser.parse(process(
+            "<bpmn:userTask id=\"task\">"
+                + "<bpmn:extensionElements><zeebe:userTask/></bpmn:extensionElements>"
+                + "<bpmn:multiInstanceLoopCharacteristics isSequential=\"false\">"
+                + "<bpmn:extensionElements>"
+                + "<zeebe:loopCharacteristics inputCollection=\"items\" inputElement=\"item\"/>"
+                + "</bpmn:extensionElements>"
+                + "</bpmn:multiInstanceLoopCharacteristics>"
+                + "<bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>"
+                + "</bpmn:userTask>"));
+        List<InvalidFeelExpression> collectionFindings = validator.validate(noeqCollection);
+        assertThat(elementFields(collectionFindings)).containsExactly("task/multiInstance.inputCollection");
+        assertThat(collectionFindings.get(0).parseError())
+            .contains("Expected expression but found static value 'items'")
+            .contains("An expression must start with '='");
+
+        BpmnProcessDefinitionModel noeqOutput = parser.parse(process(
+            "<bpmn:userTask id=\"task\">"
+                + "<bpmn:extensionElements><zeebe:userTask/></bpmn:extensionElements>"
+                + "<bpmn:multiInstanceLoopCharacteristics isSequential=\"false\">"
+                + "<bpmn:extensionElements>"
+                + "<zeebe:loopCharacteristics inputCollection=\"=items\" inputElement=\"item\""
+                + " outputCollection=\"results\" outputElement=\"probeId\"/>"
+                + "</bpmn:extensionElements>"
+                + "</bpmn:multiInstanceLoopCharacteristics>"
+                + "<bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>"
+                + "</bpmn:userTask>"));
+        List<InvalidFeelExpression> outputFindings = validator.validate(noeqOutput);
+        assertThat(elementFields(outputFindings)).containsExactly("task/multiInstance.outputElement");
+        assertThat(outputFindings.get(0).parseError())
+            .contains("Expected expression but found static value 'probeId'")
+            .contains("An expression must start with '='");
+
+        // the expression form is clean — and inputElement/outputCollection are NAMES, so they
+        // are never refused (live 8.5: mi-inputelement-plain completes)
+        BpmnProcessDefinitionModel eqForm = parser.parse(process(
+            "<bpmn:userTask id=\"task\">"
+                + "<bpmn:extensionElements><zeebe:userTask/></bpmn:extensionElements>"
+                + "<bpmn:multiInstanceLoopCharacteristics isSequential=\"false\">"
+                + "<bpmn:extensionElements>"
+                + "<zeebe:loopCharacteristics inputCollection=\"=items\" inputElement=\"item\""
+                + " outputCollection=\"results\" outputElement=\"=item\"/>"
+                + "</bpmn:extensionElements>"
+                + "</bpmn:multiInstanceLoopCharacteristics>"
+                + "<bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>"
+                + "</bpmn:userTask>"));
+        assertThat(validator.validate(eqForm)).isEmpty();
     }
 
     @Test

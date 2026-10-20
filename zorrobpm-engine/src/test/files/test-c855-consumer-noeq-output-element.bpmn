@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-55: ОРИГИНАЛЬНАЯ форма outputElement модели консьюмера — БЕЗ ведущего "=".
+     Это ровно те байты, что лежат в прод-определении testApprovalRouteProcess v73
+     (активная версия) и в docs/internal Живой Zeebe 8.5 такую
+     модель отвергает на ДЕПЛОЕ: "Expected expression but found static value
+     '{"decision": decision, "comment": comment}'. An expression must start with '='
+     (e.g. '={"decision": decision, "comment": comment}')" — замер в оракуле
+     docs/analysis/c8-oracle/scenarios/feel-iomapping-static-nested/result-8.5.json
+     (пробы mi-outputelement-json / mi-outputelement-noeq / mi-inputcollection-noeq).
+     Фикстура НИКОГДА не деплоится успешно: она — вещественное доказательство отказа,
+     его проверяет MiExpressionFieldDeployValidationIntegrationTests. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="defs-c855-consumer" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c855ConsumerNoeqOutputElement" name="consumer spelling without '='" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="miTask" />
+    <bpmn:userTask id="miTask" name="miTask">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=activities" inputElement="activity" outputCollection="decisions" outputElement="{&#34;decision&#34;: decision, &#34;comment&#34;: comment}" />
+        </bpmn:extensionElements>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="miTask" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
