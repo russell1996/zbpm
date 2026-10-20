@@ -189,20 +189,76 @@ describe('PresetPicker — WO-UI-34 single dropdown', () => {
     expect(editorNames(w)).toEqual(['n', 'ask'])
   })
 
-  it('(c-bis) switching back to «Без шаблона» clears template rows; undo restores them', async () => {
+  // WO-UI-38: выбор «Без шаблона» — это НЕ потеря данных. Пользователь сам
+  // сказал «ручной ввод», поэтому строки остаются (как ручные), тост «Шаблон
+  // снят · Отменить» не показывается, ключ presetTemplateCleared удалён.
+  it('(c-bis) switching back to «Без шаблона» keeps the rows as manual input and shows NO toast', async () => {
     const w = render()
     await flushPromises()
     await pickOption(w, 1)
     expect(toastCalls.length).toBe(0)
     await pickOption(w, 0)
-    expect(editorNames(w)).toEqual([])
-    expect(vm(w).mode).toBe('manual')
-    expect(toastCalls.length).toBe(1)
-    expect(toastCalls[0].msg).toBe('presetTemplateCleared')
-    toastCalls[0].opts!.action!.onClick()
-    await flushPromises()
+    // Строки НЕ очищаются — они остаются ручным вводом.
     expect(editorNames(w)).toEqual(['n', 'ask'])
-    expect(vm(w).mode).toBe('template')
+    expect(vm(w).mode).toBe('manual')
+    // Тостов нет вообще: пользователь сам выбрал «без шаблона».
+    expect(toastCalls.length).toBe(0)
+    expect(toastCalls.map((c) => c.msg)).not.toContain('presetTemplateCleared')
+  })
+
+  // WO-UI-38: закрытое значение не должно склеивать имя шаблона и его
+  // видимость («Start ApprovalУчастники процесса» → «Start Approval · …»).
+  it('(b) closed value separates the template name and its visibility with «·», not glued', async () => {
+    const w = render()
+    await flushPromises()
+    await pickOption(w, 1)
+    const trigger = w.find('[data-testid="preset-select"]')
+    const text = trigger.text()
+    expect(text, 'name is shown').toContain('Шаблон 1')
+    expect(text, 'visibility is shown').toContain('presetVisibilityProcess')
+    expect(text, 'fragments are separated by «·»').toContain('·')
+    expect(text, 'fragments are NOT glued').not.toContain('Шаблон 1presetVisibilityProcess')
+    // Полный текст — по наведению (native title), обрезанный — с многоточием.
+    expect(trigger.attributes('title')).toContain('Шаблон 1')
+    expect(trigger.attributes('title')).toContain('presetVisibilityProcess')
+  })
+
+  it('(b-bis) the list item also separates the name and the visibility', async () => {
+    const w = render()
+    await flushPromises()
+    const trigger = w.find('[data-testid="preset-select"]')
+    trigger.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
+    const opt = document.querySelector('[data-testid="preset-opt-p2"]')
+    expect(opt, 'preset option rendered').not.toBeNull()
+    const text = opt!.textContent ?? ''
+    expect(text).toContain('Шаблон 2')
+    expect(text).toContain('presetVisibilityPrivate')
+    expect(text, 'fragments are separated by «·»').toContain('·')
+    expect(text, 'fragments are NOT glued').not.toContain('Шаблон 2presetVisibilityPrivate')
+  })
+
+  it('(b-ter) the Combobox closed value separates the name and the visibility too', async () => {
+    mockList.mockResolvedValue(Array.from({ length: 10 }, (_, i) => preset(i + 1)))
+    const w = render()
+    await flushPromises()
+    // jsdom: Combobox открывается кликом (не ArrowDown, как plain-Select).
+    await w.find('[data-testid="preset-select"]').trigger('click')
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
+    const opts = document.querySelectorAll('[role="option"]')
+    expect(opts.length, 'combobox options rendered').toBeGreaterThan(1)
+    // reka ComboboxItem выбирает по click (ListboxItem onClick).
+    ;(opts[1] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushPromises()
+    await new Promise((r) => setTimeout(r, 50))
+    const trigger = w.find('[data-testid="preset-select"]')
+    const text = trigger.text()
+    expect(text).toContain('Шаблон 1')
+    expect(text).toContain('presetVisibilityProcess')
+    expect(text).toContain('·')
+    expect(text).not.toContain('Шаблон 1presetVisibilityProcess')
   })
 
   it('(d) available=false: списка («Шаблон») нет, редактор остаётся', async () => {
