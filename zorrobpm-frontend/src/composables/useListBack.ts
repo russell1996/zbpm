@@ -73,12 +73,19 @@ export function useListBack(listKey: string, listRouteName: string): UseListBack
     if (typeof back !== 'string' || back === '') return false
     if (typeof router?.resolve !== 'function') return false
     let listPath: string
+    let listHref: string
     try {
       listPath = router.resolve({ name: listRouteName }).path
+      listHref = router.resolve({ name: listRouteName }).href
     } catch {
       return false
     }
-    return back.split('?')[0] === listPath
+    const backPath = back.split('?')[0]
+    // vue-router хранит предыдущую запись БЕЗ базы (`state.back` = '/path'),
+    // но запись с базой ('/ui/path') тоже встречается (обёртки, другой
+    // history-бэкенд) — сравниваем в обеих системах координат, чтобы
+    // «назад» не сломался из-за формы записи.
+    return backPath === listPath || backPath === listHref.split('?')[0]
   }
 
   function back(): void {

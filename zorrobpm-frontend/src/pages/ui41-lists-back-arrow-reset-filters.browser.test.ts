@@ -174,9 +174,15 @@ function makeI18n() {
   return createI18n({ legacy: false, locale: 'en', fallbackLocale: 'en', messages: { en, ru, kz } })
 }
 
+/**
+ * Роутер — КАК В ПРОДЕ: `createWebHistory('/ui/')` (app/router.ts:6) и пути
+ * маршрутов относительно базы (router.ts). База важна для проверки «стрелка
+ * идёт по истории»: предыдущая запись (`history.state.back`) и путь списка
+ * должны сравниваться в одной системе координат — как в боевом приложении.
+ */
 async function makeRouter(initialUrl: string): Promise<Router> {
   const router = createRouter({
-    history: createWebHistory(''),
+    history: createWebHistory('/ui/'),
     routes: [
       { path: '/processes/instances', name: 'process-instances', component: ProcessInstanceList },
       { path: '/processes/instances/:id', name: 'process-instance-detail', component: ProcessInstanceDetail },
@@ -265,11 +271,14 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-/** Стрелка «назад» в шапке карточки: ищем по testid, иначе — по ссылке на список. */
+/**
+ * Стрелка «назад» в шапке карточки: ищем по testid, иначе — по ссылке на
+ * список. В href путь с БАЗОЙ ('/ui/processes/instances…'), как в проде.
+ */
 function backArrow(listPath: string): HTMLAnchorElement {
   const el =
     document.querySelector<HTMLAnchorElement>('[data-testid="back-to-list"]') ??
-    document.querySelector<HTMLAnchorElement>(`a[href^="${listPath}"]`)
+    document.querySelector<HTMLAnchorElement>(`a[href^="/ui${listPath}"]`)
   if (!el) throw new Error(`back arrow to ${listPath} not found`)
   return el
 }
