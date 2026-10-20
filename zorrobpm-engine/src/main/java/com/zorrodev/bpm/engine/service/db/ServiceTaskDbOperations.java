@@ -28,6 +28,13 @@ public interface ServiceTaskDbOperations {
 
     void completeServiceTask(UUID serviceTaskId);
 
+    /**
+     * WO-C8-57 (F-15): закрывает job-строку ТЕРМИНИРОВАННОГО инстанса (MI-сиблинг,
+     * сработал completionCondition). Null-safe (UPDATE без строки — no-op) и БЕЗ
+     * события: инстанс терминирован, а не завершён.
+     */
+    void terminateServiceTask(UUID serviceTaskId);
+
     void setServiceTaskRetries(UUID serviceTaskId, int retries);
 
     int decrementServiceTaskRetries(UUID serviceTaskId);

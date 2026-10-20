@@ -1,0 +1,34 @@
+{
+  "id": "mi-task-cc-siblings",
+  "title": "WO-C8-57 F-15 — completionCondition on a multi-instance TASK: are the remaining MI instances terminated?",
+  "bpmn": "process.bpmn",
+  "processId": "s10MiTask",
+  "vars": {},
+  "completeTypes": ["s10w"],
+  "completeVars": { "s10w": {} },
+  "dumpType": "s10dump",
+  "expected": { "results": ["a", null, null] },
+  "matrix": {
+    "docs89": "8.9 docs (Multi-instance → Completion condition): 'A completionCondition defines whether the multi-instance body can be completed immediately when the condition is satisfied... Any instances that are still active are terminated and the multi-instance body is completed when the expression evaluates to true.' The 8.9 XML example is a multi-instance SERVICE TASK with a completionCondition, so the task variant is explicitly in scope of the documented behaviour.",
+    "ours": "ДО фикса (master @ 6647be0d5): оставшиеся сиблинги MI-задачи ОСТАЮТСЯ живыми (activity CREATED/IN_PROGRESS, у сервисной задачи — живой job, у пользовательской — открытая задача), инстанс может завершиться при открытых сиблингах; поздний completion от воркера приходит на отменённую задачу. ПОСЛЕ фикса (WO-C8-57): сиблинги терминируются тем же единым механизмом, что и ветка SUB_PROCESS (WO-C8-41 F4)."
+  },
+  "maxRounds": 40,
+  "_driver": {
+    "note": "Этот сценарий измеряется раннером `node run-oracle.js s10|s10m|s10l|s11`, а НЕ compare.js: драйвер compare.js на каждом раунде активирует и ЗАВЕРШАЕТ ВСЕ job'ы типа сразу, поэтому он завершил бы и сиблингов до того, как условие успело бы сработать, и не увидел бы терминацию. compare.js на этом сценарии падает на CompleteJob отменённого job'а (NOT_FOUND).",
+    "variants": {
+      "s10": "parallel MI task, completes the FIRST instance",
+      "s10m": "parallel MI task, completes the MIDDLE instance",
+      "s10l": "parallel MI task, completes the LAST instance",
+      "s11": "sequential MI task (process-seq.bpmn), completes the first instance"
+    }
+  },
+  "_help": {
+    "vars": "JSON start variables passed to CreateProcessInstance.",
+    "completeTypes": "Job types the driver completes while driving toward the dump job.",
+    "completeVars": "Per-type completion variables: completeVars[type].",
+    "dumpType": "The final job type whose variables are captured as the observed root state.",
+    "expected": "Documented 8.5 behavior (results = позиционная агрегация: слот завершённого инстанса заполнен, слоты терминированных — null).",
+    "matrix.docs89": "What the 8.9 docs say (free text) — column 1 of the matrix line.",
+    "matrix.ours": "What OUR engine does — column 3."
+  }
+}

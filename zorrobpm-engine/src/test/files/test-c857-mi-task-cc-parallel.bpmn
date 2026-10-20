@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-C8-57 (F-15): completionCondition на MI-ЗАДАЧЕ (service task, параллельная).
+     Зеркало оракула Zeebe 8.5.0 (docs/analysis/c8-oracle/scenarios/mi-task-cc-siblings/process.bpmn):
+     3 инстанса из ["a","b","c"], условие =numberOfCompletedInstances >= 1.
+
+     Ожидание Zeebe 8.5 (измерено живьём, oracle s10/s10m/s10l):
+       - после завершения ОДНОГО инстанса остальные ДВА ТЕРМИНИРОВАНЫ (job'ов нет);
+       - MI-тело закрывается, следующий элемент (dump) создаётся сразу;
+       - results = ["a",null,null] (позиционно, слоты терминированных — null);
+       - поздний completion терминированного инстанса — ОТКАЗ (NOT_FOUND). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                  id="defs-c857-par" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="c857Par" name="C857 MI task completionCondition (parallel)" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="miTask" />
+    <bpmn:serviceTask id="miTask" name="miTask">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c857w" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:extensionElements>
+          <zeebe:loopCharacteristics inputCollection="=[&quot;a&quot;,&quot;b&quot;,&quot;c&quot;]" inputElement="item"
+                                     outputCollection="results" outputElement="=item" />
+        </bpmn:extensionElements>
+        <bpmn:completionCondition xsi:type="bpmn:tFormalExpression">=numberOfCompletedInstances &gt;= 1</bpmn:completionCondition>
+      </bpmn:multiInstanceLoopCharacteristics>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="miTask" targetRef="dump" />
+    <bpmn:serviceTask id="dump" name="dump">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c857dump" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="dump" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

@@ -1,0 +1,87 @@
+# WO-C8-57 S10/S10m/S10l/S11 — oracle Zeebe 8.5.0 (live, zbpm-cmp-zeebe), 2026-10-20
+# Команда: node run-oracle.js s10 | s10m | s10l | s11 (docs/analysis/c8-oracle/run-oracle.js)
+
+===== s10 =====
+CONNECTED brokers=1 gw=8.5.0
+
+===== S10 =====
+DEPLOY process.bpmn -> s10MiTask v1 key=2251799813851933
+START s10MiTask -> piKey=2251799813852295
+--- PAR initial s10w (expect 3): 3 job(s) ---
+key=2251799813852307 type=s10w elementId=miTask piKey=2251799813852295 vars={"item":"a","loopCounter":1,"results":[null,null,null]}
+key=2251799813852310 type=s10w elementId=miTask piKey=2251799813852295 vars={"item":"b","loopCounter":2,"results":[null,null,null]}
+key=2251799813852313 type=s10w elementId=miTask piKey=2251799813852295 vars={"item":"c","loopCounter":3,"results":[null,null,null]}
+PAR completing item=a (position 0) — siblings that must be terminated: 2
+COMPLETE key=2251799813852307 type=s10w vars={}
+--- PAR s10w AFTER one completion (expect 0 — siblings terminated): 0 job(s) ---
+--- PAR s10dump (expect 1 — MI body closed early): 1 job(s) ---
+key=2251799813852320 type=s10dump elementId=dump piKey=2251799813852295 vars={"results":["a",null,null]}
+PAR DUMP vars: {"results":["a",null,null]}
+COMPLETE key=2251799813852320 type=s10dump vars={}
+PAR LATE COMPLETE of terminated sibling key=2251799813852310: REJECTED -> 5 NOT_FOUND: Command 'COMPLETE' rejected with code 'NOT_FOUND': Expected to complete job with key '2251799813852310', but no such job was found
+PAR LATE COMPLETE of terminated sibling key=2251799813852313: REJECTED -> 5 NOT_FOUND: Command 'COMPLETE' rejected with code 'NOT_FOUND': Expected to complete job with key '2251799813852313', but no such job was found
+
+ORACLE DONE
+
+===== s10m =====
+CONNECTED brokers=1 gw=8.5.0
+
+===== S10M =====
+DEPLOY process.bpmn -> s10MiTask v1 key=2251799813851933
+START s10MiTask -> piKey=2251799813852345
+--- PAR initial s10w (expect 3): 3 job(s) ---
+key=2251799813852357 type=s10w elementId=miTask piKey=2251799813852345 vars={"item":"a","loopCounter":1,"results":[null,null,null]}
+key=2251799813852360 type=s10w elementId=miTask piKey=2251799813852345 vars={"item":"b","loopCounter":2,"results":[null,null,null]}
+key=2251799813852363 type=s10w elementId=miTask piKey=2251799813852345 vars={"item":"c","loopCounter":3,"results":[null,null,null]}
+PAR completing item=b (position 1) — siblings that must be terminated: 2
+COMPLETE key=2251799813852360 type=s10w vars={}
+--- PAR s10w AFTER one completion (expect 0 — siblings terminated): 0 job(s) ---
+--- PAR s10dump (expect 1 — MI body closed early): 1 job(s) ---
+key=2251799813852370 type=s10dump elementId=dump piKey=2251799813852345 vars={"results":[null,"b",null]}
+PAR DUMP vars: {"results":[null,"b",null]}
+COMPLETE key=2251799813852370 type=s10dump vars={}
+PAR LATE COMPLETE of terminated sibling key=2251799813852357: REJECTED -> 5 NOT_FOUND: Command 'COMPLETE' rejected with code 'NOT_FOUND': Expected to complete job with key '2251799813852357', but no such job was found
+PAR LATE COMPLETE of terminated sibling key=2251799813852363: REJECTED -> 5 NOT_FOUND: Command 'COMPLETE' rejected with code 'NOT_FOUND': Expected to complete job with key '2251799813852363', but no such job was found
+
+ORACLE DONE
+
+===== s10l =====
+CONNECTED brokers=1 gw=8.5.0
+
+===== S10L =====
+DEPLOY process.bpmn -> s10MiTask v1 key=2251799813851933
+START s10MiTask -> piKey=2251799813852394
+--- PAR initial s10w (expect 3): 3 job(s) ---
+key=2251799813852406 type=s10w elementId=miTask piKey=2251799813852394 vars={"item":"a","loopCounter":1,"results":[null,null,null]}
+key=2251799813852409 type=s10w elementId=miTask piKey=2251799813852394 vars={"item":"b","loopCounter":2,"results":[null,null,null]}
+key=2251799813852412 type=s10w elementId=miTask piKey=2251799813852394 vars={"item":"c","loopCounter":3,"results":[null,null,null]}
+PAR completing item=c (position 2) — siblings that must be terminated: 2
+COMPLETE key=2251799813852412 type=s10w vars={}
+--- PAR s10w AFTER one completion (expect 0 — siblings terminated): 0 job(s) ---
+--- PAR s10dump (expect 1 — MI body closed early): 1 job(s) ---
+key=2251799813852419 type=s10dump elementId=dump piKey=2251799813852394 vars={"results":[null,null,"c"]}
+PAR DUMP vars: {"results":[null,null,"c"]}
+COMPLETE key=2251799813852419 type=s10dump vars={}
+PAR LATE COMPLETE of terminated sibling key=2251799813852406: REJECTED -> 5 NOT_FOUND: Command 'COMPLETE' rejected with code 'NOT_FOUND': Expected to complete job with key '2251799813852406', but no such job was found
+PAR LATE COMPLETE of terminated sibling key=2251799813852409: REJECTED -> 5 NOT_FOUND: Command 'COMPLETE' rejected with code 'NOT_FOUND': Expected to complete job with key '2251799813852409', but no such job was found
+
+ORACLE DONE
+
+===== s11 =====
+CONNECTED brokers=1 gw=8.5.0
+
+===== S11 =====
+DEPLOY process-seq.bpmn -> s11MiTaskSeq v1 key=2251799813852118
+START s11MiTaskSeq -> piKey=2251799813852452
+--- SEQ initial s11w (expect 1): 1 job(s) ---
+key=2251799813852461 type=s11w elementId=miTask piKey=2251799813852452 vars={"item":"a","loopCounter":1,"results":[null,null,null]}
+SEQ completing item=a (position 0) — siblings that must be terminated: 0
+COMPLETE key=2251799813852461 type=s11w vars={}
+--- SEQ s11w AFTER one completion (expect 0 — siblings terminated): 0 job(s) ---
+--- SEQ s11dump (expect 1 — MI body closed early): 1 job(s) ---
+key=2251799813852467 type=s11dump elementId=dump piKey=2251799813852452 vars={"results":["a",null,null]}
+SEQ DUMP vars: {"results":["a",null,null]}
+COMPLETE key=2251799813852467 type=s11dump vars={}
+
+ORACLE DONE
+

@@ -346,8 +346,18 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
+    public void terminateServiceTask(UUID serviceTaskId) {
+        serviceTaskDbOperations.terminateServiceTask(serviceTaskId);
+    }
+
+    @Override
     public void completeUserTask(UUID userTaskId) {
         userTaskDbOperations.completeUserTask(userTaskId);
+    }
+
+    @Override
+    public void terminateUserTask(UUID userTaskId) {
+        userTaskDbOperations.terminateUserTask(userTaskId);
     }
 
     @Override
