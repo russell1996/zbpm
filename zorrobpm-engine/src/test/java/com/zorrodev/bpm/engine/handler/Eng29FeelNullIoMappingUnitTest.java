@@ -43,11 +43,11 @@ import static org.mockito.Mockito.mock;
  *
  * <p>What this class pins NOW (WO-C8-54):</p>
  * <ol>
- *   <li>a source referencing a variable absent from the context → a null VALUE
+ * <li>a source referencing a variable absent from the context → a null VALUE
  *       (JSON null), no exception, no incident (live 8.5);</li>
- *   <li>the same for a source without the {@code =} prefix (the FEEL evaluation
- *       of a bare name against an empty context is a missing variable — the
- *       static-source question itself is WO-C8-55);</li>
+ *   <li>a source without the {@code =} prefix → a STATIC VALUE (the source text
+ *       verbatim, live 8.5) — WO-C8-55 answered the question this class left open
+ *       («the static-source question itself is WO-C8-55»);</li>
  *   <li>an explicit {@code =null} literal → a null VALUE (JSON null);</li>
  *   <li>a variable that EXISTS with a null value → an honest null (JSON null),
  *       not an evaluation failure;</li>
@@ -121,13 +121,24 @@ class Eng29FeelNullIoMappingUnitTest {
         assertJsonNull(variable, "a missing variable");
     }
 
+    /**
+     * WO-C8-55: the question this class left open in WO-C8-54 — answered by the live
+     * Zeebe 8.5.0 measurement ({@code docs/analysis/c8-oracle/feel-iomapping-static-nested.js},
+     * case {@code src-noeq-var}: a source without {@code =} is a STATIC VALUE, the source text
+     * delivered verbatim, even when a variable of that name exists). Before this WO the engine
+     * evaluated such a source as FEEL, so a missing variable of that spelling produced a null
+     * VALUE; the live-8.5 behaviour is the literal text.
+     */
     @Test
-    void criterion1_missingVariable_withoutEqualsPrefix_alsoANullValue() {
+    void criterion1_missingVariable_withoutEqualsPrefix_isAStaticValueNotANull() {
         ProcessVariable variable = elementSupport.evaluateMapping(
             mapping("routeStageUuid", "routeStageUuid"),
             List.of(str("otherVar", "x")));
 
-        assertJsonNull(variable, "a missing variable (no '=' prefix)");
+        assertThat(variable.getType()).as("type of a static value (no '=' prefix)")
+            .isEqualTo(ProcessVariableType.STRING);
+        assertThat(variable.getValue()).as("value of a static value (no '=' prefix)")
+            .isEqualTo("routeStageUuid");
     }
 
     // ─── Предпосылка бага: legacy JSR-223 действительно глотает failure ──────

@@ -803,7 +803,14 @@
           "source": "hello",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": "hello"
+        },
+        "dumpEquals": {}
+      }
     },
     {
       "id": "noeq-var",
@@ -817,7 +824,17 @@
           "source": "present",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": "present",
+          "present": "V"
+        },
+        "dumpEquals": {
+          "present": "V"
+        }
+      }
     },
     {
       "id": "empty-source",
@@ -1213,6 +1230,91 @@
       "condition": "true",
       "defaultFlow": false,
       "vars": {}
+    },
+    {
+      "id": "noeq-number",
+      "title": "source without '=' that looks like a number — static STRING or a number value?",
+      "docs": "8.9 expressions: without '=' the source is a static value, not FEEL \u2014 the value keeps its TEXT form (measured live on Zeebe 8.5: source '42' \u2192 the string \"42\", not the number 42)",
+      "input": [
+        {
+          "source": "42",
+          "target": "r"
+        }
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": "42"
+        },
+        "dumpEquals": {}
+      }
+    },
+    {
+      "id": "noeq-json",
+      "title": "source without '=' that looks like JSON — static STRING or a parsed object?",
+      "docs": "8.9 expressions: without '=' the source is a static value, not FEEL; a JSON text is not parsed implicitly (measured live on Zeebe 8.5: source '{\"a\":1}' \u2192 the string \"{\\\"a\\\":1}\")",
+      "input": [
+        {
+          "source": "{\"a\":1}",
+          "target": "r"
+        }
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": "{\"a\":1}"
+        },
+        "dumpEquals": {}
+      }
+    },
+    {
+      "id": "noeq-spaces",
+      "title": "source without '=' with surrounding spaces — trimmed or verbatim?",
+      "docs": "8.9 expressions: without '=' the source is a static value, not FEEL; the value is the source text VERBATIM (measured live on Zeebe 8.5: source '  hello  ' \u2192 the string \"  hello  \", spaces kept)",
+      "input": [
+        {
+          "source": "  hello  ",
+          "target": "r"
+        }
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": "  hello  "
+        },
+        "dumpEquals": {}
+      }
+    },
+    {
+      "id": "noeq-output-static",
+      "title": "OUTPUT source without '=' — a static value too?",
+      "docs": "8.9 variables: an output mapping source is an EXPRESSION; live Zeebe 8.5 refuses the model at DEPLOY (\"Expected expression but found static value 'hello'. An expression must start with '='\")",
+      "output": [
+        {
+          "source": "hello",
+          "target": "r"
+        }
+      ],
+      "expect": {
+        "outcome": "deployError"
+      }
+    },
+    {
+      "id": "noeq-output-static-var",
+      "title": "OUTPUT source without '=' that names a variable — refused at deploy too?",
+      "docs": "8.9 variables: an output mapping source is an EXPRESSION; live Zeebe 8.5 refuses the model at DEPLOY (\"Expected expression but found static value 'present'. An expression must start with '='\") \u2014 the variable of the same name does not make it an expression",
+      "vars": {
+        "present": "V"
+      },
+      "output": [
+        {
+          "source": "present",
+          "target": "r"
+        }
+      ],
+      "expect": {
+        "outcome": "deployError"
+      }
     }
   ]
 }

@@ -22,8 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class FeelIoMappingCaseSetTest {
 
-    /** 72 кейса Ф1 + 12 кейсов условий гейтвея (WO-C8-54). */
-    private static final int EXPECTED_CASES = 84;
+    /** 72 кейса Ф1 + 12 кейсов условий гейтвея (WO-C8-54) + 5 кейсов корня 3 (WO-C8-55). */
+    private static final int EXPECTED_CASES = 89;
     private static final Set<String> WRAPPERS = Set.of("subprocess", "mi", "gateway");
     private static final List<String> OPERATION_FIELDS = List.of(
         "input", "output", "completionVars", "containerInput", "containerOutput", "outputElement"
@@ -93,6 +93,10 @@ class FeelIoMappingCaseSetTest {
             .extracting(c -> c.get("id"))
             .contains("num-round", "str-null", "null-literal", "missing-bare", "present-null",
                 "missing-default", "path-missing", "mixed-string-num", "mixed-lt",
-                "path-index-zero", "path-oob");
+                "path-index-zero", "path-oob",
+                // WO-C8-55: the root-3 cases (a source without '=' is a static value; an
+                // output source without '=' is refused at deploy)
+                "noeq-literal", "noeq-var", "noeq-number", "noeq-json", "noeq-spaces",
+                "noeq-output-static", "noeq-output-static-var");
     }
 }

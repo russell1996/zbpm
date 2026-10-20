@@ -52,7 +52,10 @@ import java.util.Optional;
  *       {@code ElementSupport.resolveExpression*}: FEEL only when the value starts with {@code =}
  *       ({@code ${var}} and literals are not FEEL);</li>
  *   <li>service-task + process default priority — same {@code =}-only rule;</li>
- *   <li>ioMapping input/output source — always FEEL when non-blank (strip a leading {@code =});</li>
+ *   <li>ioMapping input source — FEEL only when it starts with {@code =} (a source without
+ *       {@code =} is a STATIC VALUE the runtime copies verbatim — live 8.5, WO-C8-55);</li>
+ *   <li>ioMapping output source — an EXPRESSION: it must start with {@code =}, a static value
+ *       is refused at deploy (live 8.5, WO-C8-55);</li>
  *   <li>message correlationKey — always FEEL when non-blank (strip a leading {@code =});</li>
  *   <li>multi-instance inputCollection/outputElement — raw: the PARSER already stripped the
  *       {@code =} ({@code BpmnParseServiceImpl} attachMultiInstance), the runtime evaluates raw;</li>
@@ -189,19 +192,54 @@ public class FeelSyntaxValidator {
         if (io == null) {
             return;
         }
-        collectMappingSources(element, io.getInputs(), "ioMapping.input.source", ext, findings, io);
-        collectMappingSources(element, io.getOutputs(), "ioMapping.output.source", ext, findings, io);
+        // WO-C8-55: an INPUT source without a leading '=' is a STATIC VALUE (live 8.5), not FEEL —
+        // the runtime delivers the source text verbatim, so the parser has nothing to say about it
+        // (and a static value that is not even parseable FEEL — 'hello world', '{"a":1}' — must
+        // still deploy, exactly as it does on live 8.5).
+        collectInputMappingSources(element, io.getInputs(), "ioMapping.input.source", findings);
+        // an OUTPUT source is an EXPRESSION — live 8.5 refuses a static value there at DEPLOY.
+        collectOutputMappingSources(element, io.getOutputs(), "ioMapping.output.source", findings);
     }
 
-    private void collectMappingSources(BpmnElementModel element, List<IoMappingExtensionModel.Mapping> mappings,
-                                       String field, BpmnElementExtensionModel ext,
-                                       List<InvalidFeelExpression> findings, IoMappingExtensionModel io) {
+    /**
+     * WO-C8-55: input sources are FEEL only when written as {@code =expr}. A source without
+     * {@code =} is a static value the runtime copies verbatim — nothing to parse, nothing to
+     * refuse (live 8.5 deploys {@code hello} and delivers {@code "hello"}).
+     */
+    private void collectInputMappingSources(BpmnElementModel element, List<IoMappingExtensionModel.Mapping> mappings,
+                                            String field, List<InvalidFeelExpression> findings) {
         if (mappings == null) {
             return;
         }
         for (IoMappingExtensionModel.Mapping mapping : mappings) {
             String source = mapping.getSource();
             if (source == null || source.isBlank()) {
+                continue;
+            }
+            checkFeelOnlyIfPrefixed(element.getId(), field, source, findings);
+        }
+    }
+
+    /**
+     * WO-C8-55: an output source is an EXPRESSION — a static value there is refused at deploy,
+     * with the live Zeebe 8.5 wording («Expected expression but found static value 'hello'.
+     * An expression must start with '=' (e.g. '=hello')»), measured on the live oracle
+     * ({@code docs/analysis/c8-oracle/feel-iomapping-static-nested.js}).
+     */
+    private void collectOutputMappingSources(BpmnElementModel element, List<IoMappingExtensionModel.Mapping> mappings,
+                                             String field, List<InvalidFeelExpression> findings) {
+        if (mappings == null) {
+            return;
+        }
+        for (IoMappingExtensionModel.Mapping mapping : mappings) {
+            String source = mapping.getSource();
+            if (source == null || source.isBlank()) {
+                continue;
+            }
+            if (!source.startsWith("=")) {
+                findings.add(new InvalidFeelExpression(element.getId(), field, source,
+                    "Expected expression but found static value '" + source
+                        + "'. An expression must start with '=' (e.g. '=" + source + "')."));
                 continue;
             }
             parseError(FeelExpressionKind.FEEL_EXPRESSION, source)

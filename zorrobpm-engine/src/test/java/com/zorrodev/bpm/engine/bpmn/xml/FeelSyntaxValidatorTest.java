@@ -197,7 +197,7 @@ class FeelSyntaxValidatorTest {
     }
 
     @Test
-    @DisplayName("ioMapping input AND output sources: always FEEL when present; bracket path is legal syntax")
+    @DisplayName("ioMapping input AND output sources: FEEL when written as '=…'; bracket path is legal syntax")
     void ioMappingSources() {
         BpmnProcessDefinitionModel broken = parser.parse(process(
             "<bpmn:userTask id=\"task\">"
@@ -227,6 +227,59 @@ class FeelSyntaxValidatorTest {
             .as("a[\"key with space\"] parses — Zeebe 8.5 deploys it too (matrix path-quoted); "
                 + "the divergence is at runtime, not at deploy")
             .isEmpty();
+    }
+
+    /**
+     * WO-C8-55 (root 3): an INPUT source without a leading {@code =} is a STATIC VALUE, not a
+     * FEEL expression — live Zeebe 8.5 deploys {@code hello} and {@code {"a":1}} and delivers
+     * them verbatim (measured live, {@code docs/analysis/c8-oracle/feel-iomapping-static-nested.js}).
+     * The validator must therefore NOT parse them: the second one is not even parseable FEEL,
+     * and refusing it would eat a model live 8.5 accepts.
+     */
+    @Test
+    @DisplayName("ioMapping input source without '=…' is a static value — never parsed as FEEL")
+    void ioMappingInputSourceIsStaticValue() {
+        BpmnProcessDefinitionModel model = parser.parse(process(
+            "<bpmn:userTask id=\"task\">"
+                + "<bpmn:extensionElements>"
+                + "<zeebe:userTask/>"
+                + "<zeebe:ioMapping>"
+                + "<zeebe:input source=\"hello\" target=\"t\"/>"
+                + "<zeebe:input source=\"{&quot;a&quot;:1}\" target=\"t2\"/>"
+                + "<zeebe:input source=\"  spaced  \" target=\"t3\"/>"
+                + "</zeebe:ioMapping>"
+                + "</bpmn:extensionElements>"
+                + "<bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>"
+                + "</bpmn:userTask>"));
+        assertThat(validator.validate(model))
+            .as("a static input value is not FEEL — live 8.5 deploys it")
+            .isEmpty();
+    }
+
+    /**
+     * WO-C8-55 (root 3, output side): an OUTPUT source is an EXPRESSION — live Zeebe 8.5 refuses
+     * the model at deploy («Expected expression but found static value 'hello'. An expression must
+     * start with '=' (e.g. '=hello')»). The engine must refuse it too, naming the element and
+     * the field.
+     */
+    @Test
+    @DisplayName("ioMapping output source without '=…' is refused — an output source is an expression")
+    void ioMappingOutputSourceMustBeAnExpression() {
+        BpmnProcessDefinitionModel model = parser.parse(process(
+            "<bpmn:userTask id=\"task\">"
+                + "<bpmn:extensionElements>"
+                + "<zeebe:userTask/>"
+                + "<zeebe:ioMapping>"
+                + "<zeebe:output source=\"hello\" target=\"t\"/>"
+                + "</zeebe:ioMapping>"
+                + "</bpmn:extensionElements>"
+                + "<bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing>"
+                + "</bpmn:userTask>"));
+        List<InvalidFeelExpression> findings = validator.validate(model);
+        assertThat(elementFields(findings)).containsExactly("task/ioMapping.output.source");
+        assertThat(findings.get(0).parseError())
+            .contains("Expected expression but found static value 'hello'")
+            .contains("An expression must start with '='");
     }
 
     @Test
