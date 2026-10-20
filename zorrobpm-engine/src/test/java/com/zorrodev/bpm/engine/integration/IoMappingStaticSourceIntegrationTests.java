@@ -46,9 +46,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * → the string with its spaces kept).
  *
  * <p>Before this WO the engine evaluated such a source as FEEL: a bare word became a variable
- * reference (resolved, or a null value / incident), a number became a number, a JSON text was
- * refused at deploy as unparseable FEEL. All of that is the «ours differs» row 57/58 of the
- * conformance matrix.</p>
+ * reference (resolved, or a null value / incident), a number became a number, a JSON text became
+ * a parsed context ({@code {"a":1}} IS legal FEEL — it deployed, but delivered the CONTEXT
+ * instead of the text), and a value with a space in it ({@code hello world}) was refused at
+ * deploy as unparseable FEEL. All of that is the «ours differs» row 57/58 of the conformance
+ * matrix.</p>
  *
  * <p>The mirror rule on the OUTPUT side is a DEPLOY refusal: live 8.5 answers
  * «Expected expression but found static value 'hello'. An expression must start with '='»

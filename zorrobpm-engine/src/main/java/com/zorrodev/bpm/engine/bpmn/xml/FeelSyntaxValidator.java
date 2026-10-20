@@ -205,6 +205,13 @@ public class FeelSyntaxValidator {
      * WO-C8-55: input sources are FEEL only when written as {@code =expr}. A source without
      * {@code =} is a static value the runtime copies verbatim — nothing to parse, nothing to
      * refuse (live 8.5 deploys {@code hello} and delivers {@code "hello"}).
+     *
+     * <p>What this buys concretely: a static value that is NOT parseable as FEEL
+     * ({@code hello world} — two atoms) used to be refused at deploy, because the validator
+     * parsed it as an expression. Now it deploys and is delivered verbatim, like on live 8.5.
+     * A JSON text ({@code {"a":1}}) IS legal FEEL — it always deployed, but its VALUE was the
+     * parsed context instead of the text; the static-value rule fixed that (the runtime, not
+     * this validator).</p>
      */
     private void collectInputMappingSources(BpmnElementModel element, List<IoMappingExtensionModel.Mapping> mappings,
                                             String field, List<InvalidFeelExpression> findings) {

@@ -154,7 +154,8 @@ default-поток (`defaultFlow=true`), либо никогда не берты
 
 ## Статическое значение: source без «=» (корень 3 Ф1, WO-C8-55)
 
-Замеры — на живом Zeebe 8.5.0 (`docs/analysis/c8-oracle/feel-iomapping-static-nested.js`, 15 проб) и
+Замеры — на живом Zeebe 8.5.0 (`docs/analysis/c8-oracle/feel-iomapping-static-nested.js`, 22 пробы:
+15 io-mapping + 7 MI-поля) и
 на нашем движке (те же кейсы в `feel-iomapping-cases.json`, те же live-8.5 ожидания в харнессе).
 Правило live 8.5: source БЕЗ ведущего «=» — это СТАТИЧЕСКОЕ ЗНАЧЕНИЕ (текст дословно, всегда строка),
 а не FEEL-выражение. На стороне output — наоборот: output source ОБЯЗАН быть выражением, иначе
@@ -237,7 +238,7 @@ mvn -B -ntp -pl zorrobpm-engine -am test-compile failsafe:integration-test fails
 # G-Q п.3: 42 пробы прод-корпуса + 12 условий гейтвея + 4 inputCollection на живом 8.5
 node docs/analysis/c8-oracle/feel-null-semantics.js
 
-# корень 3 Ф1 (WO-C8-55): 15 проб — source без «=» (слово/число/JSON/пробелы/верхний регистр),
+# корень 3 Ф1 (WO-C8-55): 22 пробы (15 io-mapping + 7 MI-поля) — source без «=» (слово/число/JSON/пробелы/верхний регистр),
 # target с точкой (вложенность, родитель-строка, родитель-контекст, два маппинга),
 # output source без «=», MI-поля (outputElement/inputCollection без «=»)
 node docs/analysis/c8-oracle/feel-iomapping-static-nested.js

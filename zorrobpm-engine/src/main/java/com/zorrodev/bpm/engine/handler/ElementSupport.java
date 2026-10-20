@@ -1454,7 +1454,9 @@ public class ElementSupport {
      * {@code "{\"a\":1}"} (not a parsed context), {@code "  hello  "} → the string with its
      * spaces kept. Before this the engine evaluated such a source as FEEL: a bare word became
      * a variable reference (resolved, or a null value), a number became a number, a JSON text
-     * was refused at deploy as unparseable FEEL.</p>
+     * became a parsed context ({@code {"a":1}} IS legal FEEL — it deployed and delivered the
+     * CONTEXT), and a value with a space in it ({@code hello world}) was refused at deploy as
+     * unparseable FEEL.</p>
      *
      * <p>The mirror rule on the OUTPUT side is a DEPLOY refusal (live 8.5: an output source is
      * an EXPRESSION, never a static value — «Expected expression but found static value
