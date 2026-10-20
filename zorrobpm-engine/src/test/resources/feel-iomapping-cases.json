@@ -1315,6 +1315,58 @@
       "expect": {
         "outcome": "deployError"
       }
+    },
+    {
+      "id": "mi-noeq-input-collection",
+      "title": "MI inputCollection written as a static value (no '=')",
+      "docs": "8.9 multi-instance: inputCollection is a FEEL expression \u2014 without '=' it is a static value and live Zeebe 8.5 refuses the model at deploy (probe mi-inputcollection-noeq)",
+      "wrap": "mi",
+      "inputCollection": "items",
+      "outputCollection": "results",
+      "outputElement": "=r",
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ]
+      },
+      "expect": {
+        "outcome": "deployError"
+      }
+    },
+    {
+      "id": "mi-noeq-output-element",
+      "title": "MI outputElement written as a static value (no '=')",
+      "docs": "8.9 multi-instance: outputElement is a FEEL expression \u2014 without '=' it is a static value and live Zeebe 8.5 refuses the model at deploy (probe mi-outputelement-noeq)",
+      "wrap": "mi",
+      "outputCollection": "results",
+      "outputElement": "probeId",
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ]
+      },
+      "expect": {
+        "outcome": "deployError"
+      }
+    },
+    {
+      "id": "mi-noeq-output-element-json",
+      "title": "MI outputElement as a JSON text without '=' (the production corpus spelling)",
+      "docs": "8.9 multi-instance: outputElement is a FEEL expression \u2014 the production corpus writes it without '=', which live Zeebe 8.5 reads as a static value and refuses at deploy (probe mi-outputelement-json)",
+      "wrap": "mi",
+      "outputCollection": "results",
+      "outputElement": "{\"decision\": decision, \"comment\": comment}",
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ]
+      },
+      "expect": {
+        "outcome": "deployError"
+      }
     }
   ]
 }
