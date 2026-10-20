@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
 import { useListState } from '@/composables/useListState'
+import { useListScroll } from '@/composables/useListScroll'
 import { getMyMemberships } from '@/services/adminService'
 import { archiveProcess, unarchiveProcess } from '@/services/processService'
 import { useToast } from '@/composables/useToast'
@@ -40,6 +41,8 @@ const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage }
   },
   { getTotalElements: () => store.definitions?.totalElements },
 )
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
+const scroll = useListScroll('definitions')
 
 // WO-ACL-8 criterion 8: "my processes" filter — narrows the list to processes the
 // caller is a member of, via GET /me/memberships (WO-ACL-7). Client-side filtering
@@ -117,7 +120,10 @@ const showSubmissions = ref(false)
 // WO-ACL-10 criterion 3: uploading is a dialog now, not an inline section.
 const showDeployDialog = ref(false)
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 // WO-UI-18 часть B: debounce (тот же паттерн, что ProcessInstanceList).
 watch(() => [state.search, state.latest, state.archived], debounce(() => { resetPage(); load() }))
 </script>

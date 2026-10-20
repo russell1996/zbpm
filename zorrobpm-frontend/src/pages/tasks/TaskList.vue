@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useTaskStore } from '@/stores/task'
 import { useListState } from '@/composables/useListState'
+import { useListScroll } from '@/composables/useListScroll'
 import { useToast } from '@/composables/useToast'
 import { debounce } from '@/shared/lib/debounce'
 import { exportToCsv } from '@/shared/lib/export'
@@ -20,11 +21,15 @@ const { formatDateTime } = useDateFormat()
 
 // WO-UI-39: состояние списка живёт в query-параметрах маршрута
 // (?tasks.completed=1, ?tasks.page=2) — «Назад» возвращает то же состояние.
-const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState(
+const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState<{
+  completed: boolean
+}>(
   'tasks',
   { completed: false },
   { getTotalElements: () => store.userTasks?.totalElements },
 )
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
+const scroll = useListScroll('tasks')
 const selectedIds = ref<Set<string>>(new Set())
 const bulkCompleting = ref(false)
 
@@ -104,7 +109,10 @@ function exportData() {
   })), 'user-tasks.csv')
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 // WO-UI-18 часть B: debounce — быстрое клацанье чекбоксом шлёт один запрос,
 // а не пачку наперегонки (порядок страхует ещё и request-id guard в сторе).
 watch(() => state.completed, debounce(() => { resetPage(); load() }))

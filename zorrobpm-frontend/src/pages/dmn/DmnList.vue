@@ -5,6 +5,7 @@ import { getDecisions } from '@/services/dmnService'
 import type { DmnDecision } from '@/services/dmnService'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
+import { useListScroll } from '@/composables/useListScroll'
 import { RefreshCw } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -12,6 +13,8 @@ const { t } = useI18n()
 const toast = useToast()
 const decisions = ref<DmnDecision[]>([])
 const loading = ref(false)
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку решения.
+const scroll = useListScroll('dmn')
 
 async function load() {
   loading.value = true
@@ -24,7 +27,10 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 </script>
 
 <template>

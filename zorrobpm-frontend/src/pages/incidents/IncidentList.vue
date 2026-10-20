@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useIncidentStore } from '@/stores/incident'
 import { useListState } from '@/composables/useListState'
+import { useListScroll } from '@/composables/useListScroll'
 import { exportToCsv } from '@/shared/lib/export'
 import { debounce } from '@/shared/lib/debounce'
 import { Download, RefreshCw } from 'lucide-vue-next'
@@ -27,6 +28,8 @@ const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage }
   { resolved: false },
   { getTotalElements: () => store.incidents?.totalElements },
 )
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
+const scroll = useListScroll('incidents')
 
 async function load() {
   await store.fetchIncidents({
@@ -43,7 +46,10 @@ function viewDetail(id: string) {
   router.push(`/incidents/${id}`)
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 // WO-UI-18 часть B: debounce (тот же паттерн, что TaskList).
 watch(() => state.resolved, debounce(() => { resetPage(); load() }))
 

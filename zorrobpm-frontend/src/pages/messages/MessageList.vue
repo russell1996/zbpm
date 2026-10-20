@@ -9,6 +9,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useDateFormat } from '@/composables/useDateFormat'
+import { useListScroll } from '@/composables/useListScroll'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
@@ -19,6 +20,8 @@ const messages = ref<MessageSubscription[]>([])
 const total = ref(0)
 const loading = ref(false)
 const router = useRouter()
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку инстанса.
+const scroll = useListScroll('messages')
 
 /** WO-ACL-11 criterion 6: no message-subscription detail page — the row opens
  * its process instance; the full instance id is visible/copyable (criterion 10). */
@@ -39,7 +42,10 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 
 function exportData() {
   exportToCsv(messages.value.map((m) => ({

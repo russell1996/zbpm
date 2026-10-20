@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
 import { useListState } from '@/composables/useListState'
+import { useListScroll } from '@/composables/useListScroll'
 import { exportToCsv } from '@/shared/lib/export'
 import { debounce } from '@/shared/lib/debounce'
 import { processInstanceStatus } from '@/shared/lib/utils'
@@ -22,7 +23,9 @@ const { formatDateTime } = useDateFormat()
 // WO-UI-39: состояние списка живёт в query-параметрах маршрута
 // (?instances.key=…, ?instances.page=…) — переход в карточку и «Назад»
 // возвращают ровно то же состояние, ссылку можно скопировать.
-const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState(
+const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState<{
+  key: string
+}>(
   'instances',
   { key: '' },
   { getTotalElements: () => store.instances?.totalElements },
@@ -30,6 +33,8 @@ const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage }
 // WO-UI-21: sentinel для "Все процессы" — reka SelectItem требует непустое
 // value, поэтому пустая строка (сброс фильтра) кодируется как 'ALL'.
 const ALL_PROCESSES = 'ALL'
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
+const scroll = useListScroll('instances')
 
 // WO-UI-21: опции дропдауна — реальные задеплоенные процессы (имя + код),
 // дедуп по коду. Показывать только последнюю версию достаточно: бэкенд-фильтр
@@ -79,7 +84,10 @@ function exportData() {
   })), 'process-instances.csv')
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 // WO-UI-21: список процессов для дропдауна — один раз при монтировании,
 // latest-версии (по одной строке на код), лимит 200 = серверный максимум
 // страницы (QueryPaginationSupport.MAX_PAGE_SIZE). Отдельно от load():
