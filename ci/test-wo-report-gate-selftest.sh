@@ -45,6 +45,16 @@ cleanup() {
         /tmp/wo-report-gate-selftest.report.$$.na.md \
         /tmp/wo-report-gate-selftest.report.$$.quoted.md \
         /tmp/wo-report-gate-selftest.report.$$.nabare.md \
+        /tmp/wo-report-gate-selftest.report.$$.heading.md \
+        /tmp/wo-report-gate-selftest.report.$$.table.md \
+        /tmp/wo-report-gate-selftest.report.$$.empty.md \
+        /tmp/wo-report-gate-selftest.report.$$.bullet.md \
+        /tmp/wo-report-gate-selftest.report.$$.draft.md \
+        /tmp/wo-report-gate-selftest.report.$$.shortna.md \
+        /tmp/wo-report-gate-selftest.report.$$.tilde.md \
+        /tmp/wo-report-gate-selftest.report.$$.indented.md \
+        /tmp/wo-report-gate-selftest.report.$$.cyr7.md \
+        /tmp/wo-report-gate-selftest.report.$$.cyr8.md \
         /tmp/wo-report-gate-selftest.out.$$
 }
 trap cleanup EXIT
@@ -358,6 +368,61 @@ cat > /tmp/wo-report-gate-selftest.report.$$.bullet.md <<'EOF'
 - [x] LEAK-INVARIANT: проверено в SelftestLeakProbeIntegrationTests (1/1)
 EOF
 
+cat > /tmp/wo-report-gate-selftest.report.$$.draft.md <<'EOF'
+# SELFTEST fixture report (draft text instead of a statement)
+
+## PRE-DONE
+
+LEAK-INVARIANT: TODO — проверим позже
+
+FEEL-PARITY: TBD
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.shortna.md <<'EOF'
+# SELFTEST fixture report (n/a with a short but real reason)
+
+## PRE-DONE
+
+LEAK-INVARIANT: n/a — нет
+
+FEEL-PARITY: n/a — нет
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.tilde.md <<'EOF'
+# SELFTEST fixture report (marker only inside a ~~~ fenced block)
+
+## PRE-DONE
+
+~~~
+[ERROR]   SelftestLeakProbeIntegrationTests.someCase:42 [LEAK-INVARIANT: no open service task (job) left]
+[ERROR]   SelftestLeakProbeIntegrationTests.otherCase:43 [FEEL-PARITY: matrix missing]
+~~~
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.indented.md <<'EOF'
+# SELFTEST fixture report (marker only inside an indented code block)
+
+## PRE-DONE
+
+    [ERROR]   SelftestLeakProbeIntegrationTests.someCase:42 [LEAK-INVARIANT: no open service task (job) left]
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.cyr7.md <<'EOF'
+# SELFTEST fixture report (7 Cyrillic characters after the marker)
+
+## PRE-DONE
+
+LEAK-INVARIANT: провере
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.cyr8.md <<'EOF'
+# SELFTEST fixture report (8 Cyrillic characters after the marker)
+
+## PRE-DONE
+
+LEAK-INVARIANT: проверено
+EOF
+
 # F11. worker module touched (FEEL/ioMapping/worker semantics), engine untouched:
 #      G26 fires, G25 does not.
 mkdir -p zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector
@@ -381,6 +446,12 @@ expect_marker "worker module, empty value / 'TODO' -> G26 FAIL" "$BASE_SHA" "$he
   /tmp/wo-report-gate-selftest.report.$$.empty.md
 expect_marker "worker module, statement as bullet/checklist -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
   /tmp/wo-report-gate-selftest.report.$$.bullet.md
+expect_marker "worker module, draft text (TODO — …) -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.draft.md
+expect_marker "worker module, 'n/a — нет' (short but real reason) -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.shortna.md
+expect_marker "worker module, marker only in a ~~~ block -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.tilde.md
 BASE_SHA="$head"
 
 # F12. engine handler touched (BPMN execution) → G25 fires.
@@ -407,6 +478,14 @@ expect_marker "engine handler, empty value / 'TODO' -> G25 FAIL" "$BASE_SHA" "$h
   /tmp/wo-report-gate-selftest.report.$$.empty.md
 expect_marker "engine handler, statement as bullet/checklist -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
   /tmp/wo-report-gate-selftest.report.$$.bullet.md
+expect_marker "engine handler, draft text (TODO — …) -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.draft.md
+expect_marker "engine handler, 'n/a — нет' (short but real reason) -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.shortna.md
+expect_marker "engine handler, marker only in a ~~~ block -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.tilde.md
+expect_marker "engine handler, marker only in an indented code block -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.indented.md
 BASE_SHA="$head"
 
 # F13. probes removed → the diff of this commit still lists the deleted paths, so the
@@ -440,6 +519,33 @@ expect_marker "docs-only diff -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
 expect_marker "docs-only diff -> G26 SKIP" "$BASE_SHA" "$head" skip "G26" \
   /tmp/wo-report-gate-selftest.report.$$.plain.md
 BASE_SHA="$head"
+
+# F16. the "at least 8 characters" rule must count CHARACTERS, not bytes: under LC_ALL=C bash
+#      counts bytes, so a 7-character Cyrillic value would measure 14 and slip through. The gate
+#      pins a UTF-8 locale itself, so the check must behave the same under LC_ALL=C.
+expect_marker_cyr() { # <label> <report> <expected: ok|fail>
+  local label="$1" report="$2" want="$3" out ok=0 ln="${BASH_LINENO[0]}"
+  TOTAL=$((TOTAL + 1))
+  set +e
+  out="$(LC_ALL=C WO_GATE_BASE="$BASE_SHA" bash "$GATE" SELFTEST "$report" 2>&1)"
+  set -e
+  if [ "$want" = "ok" ]; then
+    if printf '%s\n' "$out" | grep -q "OK.*G25"; then ok=1; fi
+  else
+    if printf '%s\n' "$out" | grep -q "FAIL.*G25"; then ok=1; fi
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "SELFTEST OK      $label (LC_ALL=C: G25 '$want' as expected)"
+  else
+    echo "SELFTEST FAILURE $label - ci/test-wo-report-gate-selftest.sh:$ln expected a G25 '$want' line under LC_ALL=C"
+    printf '%s\n' "$out" | grep -E 'G25' | head -3
+    FAILED=$((FAILED + 1))
+  fi
+}
+expect_marker_cyr "LC_ALL=C, 7 Cyrillic chars after the marker -> G25 FAIL" \
+  /tmp/wo-report-gate-selftest.report.$$.cyr7.md fail
+expect_marker_cyr "LC_ALL=C, 8 Cyrillic chars after the marker -> G25 OK" \
+  /tmp/wo-report-gate-selftest.report.$$.cyr8.md ok
 
 if [ "$FAILED" -ne 0 ]; then
   echo "SELFTEST: $FAILED case(s) FAILED - wo-report-gate.sh G2/G24/G25/G26 regressed."
