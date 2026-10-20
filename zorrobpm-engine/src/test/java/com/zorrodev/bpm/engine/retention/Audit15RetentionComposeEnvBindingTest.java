@@ -200,8 +200,16 @@ class Audit15RetentionComposeEnvBindingTest {
     /**
      * Критерий F-11, часть 3: значение, объявленное в compose, доезжает до
      * НАСТОЯЩЕГО бина {@link RetentionConfig} — тем же путём, что и в проде:
-     * словарь окружения контейнера → {@code zorrobpm-engine.properties}
-     * (тот файл, который читает прод) → бин.
+     * словарь окружения контейнера → ключ свойства
+     * {@code zorrobpm.engine.retention.*} → бин.
+     *
+     * <p>Ключ берётся из {@code zorrobpm-engine.properties} (тот файл, который
+     * читает прод и который подключён через {@code @PropertySource}), а
+     * переменная окружения — по точному имени из плейсхолдера этого файла
+     * ({@code ${ZORROBPM_ENGINE_RETENTION_EVENTS_TTL_DAYS:0}}); дополнительно
+     * движок умеет разрешать ключ прямо из окружения по relaxed binding. В
+     * контексте теста подключён и файл, и окружение — так что проверяется
+     * ровно то, что есть в боевом приложении.
      *
      * <p>Значение-сентинель отличается от любого дефолта, иначе ассерт прошёл
      * бы и при неработающей связке.
@@ -323,13 +331,64 @@ class Audit15RetentionComposeEnvBindingTest {
         return COMPOSE_APP_SERVICE.get(composeFile);
     }
 
-    /** Имена сервисов compose-файла (строки уровня сервиса, два пробела). */
+    /**
+     * Реплики soak-рига наследуют окружение через YAML-якорь
+     * ({@code environment: &app-env} в {@code app1} + {@code <<: *app-env} в
+     * {@code app2}/{@code app3}). Если якорь из реплики убрать, четыре ручки
+     * перестают доезжать до двух из трёх реплик — а сторож, смотрящий только
+     * источник якоря, остался бы зелёным (проверено мутацией проверяющим).
+     * Поэтому проверяем, что у каждой реплики, кроме источника якоря, стоит
+     * merge-ключ окружения.
+     */
+    @Test
+    void everyAppReplicaInheritsTheAppEnvironmentAnchor() {
+        String composeFile = "docker-compose.multi.yml";
+        String anchorSource = appServiceOf(composeFile);
+        List<String> replicas = serviceNamesOf(composeFile).stream()
+            .filter(name -> name.matches("app[0-9]+"))
+            .toList();
+
+        assertThat(replicas)
+            .as("в soak-риге ожидаются реплики приложения — иначе проверка якоря бессмысленна")
+            .hasSizeGreaterThan(1);
+
+        for (String replica : replicas) {
+            if (replica.equals(anchorSource)) {
+                continue;
+            }
+            assertThat(serviceBlock(read(repoRoot().resolve(composeFile)), replica))
+                .as("реплика %s обязана наследовать окружение через merge-ключ «<<: *app-env» — "
+                    + "иначе ручки retention не доедут до неё, а container_name её не спасёт",
+                    replica)
+                .contains("<<: *app-env");
+        }
+    }
+
+    /**
+     * Имена сервисов compose-файла — только из секции {@code services:}.
+     * Верхнеуровневые секции {@code volumes:}/{@code networks:} дают ключи
+     * с тем же отступом, поэтому секция ограничена: иначе в «сервисах» окажутся
+     * имена томов (например {@code app-files}), и проверка «реплики наследуют
+     * окружение» искала бы их вместо реплик.
+     */
     private static List<String> serviceNamesOf(String composeFile) {
         List<String> names = new ArrayList<>();
-        Matcher m = Pattern.compile("(?m)^ {2}([a-z0-9-]+):").matcher(
-            read(repoRoot().resolve(composeFile)));
-        while (m.find()) {
-            names.add(m.group(1));
+        List<String> lines = List.of(read(repoRoot().resolve(composeFile)).split("\n", -1));
+        boolean inServices = false;
+        for (String line : lines) {
+            if (line.matches("^services:\\s*$")) {
+                inServices = true;
+                continue;
+            }
+            if (inServices && line.matches("^[A-Za-z][A-Za-z0-9_-]*:.*")) {
+                break; // следующая верхнеуровневая секция
+            }
+            if (inServices) {
+                Matcher m = Pattern.compile("^ {2}([a-z0-9-]+):").matcher(line);
+                if (m.find()) {
+                    names.add(m.group(1));
+                }
+            }
         }
         return names;
     }
@@ -352,7 +411,9 @@ class Audit15RetentionComposeEnvBindingTest {
             throw new IllegalStateException("сервис '" + serviceName + "' не найден в compose-файле");
         }
         for (int i = start; i < lines.size(); i++) {
-            if (lines.get(i).matches("^ {2}[a-z0-9-]+:.*")) {
+            String line = lines.get(i);
+            if (line.matches("^ {2}[a-z0-9-]+:.*") || line.matches("^[A-Za-z][A-Za-z0-9_-]*:.*")) {
+                // следующий сервис или следующая верхнеуровневая секция (volumes/networks)
                 return String.join("\n", lines.subList(start, i));
             }
         }

@@ -342,12 +342,14 @@ public class BpmMetrics {
         Gauge.builder("zbpm.retention.events.deleted.last_pass",
                 retentionEventsDeletedLastPass, AtomicLong::doubleValue)
             .description("Events rows deleted by the LAST retention pass (0 = the last tick deleted "
-                + "nothing: either the pass is disabled (TTL=0) or it ran and found nothing)")
+                + "nothing: the pass is disabled (TTL=0), it ran in dry-run mode, or it ran and found "
+                + "nothing)")
             .register(registry);
         Gauge.builder("zbpm.retention.outbox.deleted.last_pass",
                 retentionOutboxDeletedLastPass, AtomicLong::doubleValue)
             .description("Outbox rows deleted by the LAST retention pass (0 = the last tick deleted "
-                + "nothing: either the pass is disabled (TTL=0) or it ran and found nothing)")
+                + "nothing: the pass is disabled (TTL=0), it ran in dry-run mode, or it ran and found "
+                + "nothing)")
             .register(registry);
 
         // WO-AUDIT-8 (A-NEW4-10): retry-lane queue depth — насыщение lane
