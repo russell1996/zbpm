@@ -149,6 +149,15 @@ public class ScenarioMatrixIntegrationTests {
             }
             compared++;
             Map<String, Object> oracleVars = (Map<String, Object>) expected.get("vars");
+            // «Что осталось активным» — третье наблюдаемое дифференциального режима
+            // (WO п.3). У оракула это job'ы, оставшиеся активируемыми после точки
+            // наблюдения; у нас — нарушения инварианта утечек. Если оракул не оставил
+            // ничего активным, а мы оставили — это расхождение.
+            List<?> oracleLeftovers = (List<?>) expected.get("leftovers");
+            if (oracleLeftovers != null && oracleLeftovers.isEmpty() && !outcome.leaks().isEmpty()) {
+                problems.add(scenario.id() + ": оракул не оставил ничего активным, у нас остатки "
+                        + outcome.leaks());
+            }
             for (String key : oracleVars.keySet()) {
                 Object want = oracleVars.get(key);
                 Object got = normalize(outcome.rootVars().get(key));

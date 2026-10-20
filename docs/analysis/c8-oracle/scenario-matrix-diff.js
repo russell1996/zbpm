@@ -95,7 +95,7 @@ for (const o of ours) {
     cardinality: o.cardinality,
     order: o.order,
     ours: { status: o.status, vars: ourVars, leaks: o.leaks || [], incidents: o.incidents || [] },
-    zeebe: z ? { status: z.status, vars: normalizeVars(z.rootVars), error: z.error || '' } : null,
+    zeebe: z ? { status: z.status, vars: normalizeVars(z.rootVars), leftovers: z.leftovers || [], error: z.error || '' } : null,
     verdict: '',
     detail: '',
   };
@@ -112,15 +112,34 @@ for (const o of ours) {
     expectations[o.id] = { oracle: 'UNSUPPORTED-8.5', status: z.status, vars: null, note: entry.detail };
   } else {
     const d = diffKeys(ourVars, normalizeVars(z.rootVars));
-    if (d.length === 0 && o.status === 'COMPLETED' && (o.leaks || []).length === 0) {
+    // «Что осталось активным» — ТРЕТЬЕ наблюдаемое из WO (п.3): у нас это нарушения
+    // инварианта утечек (живые activity/задачи/таймеры/подписки в завершённом
+    // инстансе), у Zeebe — job'ы, которые остались активируемыми после точки
+    // наблюдения. Сравниваем обе стороны: если оракул не оставил ничего активным,
+    // а мы оставили — это расхождение (и наоборот).
+    const oursLeftovers = (o.leaks || []).length;
+    const zeebeLeftovers = (z.leftovers || []).length;
+    const leftoverDiff = (oursLeftovers === 0) !== (zeebeLeftovers === 0);
+    if (d.length === 0 && o.status === 'COMPLETED' && oursLeftovers === 0 && !leftoverDiff) {
       entry.verdict = 'match';
       match++;
-      expectations[o.id] = { oracle: 'SUPPORTED-8.5', status: z.status, vars: normalizeVars(z.rootVars) };
+      expectations[o.id] = {
+        oracle: 'SUPPORTED-8.5', status: z.status, vars: normalizeVars(z.rootVars),
+        leftovers: z.leftovers || [], oursLeftovers: o.leaks || [],
+      };
     } else {
       entry.verdict = 'ours-differs';
-      entry.detail = d.length ? d.join('; ') : `ours status=${o.status} leaks=${JSON.stringify(o.leaks || [])}`;
+      const parts = [];
+      if (d.length) parts.push(d.join('; '));
+      if (o.status !== 'COMPLETED') parts.push(`ours status=${o.status}`);
+      if (oursLeftovers) parts.push(`ours leftovers=${JSON.stringify(o.leaks)}`);
+      if (leftoverDiff) parts.push(`leftovers: ours=${oursLeftovers} zeebe=${zeebeLeftovers}`);
+      entry.detail = parts.join('; ');
       divergences.push(entry);
-      expectations[o.id] = { oracle: 'SUPPORTED-8.5', status: z.status, vars: normalizeVars(z.rootVars), knownDivergence: entry.detail };
+      expectations[o.id] = {
+        oracle: 'SUPPORTED-8.5', status: z.status, vars: normalizeVars(z.rootVars),
+        leftovers: z.leftovers || [], oursLeftovers: o.leaks || [], knownDivergence: entry.detail,
+      };
     }
   }
   rows.push(entry);
@@ -136,11 +155,13 @@ md.push(`- Оракул: живой Zeebe 8.5.0 (gateway ${JSON.parse(fs.readFil
 md.push(`- Наш движок: тот же набор схем (манифест \`zorrobpm-engine/target/scenario-matrix/manifest.json\`).`);
 md.push(`- Сценариев: ${rows.length}; совпали: ${match}; оракул не исполнил (docs≠8.5): ${oracleUnsupported}; расхождений: ${divergences.length}.`);
 md.push('');
-md.push('| # | Сценарий | Zeebe 8.5 live | ours | Вердикт |');
+md.push('| # | Сценарий | Zeebe 8.5 live (переменные / что осталось активным) | ours (переменные / что осталось активным) | Вердикт |');
 md.push('|---|---|---|---|---|');
 rows.forEach((r, i) => {
-  const z = r.zeebe ? `${r.zeebe.status} ${JSON.stringify(r.zeebe.vars)}` : '—';
-  const ours = `${r.ours.status} ${JSON.stringify(r.ours.vars)}`;
+  const z = r.zeebe
+    ? `${r.zeebe.status} ${JSON.stringify(r.zeebe.vars)} / leftovers=${JSON.stringify(r.zeebe.leftovers || [])}`
+    : '—';
+  const ours = `${r.ours.status} ${JSON.stringify(r.ours.vars)} / leaks=${JSON.stringify(r.ours.leaks || [])}`;
   md.push(`| ${i + 1} | \`${r.id}\` | ${z} | ${ours} | ${r.verdict}${r.detail ? ' — ' + r.detail : ''} |`);
 });
 md.push('');
