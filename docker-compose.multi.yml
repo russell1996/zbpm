@@ -134,6 +134,16 @@ services:
       RETENTION_TTL_DAYS: ${RETENTION_TTL_DAYS:-0}
       RETENTION_POLL_INTERVAL_MS: ${RETENTION_POLL_INTERVAL_MS:-3600000}
       RETENTION_BATCH_SIZE: ${RETENTION_BATCH_SIZE:-25}
+      # WO-AUDIT-15 (F-11): чистка events/outbox (WO-AUDIT-7) — те же ручки, что
+      # и в docker-compose.yml, и с той же оговоркой: умолчание 0 = выключено,
+      # включение на проде — решение владельца. Здесь (soak-риг на трёх
+      # репликах) env_file: .env уже есть, но значения всё равно нужны
+      # явно: без них контейнер получил бы пустую строку, а Spring применяет
+      # умолчание ${VAR:default} только когда переменной НЕТ.
+      ZORROBPM_ENGINE_RETENTION_EVENTS_TTL_DAYS: ${ZORROBPM_ENGINE_RETENTION_EVENTS_TTL_DAYS:-0}
+      ZORROBPM_ENGINE_RETENTION_OUTBOX_TTL_DAYS: ${ZORROBPM_ENGINE_RETENTION_OUTBOX_TTL_DAYS:-0}
+      ZORROBPM_ENGINE_RETENTION_DRY_RUN: ${ZORROBPM_ENGINE_RETENTION_DRY_RUN:-false}
+      ZORROBPM_ENGINE_RETENTION_BATCH_PAUSE_MS: ${ZORROBPM_ENGINE_RETENTION_BATCH_PAUSE_MS:-0}
       OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-50}
       OUTBOX_METRICS_SAMPLE_EVERY: ${OUTBOX_METRICS_SAMPLE_EVERY:-30}
       BUSINESS_TIMEZONE: ${BUSINESS_TIMEZONE:-Asia/Almaty}

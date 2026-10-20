@@ -123,6 +123,24 @@ public class BpmMetrics {
     private final Timer retentionPassDuration;
 
     /**
+     * WO-AUDIT-15 (F-11): «сколько строк удалил ПОСЛЕДНИЙ проход» — по каждой
+     * таблице events/outbox.
+     *
+     * <p>Зачем рядом со счётчиком {@code *.deleted.total}: счётчик — сумма за
+     * всю жизнь процесса, и по нему нельзя отличить «чистка идёт и работает» от
+     * «чистка идёт, но ничего не находит», а у чистки, которая не удаляет
+     * ничего, есть ровно один тревожный сценарий — она не настроена. Gauge
+     * показывает состояние последнего прохода: 0 = проход отработал и ничего не
+     * удалил, N = удалил N строк. Первое значение (до первого прохода) — 0.
+     *
+     * <p>Счётчик и gauge не дублируют друг друга: счётчик растёт монотонно и
+     * отвечает на вопрос «сколько всего», gauge — на вопрос «работает ли
+     * чистка ПРЯМО СЕЙЧАС».
+     */
+    private final AtomicLong retentionEventsDeletedLastPass = new AtomicLong(0);
+    private final AtomicLong retentionOutboxDeletedLastPass = new AtomicLong(0);
+
+    /**
      * WO-REL-66 (B): quarantined-loop cut visibility — unroutable domain-event
      * notifications dropped WITH accounting instead of quarantined recursively.
      * One series per event type (same shape as the activity-transition
@@ -318,6 +336,17 @@ public class BpmMetrics {
             .description("Duration of one events/outbox retention table pass")
             .tag("table", "events-outbox")
             .register(registry);
+        // WO-AUDIT-15 (F-11): состояние последнего прохода по каждой таблице —
+        // «чистка настроена, но ничего не находит» и «чистка не настроена» на
+        // счётчике неразличимы, на этом gauge — различимы.
+        Gauge.builder("zbpm.retention.events.deleted.last_pass",
+                retentionEventsDeletedLastPass, AtomicLong::doubleValue)
+            .description("Events rows deleted by the LAST retention pass (0 = the pass ran and deleted nothing)")
+            .register(registry);
+        Gauge.builder("zbpm.retention.outbox.deleted.last_pass",
+                retentionOutboxDeletedLastPass, AtomicLong::doubleValue)
+            .description("Outbox rows deleted by the LAST retention pass (0 = the pass ran and deleted nothing)")
+            .register(registry);
 
         // WO-AUDIT-8 (A-NEW4-10): retry-lane queue depth — насыщение lane
         // видно в Grafana, а не только в Saturated-warn'ах лога.
@@ -431,5 +460,20 @@ public class BpmMetrics {
     public void retentionEventsDeleted(long rows) { retentionEventsDeletedTotal.increment(rows); }
     public void retentionOutboxDeleted(long rows) { retentionOutboxDeletedTotal.increment(rows); }
     public void recordRetentionPassDuration(Duration duration) { retentionPassDuration.record(duration); }
+
+    /**
+     * WO-AUDIT-15 (F-11): результат ПОСЛЕДНЕГО прохода по таблице events.
+     * Вызывается в конце прохода — и когда он ничего не удалил (0), иначе gauge
+     * врал бы «проход удалил N» после прохода, который удалил 0.
+     */
+    public void setRetentionEventsDeletedLastPass(long rows) {
+        retentionEventsDeletedLastPass.set(rows);
+    }
+
+    /** WO-AUDIT-15 (F-11): результат последнего прохода по таблице outbox. */
+    public void setRetentionOutboxDeletedLastPass(long rows) {
+        retentionOutboxDeletedLastPass.set(rows);
+    }
+
     public void setSseRetryQueueDepth(long depth) { sseRetryQueueDepth.set(depth); }
 }
