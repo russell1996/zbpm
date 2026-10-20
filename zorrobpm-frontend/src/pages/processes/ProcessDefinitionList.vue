@@ -43,8 +43,9 @@ const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage }
 )
 // Имена фиксатов в шаблоне остались прежними (latestOnly / showArchived) —
 // изменился только ИСТОЧНИК состояния (query-параметр вместо локального
-// ref). Так строки <input> в шаблоне не меняются: «голый» <input> здесь —
-// старый долг, а не новый UI (G24 считает только ДОБАВЛЕННЫЕ строки).
+// ref). Так строки чекбоксов в шаблоне не меняются вовсе: «голый» input
+// здесь — старый долг, а не новый UI (гейт G24 считает только ДОБАВЛЕННЫЕ
+// строки .vue).
 const latestOnly = toRef(state, 'latest')
 const showArchived = toRef(state, 'archived')
 // WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.

@@ -30,8 +30,8 @@ const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage }
 )
 // Имя фиксата в шаблоне осталось прежним (filterCompleted) — изменился
 // только ИСТОЧНИК состояния (query-параметр вместо локального ref). Так
-// строка <input> в шаблоне не меняется: «голый» <input> здесь — старый долг,
-// а не новый UI (G24 считает только ДОБАВЛЕННЫЕ строки).
+// строка чекбокса в шаблоне не меняется вовсе: «голый» input здесь — старый
+// долг, а не новый UI (гейт G24 считает только ДОБАВЛЕННЫЕ строки .vue).
 const filterCompleted = toRef(state, 'completed')
 // WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
 const scroll = useListScroll('tasks')
