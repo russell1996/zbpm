@@ -50,6 +50,15 @@ public class IdempotencyRecord {
     @Column(name = "response_content_type")
     private String responseContentType;
 
+    /**
+     * WO-AUDIT-14 (F-16): заголовки ответа для replay (JSON-объект).
+     * Пишутся только заголовки из allowlist ({@code Location}, {@code ETag});
+     * {@code Set-Cookie} не хранится никогда. Nullable — записи, созданные
+     * до миграции 20261020-122, остаются без заголовков.
+     */
+    @Column(name = "response_headers")
+    private String responseHeaders;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 }

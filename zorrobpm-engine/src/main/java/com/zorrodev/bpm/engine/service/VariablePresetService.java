@@ -213,6 +213,15 @@ public class VariablePresetService {
                 "Only the owner, a process admin or SUPER_ADMIN may change this preset",
                 Map.of("id", id.toString()));
         }
+        // WO-AUDIT-14 (F-19): версия обязательна. На REST-границе её проверяет
+        // @NotNull в UpdatePresetDTO (→ 400 VALIDATION_ERROR), но сервис не
+        // должен падать NPE на null — Map.of() не принимает null-значения, а
+        // сравнение int с Integer разыменовало бы null.
+        if (dto.getVersion() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR",
+                "version is required",
+                Map.of("fields", List.of(Map.of("field", "version", "message", "version is required"))));
+        }
         if (entity.getVersion() != dto.getVersion()) {
             throw new ApiException(HttpStatus.CONFLICT, "PRESET_CONFLICT",
                 "Preset was changed concurrently (expected version " + dto.getVersion()

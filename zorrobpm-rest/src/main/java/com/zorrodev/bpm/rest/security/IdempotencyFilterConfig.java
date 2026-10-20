@@ -51,7 +51,11 @@ public class IdempotencyFilterConfig {
             // WO-DIFF-5: POST /messages/publish is idempotent (create-like) — without this
             // the filter never executes for it and the isIdempotentPath registration is dead.
             "/messages",
-            "/messages/*"
+            "/messages/*",
+            // WO-AUDIT-14 (F-19): POST /presets и POST /presets/import — create-пути,
+            // повтор с тем же Idempotency-Key обязан не создавать второй шаблон.
+            "/presets",
+            "/presets/*"
         );
         registration.setName("idempotencyFilter");
         return registration;

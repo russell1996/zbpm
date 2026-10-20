@@ -11,12 +11,15 @@ import com.zorrodev.bpm.contract.dto.VariablePresetDTO;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.VariablePresetService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -42,6 +45,7 @@ public class PresetResource implements PresetContract {
 
     private final VariablePresetService presetService;
     private final HttpServletRequest request;
+    private final HttpServletResponse httpResponse;
 
     /** WO-VT-1 п.6: ключ живёт только в zorrobpm-rest.properties; в app-файл
      *  НЕ дублируется сознательно — G15 (env не в compose). Дефолт true в @Value. */
@@ -63,14 +67,30 @@ public class PresetResource implements PresetContract {
         return presetService.get(getPrincipal(), id);
     }
 
+    /**
+     * WO-AUDIT-14 (F-19): create → 201 + Location (контракт не тронут: тело то же,
+     * статус/заголовок — через {@code @ResponseStatus} + инжектированный response;
+     * тот же приём, что в {@code ProcessSubmissionResource}, WO-API-1).
+     */
     @Override
+    @ResponseStatus(HttpStatus.CREATED)
     public VariablePresetDTO createPreset(@RequestBody CreatePresetDTO dto) {
         requireEnabled();
-        return presetService.createFromContract(getPrincipal(), dto);
+        VariablePresetDTO created = presetService.createFromContract(getPrincipal(), dto);
+        setLocation(created);
+        return created;
     }
 
+    /**
+     * WO-AUDIT-14 (F-19): {@code version} — обязательное поле ({@code Integer}
+     * + {@code @NotNull}). Раньше это был {@code int}: пропущенный JSON-ключ
+     * биндился в 0 и ПРОХОДИЛ оптимистическую блокировку на свежем пресете
+     * (version=0) — то есть защита от гонки правок молча отключалась. Теперь
+     * без версии — 400 VALIDATION_ERROR.
+     */
     @Override
-    public VariablePresetDTO updatePreset(@PathVariable UUID id, @RequestBody UpdatePresetDTO dto) {
+    public VariablePresetDTO updatePreset(@PathVariable UUID id,
+            @Valid @RequestBody UpdatePresetDTO dto) {
         requireEnabled();
         return presetService.update(getPrincipal(), id, dto);
     }
@@ -81,10 +101,14 @@ public class PresetResource implements PresetContract {
         presetService.delete(getPrincipal(), id);
     }
 
+    /** WO-AUDIT-14 (F-19): import — тоже create → 201 + Location. */
     @Override
+    @ResponseStatus(HttpStatus.CREATED)
     public VariablePresetDTO importPreset(@RequestBody PresetImportDTO dto) {
         requireEnabled();
-        return presetService.importPreset(getPrincipal(), dto);
+        VariablePresetDTO imported = presetService.importPreset(getPrincipal(), dto);
+        setLocation(imported);
+        return imported;
     }
 
     @Override
@@ -120,6 +144,13 @@ public class PresetResource implements PresetContract {
         requireEnabled();
         return presetService.changeVisibility(
             getPrincipal(), id, dto == null ? null : dto.getVisibility());
+    }
+
+    /** Location созданного шаблона (тот же путь, что GET /presets/{id}). */
+    private void setLocation(VariablePresetDTO dto) {
+        if (httpResponse != null && dto != null && dto.getId() != null) {
+            httpResponse.setHeader("Location", "/presets/" + dto.getId());
+        }
     }
 
     private void requireEnabled() {
