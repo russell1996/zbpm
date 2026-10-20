@@ -338,6 +338,26 @@ cat > /tmp/wo-report-gate-selftest.report.$$.table.md <<'EOF'
 | 8 | `LEAK-INVARIANT:` / `FEEL-PARITY:` строки в отчёте | ✅ | §8 / §6 |
 EOF
 
+cat > /tmp/wo-report-gate-selftest.report.$$.empty.md <<'EOF'
+# SELFTEST fixture report (marker present, nothing stated)
+
+## PRE-DONE
+
+LEAK-INVARIANT:
+
+FEEL-PARITY: TODO
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.bullet.md <<'EOF'
+# SELFTEST fixture report (statement as a bullet and as a checklist item)
+
+## PRE-DONE
+
+- FEEL-PARITY: матрица docs/analysis/feel-iomapping-conformance-matrix.md, 1 кейс match
+
+- [x] LEAK-INVARIANT: проверено в SelftestLeakProbeIntegrationTests (1/1)
+EOF
+
 # F11. worker module touched (FEEL/ioMapping/worker semantics), engine untouched:
 #      G26 fires, G25 does not.
 mkdir -p zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector
@@ -357,6 +377,10 @@ expect_marker "worker module, statement in a numbered heading -> G26 OK" "$BASE_
   /tmp/wo-report-gate-selftest.report.$$.heading.md
 expect_marker "worker module, marker only in a criteria table -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
   /tmp/wo-report-gate-selftest.report.$$.table.md
+expect_marker "worker module, empty value / 'TODO' -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.empty.md
+expect_marker "worker module, statement as bullet/checklist -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.bullet.md
 BASE_SHA="$head"
 
 # F12. engine handler touched (BPMN execution) → G25 fires.
@@ -379,16 +403,34 @@ expect_marker "engine handler, marker only in a criteria table -> G25 FAIL" "$BA
   /tmp/wo-report-gate-selftest.report.$$.table.md
 expect_marker "engine handler, statement in a numbered heading -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
   /tmp/wo-report-gate-selftest.report.$$.heading.md
+expect_marker "engine handler, empty value / 'TODO' -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.empty.md
+expect_marker "engine handler, statement as bullet/checklist -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.bullet.md
 BASE_SHA="$head"
 
 # F13. probes removed → the diff of this commit still lists the deleted paths, so the
-#      checks keep firing; the NEXT commit (docs only) is the one with no trigger at all.
+#      checks keep firing; the NEXT commits are the ones with no trigger at all.
 git rm -q zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/handler/SelftestLeakProbe.java \
        zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector/SelftestHttpWorkerProbe.java
 head="$(commit_all "selftest: probes removed")"
 BASE_SHA="$head"
 
-# F14. docs-only diff (no engine/worker file) → both checks are skipped, not failed.
+# F14. TEST-only diff: a test file whose name matches the FEEL patterns. G-Q is about a WO that
+#      CHANGES FEEL/ioMapping/worker semantics, so a test-only change must NOT demand the line
+#      (measured noise: 2 of the last 60 merges fired only because of a test file).
+mkdir -p zorrobpm-engine/src/test/java/com/zorrodev/bpm/engine/handler
+printf '%s\n' "package com.zorrodev.bpm.engine.handler; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-engine/src/test/java/com/zorrodev/bpm/engine/handler/FeelSelftestProbe.java
+git add zorrobpm-engine/src/test/java/com/zorrodev/bpm/engine/handler/FeelSelftestProbe.java
+head="$(commit_all "selftest: test-only Feel file")"
+expect_marker "test-only Feel file -> G26 SKIP" "$BASE_SHA" "$head" skip "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "test-only Feel file -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+BASE_SHA="$head"
+
+# F15. docs-only diff (no engine/worker file) → both checks are skipped, not failed.
 mkdir -p docs
 printf '%s\n' "# selftest fixture" "" "docs-only probe (no engine, no worker)." > docs/ops31-selftest-note.md
 git add docs/ops31-selftest-note.md
