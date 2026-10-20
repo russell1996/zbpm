@@ -48,7 +48,10 @@ onUnmounted(() => realtime.disconnect())
            плашки при каждом флаппинге канала (layout shift). Состояние канала —
            только нейтральная точка в шапке (ChannelStatusDot, гистерезис 5 с),
            детали — по клику. Контент не двигается никогда. -->
-      <main class="flex-1 overflow-auto p-2 md:p-3">
+      <!-- WO-UI-39: контейнер прокрутки списков — на нём восстанавливается
+           позиция прокрутки при возврате «Назад» (useListScroll). Метка —
+           контракт с композаблом, не оформление. -->
+      <main class="flex-1 overflow-auto p-2 md:p-3" data-scroll-container>
         <router-view />
       </main>
     </div>

@@ -51,17 +51,24 @@ vi.mock('@/stores/process', () => ({
   }),
 }))
 
-vi.mock('@/composables/usePagination', () => ({
-  usePagination: () => ({
-    page: mocks.page,
-    pageSize: 20,
-    nextPage: vi.fn(),
-    prevPage: vi.fn(),
-    hasNext: false,
-    hasPrev: false,
-    resetPage: mocks.resetPage,
-  }),
-}))
+// WO-UI-39: состояние списка (фильтр/страница) переехало в композабл
+// useListState — мок шов переехал вместе с ним. Сам механизм (query-параметры,
+// восстановление после «Назад») проверяется в ProcessInstanceList.ui39.test.ts.
+vi.mock('@/composables/useListState', async () => {
+  const { reactive } = await import('vue')
+  return {
+    useListState: () => ({
+      state: reactive({ key: '' }),
+      page: mocks.page,
+      pageSize: 20,
+      nextPage: vi.fn(),
+      prevPage: vi.fn(),
+      hasNext: false,
+      hasPrev: false,
+      resetPage: mocks.resetPage,
+    }),
+  }
+})
 
 vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (k: string) => k, locale: { value: 'en' } }),

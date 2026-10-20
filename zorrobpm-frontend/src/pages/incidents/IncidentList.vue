@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { onMounted, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useIncidentStore } from '@/stores/incident'
-import { usePagination } from '@/composables/usePagination'
+import { useListState } from '@/composables/useListState'
+import { useListScroll } from '@/composables/useListScroll'
 import { exportToCsv } from '@/shared/lib/export'
 import { debounce } from '@/shared/lib/debounce'
 import { Download, RefreshCw } from 'lucide-vue-next'
@@ -18,16 +19,28 @@ const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 
 // unchecked -> only open incidents (server-side resolved=false); checked -> all
-const showResolved = ref(false)
-const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
-  () => store.incidents?.totalElements,
+// WO-UI-39: состояние списка живёт в query-параметрах маршрута
+// (?incidents.resolved=1, ?incidents.page=2).
+const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState<{
+  resolved: boolean
+}>(
+  'incidents',
+  { resolved: false },
+  { getTotalElements: () => store.incidents?.totalElements },
 )
+// Имя фиксата в шаблоне осталось прежним (showResolved) — изменился только
+// ИСТОЧНИК состояния (query-параметр вместо локального ref). Так строка
+// чекбокса в шаблоне не меняется вовсе: «голый» input здесь — старый долг,
+// а не новый UI (гейт G24 считает только ДОБАВЛЕННЫЕ строки .vue).
+const showResolved = toRef(state, 'resolved')
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
+const scroll = useListScroll('incidents')
 
 async function load() {
   await store.fetchIncidents({
     pageIndex: page.value,
     pageSize,
-    resolved: showResolved.value ? undefined : false,
+    resolved: state.resolved ? undefined : false,
   })
 }
 
@@ -38,9 +51,12 @@ function viewDetail(id: string) {
   router.push(`/incidents/${id}`)
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 // WO-UI-18 часть B: debounce (тот же паттерн, что TaskList).
-watch(showResolved, debounce(() => { resetPage(); load() }))
+watch(() => state.resolved, debounce(() => { resetPage(); load() }))
 
 function exportData() {
   if (!store.incidents?.data) return

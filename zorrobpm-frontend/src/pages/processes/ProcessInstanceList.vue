@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
-import { usePagination } from '@/composables/usePagination'
+import { useListState } from '@/composables/useListState'
+import { useListScroll } from '@/composables/useListScroll'
 import { exportToCsv } from '@/shared/lib/export'
 import { debounce } from '@/shared/lib/debounce'
 import { processInstanceStatus } from '@/shared/lib/utils'
@@ -19,13 +20,21 @@ const store = useProcessStore()
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 
-const filterKey = ref('')
+// WO-UI-39: состояние списка живёт в query-параметрах маршрута
+// (?instances.key=…, ?instances.page=…) — переход в карточку и «Назад»
+// возвращают ровно то же состояние, ссылку можно скопировать.
+const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState<{
+  key: string
+}>(
+  'instances',
+  { key: '' },
+  { getTotalElements: () => store.instances?.totalElements },
+)
 // WO-UI-21: sentinel для "Все процессы" — reka SelectItem требует непустое
 // value, поэтому пустая строка (сброс фильтра) кодируется как 'ALL'.
 const ALL_PROCESSES = 'ALL'
-const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
-  () => store.instances?.totalElements,
-)
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
+const scroll = useListScroll('instances')
 
 // WO-UI-21: опции дропдауна — реальные задеплоенные процессы (имя + код),
 // дедуп по коду. Показывать только последнюю версию достаточно: бэкенд-фильтр
@@ -46,14 +55,14 @@ function optionLabel(d: ProcessDefinition): string {
 }
 
 function onSelectDefinition(v: unknown) {
-  filterKey.value = (v as string) === ALL_PROCESSES ? '' : (v as string)
+  state.key = (v as string) === ALL_PROCESSES ? '' : (v as string)
 }
 
 async function load() {
   await store.fetchInstances({
     pageIndex: page.value,
     pageSize,
-    processDefinitionKey: filterKey.value || undefined,
+    processDefinitionKey: state.key || undefined,
   })
 }
 
@@ -75,7 +84,10 @@ function exportData() {
   })), 'process-instances.csv')
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 // WO-UI-21: список процессов для дропдауна — один раз при монтировании,
 // latest-версии (по одной строке на код), лимит 200 = серверный максимум
 // страницы (QueryPaginationSupport.MAX_PAGE_SIZE). Отдельно от load():
@@ -85,7 +97,7 @@ onMounted(() => {
 })
 // WO-UI-18 часть B: debounce — текстовый фильтр шлёт запрос на каждую
 // клавишу, без него пачка летит наперегонки.
-watch(filterKey, debounce(() => { resetPage(); load() }))
+watch(() => state.key, debounce(() => { resetPage(); load() }))
 </script>
 
 <template>
@@ -113,7 +125,7 @@ watch(filterKey, debounce(() => { resetPage(); load() }))
     </div>
 
     <div class="flex items-center gap-4">
-      <Select :model-value="filterKey || ALL_PROCESSES" @update:model-value="onSelectDefinition">
+      <Select :model-value="state.key || ALL_PROCESSES" @update:model-value="onSelectDefinition">
         <SelectTrigger data-testid="definition-filter" class="w-72">
           <SelectValue :placeholder="t('filterByProcess')" />
         </SelectTrigger>

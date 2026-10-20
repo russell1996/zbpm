@@ -9,6 +9,7 @@ import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useToast } from '@/composables/useToast'
 import { useDateFormat } from '@/composables/useDateFormat'
+import { useListScroll } from '@/composables/useListScroll'
 import CopyableId from '@/widgets/shared/CopyableId.vue'
 import StatusBadge from '@/widgets/shared/StatusBadge.vue'
 
@@ -19,6 +20,8 @@ const timers = ref<TimerJob[]>([])
 const total = ref(0)
 const loading = ref(false)
 const router = useRouter()
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку инстанса.
+const scroll = useListScroll('timers')
 
 /** WO-ACL-11 criterion 6/10: a timer row navigates to its process instance —
  * there is no timer detail page. The full id is always visible/copyable via
@@ -40,7 +43,10 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 
 function exportData() {
   // WO-UI-17 F24: the callback param MUST NOT be named `t` — it shadows the

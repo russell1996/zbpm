@@ -3,6 +3,8 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import type { User, UserRole, CreationMode } from '@/entities/user/User'
 import { getUsers, createUser, updateUser } from '@/services/userService'
 import { useToast } from '@/composables/useToast'
+import { useListState } from '@/composables/useListState'
+import { useListScroll } from '@/composables/useListScroll'
 import { useI18n } from 'vue-i18n'
 import UserDetailPanel from './UserDetailPanel.vue'
 import TruncatedText from '@/widgets/shared/TruncatedText.vue'
@@ -17,7 +19,6 @@ const { t } = useI18n()
 const users = ref<User[]>([])
 const totalCount = ref(0)
 const loading = ref(false)
-const search = ref('')
 const showForm = ref(false)
 const saving = ref(false)
 const editingUser = ref<User | null>(null)
@@ -26,14 +27,29 @@ const editing = ref(false)
 const editForm = reactive<{ fullName: string; email: string; role: UserRole; active: boolean; password: string }>({
   fullName: '', email: '', role: 'USER', active: true, password: '',
 })
-// WO-INT-4 criterion 2: one list, filterable by account type (all / people / systems)
-const typeFilter = ref<'ALL' | 'HUMAN' | 'SYSTEM'>('ALL')
-// WO-UI-16: server-side active filter (default: only active); ALL = no active param, INACTIVE = active:false
-const activeFilter = ref<'ACTIVE' | 'ALL' | 'INACTIVE'>('ACTIVE')
-const activeParam = computed(() => (activeFilter.value === 'ACTIVE' ? true : activeFilter.value === 'INACTIVE' ? false : undefined))
+// WO-UI-39: состояние списка (поиск + фильтры) живёт в query-параметрах
+// маршрута (?users.search=…, ?users.type=HUMAN, ?users.active=INACTIVE) —
+// состояние переживает перезагрузку страницы и не теряется при возврате.
+const { state } = useListState<{
+  search: string
+  type: 'ALL' | 'HUMAN' | 'SYSTEM'
+  active: 'ACTIVE' | 'ALL' | 'INACTIVE'
+}>('users', {
+  search: '',
+  // WO-INT-4 criterion 2: one list, filterable by account type (all / people / systems)
+  type: { default: 'ALL', values: ['ALL', 'HUMAN', 'SYSTEM'] },
+  // WO-UI-16: server-side active filter (default: only active); ALL = no active param, INACTIVE = active:false
+  active: { default: 'ACTIVE', values: ['ACTIVE', 'ALL', 'INACTIVE'] },
+})
+const activeParam = computed(() => (state.active === 'ACTIVE' ? true : state.active === 'INACTIVE' ? false : undefined))
+
+// WO-UI-39 п.2: у этого списка СВОЙ контейнер прокрутки (таблица в
+// max-h-[60vh]), а не контейнер страницы — позицию восстанавливаем именно его.
+const listScrollEl = ref<HTMLElement | null>(null)
+const scroll = useListScroll('users', { container: () => listScrollEl.value })
 
 const visibleUsers = computed(() =>
-  typeFilter.value === 'ALL' ? users.value : users.value.filter((u) => u.userType === typeFilter.value),
+  state.type === 'ALL' ? users.value : users.value.filter((u) => u.userType === state.type),
 )
 
 const formUsername = ref('')
@@ -50,7 +66,7 @@ const formUserType = ref<'HUMAN' | 'SYSTEM'>('HUMAN')
 async function loadUsers() {
   loading.value = true
   try {
-    const result = await getUsers({ username: search.value || undefined, active: activeParam.value })
+    const result = await getUsers({ username: state.search || undefined, active: activeParam.value })
     users.value = result.data
     totalCount.value = result.totalElements
   } finally {
@@ -160,9 +176,12 @@ async function save() {
   }
 }
 
-watch(activeFilter, () => { loadUsers() })
+watch(() => state.active, () => { loadUsers() })
 
-onMounted(loadUsers)
+onMounted(async () => {
+  await loadUsers()
+  await scroll.restore()
+})
 </script>
 
 <template>
@@ -179,14 +198,14 @@ onMounted(loadUsers)
 
     <div class="flex items-center gap-4">
       <input
-        v-model="search"
+        v-model="state.search"
         type="text"
         :placeholder="t('searchByUsername')"
         class="px-3 py-2 border border-input rounded-md text-sm w-64 focus:outline-none focus:ring-2 focus:ring-ring"
         @input="loadUsers"
       />
       <!-- WO-INT-4 criterion 2: one list with a type filter — systems are not a separate screen -->
-      <Select v-model="typeFilter" class="w-48">
+      <Select v-model="state.type" class="w-48">
         <SelectTrigger data-testid="user-type-filter" class="w-48 px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring">
           <SelectValue />
         </SelectTrigger>
@@ -197,7 +216,7 @@ onMounted(loadUsers)
         </SelectContent>
       </Select>
       <!-- WO-UI-16: active filter — server-side, default ACTIVE -->
-      <Select v-model="activeFilter" class="w-48">
+      <Select v-model="state.active" class="w-48">
         <SelectTrigger data-testid="user-active-filter" class="w-48 px-3 py-2 border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring">
           <SelectValue />
         </SelectTrigger>
@@ -212,7 +231,7 @@ onMounted(loadUsers)
 
     <div v-if="loading" class="text-sm text-muted-foreground">{{ t('loading') }}</div>
 
-    <div v-else class="border border-border rounded-lg overflow-y-auto max-h-[60vh]">
+    <div v-else ref="listScrollEl" class="border border-border rounded-lg overflow-y-auto max-h-[60vh]">
       <table class="w-full text-sm">
         <thead class="bg-muted">
           <tr>

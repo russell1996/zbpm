@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { onMounted, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useTaskStore } from '@/stores/task'
-import { usePagination } from '@/composables/usePagination'
+import { useListState } from '@/composables/useListState'
+import { useListScroll } from '@/composables/useListScroll'
 import { exportToCsv } from '@/shared/lib/export'
 import { debounce } from '@/shared/lib/debounce'
 import { Download, RefreshCw } from 'lucide-vue-next'
@@ -16,16 +17,28 @@ const store = useTaskStore()
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 
-const filterCompleted = ref(false)
-const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
-  () => store.serviceTasks?.totalElements,
+// WO-UI-39: состояние списка живёт в query-параметрах маршрута
+// (?serviceTasks.completed=1, ?serviceTasks.page=2).
+const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState<{
+  completed: boolean
+}>(
+  'serviceTasks',
+  { completed: false },
+  { getTotalElements: () => store.serviceTasks?.totalElements },
 )
+// Имя фиксата в шаблоне осталось прежним (filterCompleted) — изменился
+// только ИСТОЧНИК состояния (query-параметр вместо локального ref). Так
+// строка чекбокса в шаблоне не меняется вовсе: «голый» input здесь — старый
+// долг, а не новый UI (гейт G24 считает только ДОБАВЛЕННЫЕ строки .vue).
+const filterCompleted = toRef(state, 'completed')
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
+const scroll = useListScroll('serviceTasks')
 
 async function load() {
   await store.fetchServiceTasks({
     pageIndex: page.value,
     pageSize,
-    completed: filterCompleted.value,
+    completed: state.completed,
   })
 }
 
@@ -49,9 +62,12 @@ function exportData() {
   })), 'service-tasks.csv')
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 // WO-UI-18 часть B: debounce (тот же паттерн, что TaskList).
-watch(filterCompleted, debounce(() => { resetPage(); load() }))
+watch(() => state.completed, debounce(() => { resetPage(); load() }))
 </script>
 
 <template>

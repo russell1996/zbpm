@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useProcessStore } from '@/stores/process'
-import { usePagination } from '@/composables/usePagination'
+import { useListState } from '@/composables/useListState'
+import { useListScroll } from '@/composables/useListScroll'
 import { getMyMemberships } from '@/services/adminService'
 import { archiveProcess, unarchiveProcess } from '@/services/processService'
 import { useToast } from '@/composables/useToast'
@@ -21,24 +22,44 @@ const { t } = useI18n()
 const { formatDate } = useDateFormat()
 const toast = useToast()
 
-const search = ref('')
-const latestOnly = ref(true)
-// WO-ENG-9: show archived toggle (default hidden)
-const showArchived = ref(false)
-const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
-  () => store.definitions?.totalElements,
+// WO-UI-39: состояние списка живёт в query-параметрах маршрута
+// (?definitions.search=…, ?definitions.archived=1, ?definitions.page=2) —
+// переход в карточку определения и «Назад» возвращают то же состояние.
+const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState<{
+  search: string
+  latest: boolean
+  archived: boolean
+  mine: boolean
+}>(
+  'definitions',
+  {
+    search: '',
+    // WO-ENG-9: show archived toggle (default hidden)
+    latest: true,
+    archived: false,
+    mine: false,
+  },
+  { getTotalElements: () => store.definitions?.totalElements },
 )
+// Имена фиксатов в шаблоне остались прежними (latestOnly / showArchived) —
+// изменился только ИСТОЧНИК состояния (query-параметр вместо локального
+// ref). Так строки чекбоксов в шаблоне не меняются вовсе: «голый» input
+// здесь — старый долг, а не новый UI (гейт G24 считает только ДОБАВЛЕННЫЕ
+// строки .vue).
+const latestOnly = toRef(state, 'latest')
+const showArchived = toRef(state, 'archived')
+// WO-UI-39 п.2: позиция прокрутки списка переживает уход в карточку.
+const scroll = useListScroll('definitions')
 
 // WO-ACL-8 criterion 8: "my processes" filter — narrows the list to processes the
 // caller is a member of, via GET /me/memberships (WO-ACL-7). Client-side filtering
 // since the backend has no membership filter parameter and the contract is out of scope (G-C).
-const myOnly = ref(false)
 const myProcessKeys = ref<Set<string>>(new Set())
 const myMembershipsLoading = ref(false)
 
 const visibleDefinitions = computed(() => {
   const data = store.definitions?.data || []
-  if (!myOnly.value) return data
+  if (!state.mine) return data
   return data.filter((d) => myProcessKeys.value.has(d.key))
 })
 
@@ -46,9 +67,9 @@ async function load() {
   await store.fetchDefinitions({
     pageIndex: page.value,
     pageSize,
-    name: search.value || undefined,
-    latestVersionOnly: latestOnly.value || undefined,
-    includeArchived: showArchived.value || undefined,
+    name: state.search || undefined,
+    latestVersionOnly: state.latest || undefined,
+    includeArchived: state.archived || undefined,
   })
 }
 
@@ -70,7 +91,7 @@ async function toggleArchive(def: { key: string; archived?: boolean }) {
 
 async function toggleMyOnly() {
   myProcessKeys.value = new Set()
-  if (myOnly.value) {
+  if (state.mine) {
     myMembershipsLoading.value = true
     try {
       const memberships = await getMyMemberships()
@@ -106,9 +127,12 @@ const showSubmissions = ref(false)
 // WO-ACL-10 criterion 3: uploading is a dialog now, not an inline section.
 const showDeployDialog = ref(false)
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  await scroll.restore()
+})
 // WO-UI-18 часть B: debounce (тот же паттерн, что ProcessInstanceList).
-watch([search, latestOnly, showArchived], debounce(() => { resetPage(); load() }))
+watch(() => [state.search, state.latest, state.archived], debounce(() => { resetPage(); load() }))
 </script>
 
 <template>
@@ -155,7 +179,7 @@ watch([search, latestOnly, showArchived], debounce(() => { resetPage(); load() }
 
     <div class="flex items-center gap-4">
       <input
-        v-model="search"
+        v-model="state.search"
         type="text"
         :placeholder="t('searchPlaceholder')"
         class="px-3 py-2 border border-input rounded-md text-sm w-64 focus:outline-none focus:ring-2 focus:ring-ring"
@@ -172,13 +196,13 @@ watch([search, latestOnly, showArchived], debounce(() => { resetPage(); load() }
       <div class="flex items-center border border-border rounded-md overflow-hidden text-sm">
         <button
           class="px-3 py-1.5 transition-colors"
-          :class="!myOnly ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
-          @click="myOnly = false; toggleMyOnly()"
+          :class="!state.mine ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
+          @click="state.mine = false; toggleMyOnly()"
         >{{ t('all') }}</button>
         <button
           class="px-3 py-1.5 transition-colors"
-          :class="myOnly ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
-          @click="myOnly = true; toggleMyOnly()"
+          :class="state.mine ? 'bg-primary text-primary-foreground font-medium' : 'hover:bg-muted'"
+          @click="state.mine = true; toggleMyOnly()"
         >{{ t('my') }}</button>
       </div>
       <span v-if="myMembershipsLoading" class="text-xs text-muted-foreground">{{ t('loading') }}</span>
@@ -238,7 +262,7 @@ watch([search, latestOnly, showArchived], debounce(() => { resetPage(); load() }
           </tr>
           <tr v-if="!visibleDefinitions.length">
             <td colspan="5" class="px-4 py-8 text-center text-muted-foreground">
-              {{ myOnly ? t('noMyProcesses') : t('noDefinitions') }}
+              {{ state.mine ? t('noMyProcesses') : t('noDefinitions') }}
             </td>
           </tr>
         </tbody>
