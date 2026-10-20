@@ -348,11 +348,12 @@ class PresetResourceIT {
         in.setName("imp-" + UUID.randomUUID());
         in.setVariables(new ArrayList<>(vars));
 
+        // WO-AUDIT-14 (F-19): import — create-путь, теперь 201 (+ Location).
         MvcResult created = mockMvc.perform(post("/presets/import")
                         .header("Authorization", "Bearer " + ownerToken)
                         .content(mapper.writeValueAsString(in))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         UUID id = UUID.fromString(mapper.readTree(created.getResponse().getContentAsString()).get("id").asText());
 
@@ -546,11 +547,12 @@ class PresetResourceIT {
 
     private VariablePresetDTO createPreset(String token, String key, String kind, String ref,
             String name, String desc, List<ProcessVariable> variables, String visibility) throws Exception {
+        // WO-AUDIT-14 (F-19): create — теперь 201 (+ Location), было 200.
         MvcResult result = mockMvc.perform(post("/presets")
                         .header("Authorization", "Bearer " + token)
                         .content(presetJson(key, kind, ref, name, desc, variables, visibility))
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andReturn();
         return mapper.readValue(result.getResponse().getContentAsString(), VariablePresetDTO.class);
     }
