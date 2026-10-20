@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useTaskStore } from '@/stores/task'
-import { usePagination } from '@/composables/usePagination'
+import { useListState } from '@/composables/useListState'
 import { useToast } from '@/composables/useToast'
 import { debounce } from '@/shared/lib/debounce'
 import { exportToCsv } from '@/shared/lib/export'
@@ -18,9 +18,12 @@ const toast = useToast()
 const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 
-const filterCompleted = ref(false)
-const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
-  () => store.userTasks?.totalElements,
+// WO-UI-39: состояние списка живёт в query-параметрах маршрута
+// (?tasks.completed=1, ?tasks.page=2) — «Назад» возвращает то же состояние.
+const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState(
+  'tasks',
+  { completed: false },
+  { getTotalElements: () => store.userTasks?.totalElements },
 )
 const selectedIds = ref<Set<string>>(new Set())
 const bulkCompleting = ref(false)
@@ -30,7 +33,7 @@ async function load() {
   await store.fetchUserTasks({
     pageIndex: page.value,
     pageSize,
-    completed: filterCompleted.value,
+    completed: state.completed,
   })
 }
 
@@ -104,7 +107,7 @@ function exportData() {
 onMounted(load)
 // WO-UI-18 часть B: debounce — быстрое клацанье чекбоксом шлёт один запрос,
 // а не пачку наперегонки (порядок страхует ещё и request-id guard в сторе).
-watch(filterCompleted, debounce(() => { resetPage(); load() }))
+watch(() => state.completed, debounce(() => { resetPage(); load() }))
 </script>
 
 <template>
@@ -142,7 +145,7 @@ watch(filterCompleted, debounce(() => { resetPage(); load() }))
 
     <div class="flex items-center gap-4">
       <label class="flex items-center gap-2 text-sm">
-        <input v-model="filterCompleted" type="checkbox" class="rounded" />
+        <input v-model="state.completed" type="checkbox" class="rounded" />
         {{ t('showCompleted') }}
       </label>
     </div>
