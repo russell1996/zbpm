@@ -116,10 +116,12 @@ class OrphanTestClassGuardTest {
             if (!Files.isDirectory(testRoot)) {
                 continue;
             }
-            List<String> surefireIncludes = surefireIncludes(root, module);
-            List<String> surefireExcludes = surefireExcludes(root, module);
-            List<String> failsafeIncludes = failsafeIncludes(root, module);
-            List<String> failsafeExcludes = failsafeExcludes(root, module);
+            Element modulePom = parse(module.resolve("pom.xml"));
+            Element rootPom = parse(root.resolve("pom.xml"));
+            List<String> surefireIncludes = surefireIncludes(modulePom, rootPom);
+            List<String> surefireExcludes = surefireExcludes(modulePom, rootPom);
+            List<String> failsafeIncludes = failsafeIncludes(modulePom, rootPom);
+            List<String> failsafeExcludes = failsafeExcludes(modulePom, rootPom);
 
             for (Path file : javaFiles(testRoot)) {
                 String rel = testRoot.relativize(file).toString().replace('\\', '/');
@@ -156,8 +158,8 @@ class OrphanTestClassGuardTest {
         Path root = repoRoot();
         Path engine = root.resolve(ENGINE_MODULE);
         Path testRoot = engine.resolve("src/test/java");
-        List<String> includes = failsafeIncludes(root, engine);
-        List<String> excludes = failsafeExcludes(root, engine);
+        List<String> includes = failsafeIncludes(parse(engine.resolve("pom.xml")), parse(root.resolve("pom.xml")));
+        List<String> excludes = failsafeExcludes(parse(engine.resolve("pom.xml")), parse(root.resolve("pom.xml")));
 
         assertThat(FORMER_ORPHANS_RENAMED)
             .as("список бывших сирот не должен пустовать — иначе тест ни о чём не говорит")
@@ -178,6 +180,84 @@ class OrphanTestClassGuardTest {
         }
     }
 
+    /**
+     * Регрессия на латентный дефект разрешения плагинов (находка независимой проверки
+     * раунда 1, оформительская): {@code <pluginManagement>} САМ ПО СЕБЕ не активирует
+     * failsafe — интеграционная фаза появляется только при объявлении плагина в
+     * {@code <build><plugins>}. Если бы разрешение шло «pluginManagement → build/plugins»,
+     * гард считал бы, что у модуля есть интеграционная фаза, и МОЛЧАЛ бы о классах,
+     * которые пайплайн никогда не запустит — то есть тихо перестал бы ловить свой же
+     * дефект.
+     */
+    @Test
+    void pluginManagementAlone_doesNotActivateFailsafePhase() {
+        Element rootWithManagedOnly = parseString("""
+            <project>
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>g</groupId><artifactId>root</artifactId><version>1</version>
+              <build>
+                <pluginManagement>
+                  <plugins>
+                    <plugin>
+                      <artifactId>maven-failsafe-plugin</artifactId>
+                      <executions>
+                        <execution>
+                          <goals><goal>integration-test</goal><goal>verify</goal></goals>
+                        </execution>
+                      </executions>
+                      <configuration>
+                        <includes><include>**/*IntegrationTests.java</include></includes>
+                      </configuration>
+                    </plugin>
+                  </plugins>
+                </pluginManagement>
+              </build>
+            </project>
+            """);
+        Element moduleWithoutFailsafe = parseString("""
+            <project>
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>g</groupId><artifactId>mod</artifactId><version>1</version>
+            </project>
+            """);
+
+        assertThat(hasFailsafePhase(moduleWithoutFailsafe, rootWithManagedOnly))
+            .as("failsafe, объявленный ТОЛЬКО в pluginManagement, не создаёт интеграционную фазу")
+            .isFalse();
+        assertThat(failsafeIncludes(moduleWithoutFailsafe, rootWithManagedOnly))
+            .as("без активированного failsafe include'ов быть не может")
+            .isEmpty();
+
+        // Контроль: то же объявление в build/plugins — фаза ЕСТЬ и include'ы применяются.
+        Element rootWithBuildPlugins = parseString("""
+            <project>
+              <modelVersion>4.0.0</modelVersion>
+              <groupId>g</groupId><artifactId>root</artifactId><version>1</version>
+              <build>
+                <plugins>
+                  <plugin>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <executions>
+                      <execution>
+                        <goals><goal>integration-test</goal><goal>verify</goal></goals>
+                      </execution>
+                    </executions>
+                    <configuration>
+                      <includes><include>**/*IntegrationTests.java</include></includes>
+                    </configuration>
+                  </plugin>
+                </plugins>
+              </build>
+            </project>
+            """);
+
+        assertThat(hasFailsafePhase(moduleWithoutFailsafe, rootWithBuildPlugins))
+            .as("объявленный в build/plugins failsafe создаёт интеграционную фазу")
+            .isTrue();
+        assertThat(failsafeIncludes(moduleWithoutFailsafe, rootWithBuildPlugins))
+            .containsExactly("**/*IntegrationTests.java");
+    }
+
     // ------------------------------------------------------------------ модули и poms
 
     /** Все модули репозитория: каталоги верхнего уровня с {@code pom.xml}. */
@@ -195,57 +275,128 @@ class OrphanTestClassGuardTest {
 
     /**
      * Эффективные include'ы surefire модуля: собственная конфигурация модуля, иначе —
-     * унаследованная от корневого pom (pluginManagement → build/plugins), иначе —
-     * дефолты Maven.
+     * унаследованная от корневого pom (build/plugins), иначе — pluginManagement корневого
+     * pom, иначе — дефолты Maven. (Surefire входит в дефолтный жизненный цикл, поэтому
+     * фаза {@code test} есть у модуля всегда, даже если плагин нигде не объявлен.)
      */
-    private static List<String> surefireIncludes(Path root, Path module) {
-        Element plugin = pluginConfig(root, module, "maven-surefire-plugin");
-        List<String> includes = plugin == null ? List.of() : includesOf(plugin);
+    private static List<String> surefireIncludes(Element modulePom, Element rootPom) {
+        List<String> includes = includesOf(configChain(modulePom, rootPom, "maven-surefire-plugin"));
         return includes.isEmpty() ? SUREFIRE_DEFAULT_INCLUDES : includes;
     }
 
-    private static List<String> surefireExcludes(Path root, Path module) {
-        Element plugin = pluginConfig(root, module, "maven-surefire-plugin");
-        return plugin == null ? List.of() : excludesOf(plugin);
+    private static List<String> surefireExcludes(Element modulePom, Element rootPom) {
+        return excludesOf(configChain(modulePom, rootPom, "maven-surefire-plugin"));
     }
 
     /**
-     * Эффективные include'ы failsafe модуля. Если модуль не объявил failsafe с
-     * execution'ом {@code integration-test} — интеграционной фазы у него нет, и любой
-     * класс вне surefire/include'ов является сиротой.
+     * Эффективные include'ы failsafe модуля. Если модуль не объявил failsafe в
+     * {@code <build><plugins>} — интеграционной фазы у него нет, и любой класс вне
+     * surefire/include'ов является сиротой.
      */
-    private static List<String> failsafeIncludes(Path root, Path module) {
-        Element plugin = pluginConfig(root, module, "maven-failsafe-plugin");
-        if (plugin == null || !hasIntegrationTestExecution(plugin)) {
+    private static List<String> failsafeIncludes(Element modulePom, Element rootPom) {
+        if (!hasFailsafePhase(modulePom, rootPom)) {
             return List.of();
         }
-        List<String> includes = includesOf(plugin);
+        List<String> includes = includesOf(configChain(modulePom, rootPom, "maven-failsafe-plugin"));
         return includes.isEmpty() ? FAILSAFE_DEFAULT_INCLUDES : includes;
     }
 
-    private static List<String> failsafeExcludes(Path root, Path module) {
-        Element plugin = pluginConfig(root, module, "maven-failsafe-plugin");
-        if (plugin == null || !hasIntegrationTestExecution(plugin)) {
+    private static List<String> failsafeExcludes(Element modulePom, Element rootPom) {
+        if (!hasFailsafePhase(modulePom, rootPom)) {
             return List.of();
         }
-        return excludesOf(plugin);
+        return excludesOf(configChain(modulePom, rootPom, "maven-failsafe-plugin"));
     }
 
     /**
-     * Конфигурация плагина для модуля: собственная — приоритетна; иначе pluginManagement
-     * корневого pom; иначе build/plugins корневого pom.
+     * Есть ли у модуля интеграционная фаза failsafe.
+     *
+     * <p>Failsafe НЕ входит в дефолтный жизненный цикл: фаза появляется только если
+     * плагин ОБЪЯВЛЕН в {@code <build><plugins>} — собственном модуля или унаследованном
+     * от корневого pom (root pom — parent всех модулей). Запись только в
+     * {@code <pluginManagement>} фазу НЕ создаёт: pluginManagement даёт конфигурацию
+     * плагину, который объявлен, и сам по себе ничего не активирует. Разрешение, при
+     * котором pluginManagement проверялся РАНЬШЕ build/plugins, вводило в заблуждение:
+     * гард решил бы, что у модуля есть интеграционная фаза, и промолчал бы о классах,
+     * которые пайплайн не запустит.
      */
-    private static Element pluginConfig(Path root, Path module, String artifactId) {
-        Element own = findPlugin(buildPlugins(parse(module.resolve("pom.xml"))), artifactId);
+    static boolean hasFailsafePhase(Element modulePom, Element rootPom) {
+        List<Element> activated = activatedPlugins(modulePom, rootPom, "maven-failsafe-plugin");
+        if (activated.isEmpty()) {
+            return false;
+        }
+        for (Element plugin : activated) {
+            if (hasIntegrationTestExecution(plugin)) {
+                return true;
+            }
+        }
+        // executions могут прийти из pluginManagement — Maven их наследует объявленному плагину
+        Element managed = managedPlugin(rootPom, "maven-failsafe-plugin");
+        return managed != null && hasIntegrationTestExecution(managed);
+    }
+
+    /**
+     * Плагины, ОБЪЯВЛЕННЫЕ в {@code <build><plugins>}: сначала собственные модуля, затем
+     * унаследованные от корневого pom. Только такой плагин реально выполняется.
+     */
+    private static List<Element> activatedPlugins(Element modulePom, Element rootPom, String artifactId) {
+        List<Element> plugins = new ArrayList<>();
+        Element own = findPlugin(buildPlugins(modulePom), artifactId);
         if (own != null) {
-            return own;
+            plugins.add(own);
         }
-        Element rootDoc = parse(root.resolve("pom.xml"));
-        Element managed = findPlugin(child(child(rootDoc, "build"), "pluginManagement"), artifactId);
+        Element inherited = findPlugin(buildPlugins(rootPom), artifactId);
+        if (inherited != null && inherited != own) {
+            plugins.add(inherited);
+        }
+        return plugins;
+    }
+
+    /**
+     * Плагин из {@code <pluginManagement>} корневого pom — источник конфигурации и
+     * executions по умолчанию, но НЕ признак того, что плагин активирован.
+     *
+     * <p>Структура Maven: {@code build/pluginManagement/plugins/plugin} — контейнером
+     * для {@code <plugin>} является {@code <plugins>}, а не сам {@code <pluginManagement>}.
+     */
+    private static Element managedPlugin(Element rootPom, String artifactId) {
+        Element pluginManagement = child(child(rootPom, "build"), "pluginManagement");
+        return findPlugin(child(pluginManagement, "plugins"), artifactId);
+    }
+
+    /**
+     * Плагины в порядке доминирования: объявленные в {@code <build><plugins>} (свои, потом
+     * унаследованные) → {@code <pluginManagement>} корневого pom.
+     */
+    private static List<Element> configChain(Element modulePom, Element rootPom, String artifactId) {
+        List<Element> chain = new ArrayList<>(activatedPlugins(modulePom, rootPom, artifactId));
+        Element managed = managedPlugin(rootPom, artifactId);
         if (managed != null) {
-            return managed;
+            chain.add(managed);
         }
-        return findPlugin(buildPlugins(rootDoc), artifactId);
+        return chain;
+    }
+
+    /** Первый непустой список include'ов в цепочке плагинов. */
+    private static List<String> includesOf(List<Element> plugins) {
+        for (Element plugin : plugins) {
+            List<String> includes = patternValues(child(plugin, "configuration"), "includes", "include");
+            if (!includes.isEmpty()) {
+                return includes;
+            }
+        }
+        return List.of();
+    }
+
+    /** Первый непустой список exclude'ов в цепочке плагинов. */
+    private static List<String> excludesOf(List<Element> plugins) {
+        for (Element plugin : plugins) {
+            List<String> excludes = patternValues(child(plugin, "configuration"), "excludes", "exclude");
+            if (!excludes.isEmpty()) {
+                return excludes;
+            }
+        }
+        return List.of();
     }
 
     /** {@code <build><plugins>} корневого элемента pom. */
@@ -284,14 +435,6 @@ class OrphanTestClassGuardTest {
             }
         }
         return false;
-    }
-
-    private static List<String> includesOf(Element plugin) {
-        return patternValues(child(plugin, "configuration"), "includes", "include");
-    }
-
-    private static List<String> excludesOf(Element plugin) {
-        return patternValues(child(plugin, "configuration"), "excludes", "exclude");
     }
 
     /**
@@ -339,6 +482,20 @@ class OrphanTestClassGuardTest {
             return document.getDocumentElement();
         } catch (Exception e) {
             throw new IllegalStateException("не удалось разобрать pom " + pom, e);
+        }
+    }
+
+    /** Разбор pom из строки — для синтетических pom'ов в тестах разрешения плагинов. */
+    private static Element parseString(String xml) {
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            Document document = factory.newDocumentBuilder()
+                .parse(new org.xml.sax.InputSource(new java.io.StringReader(xml)));
+            return document.getDocumentElement();
+        } catch (Exception e) {
+            throw new IllegalStateException("не удалось разобрать pom из строки", e);
         }
     }
 
