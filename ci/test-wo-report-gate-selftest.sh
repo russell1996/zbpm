@@ -316,6 +316,28 @@ LEAK-INVARIANT: n/a
 FEEL-PARITY: матрица docs/analysis/feel-iomapping-conformance-matrix.md, 1 кейс match
 EOF
 
+cat > /tmp/wo-report-gate-selftest.report.$$.heading.md <<'EOF'
+# SELFTEST fixture report (statement in a numbered section heading)
+
+## PRE-DONE
+
+### 6. FEEL-PARITY: матрица, оракул, кейсы корня
+
+**6.1 Матрица.** docs/analysis/feel-iomapping-conformance-matrix.md — 1 кейс match.
+
+### 8. LEAK-INVARIANT: проверено в SelftestLeakProbeIntegrationTests (1/1)
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.table.md <<'EOF'
+# SELFTEST fixture report (marker only mentioned inside a criteria table)
+
+## PRE-DONE
+
+| # | критерий | статус | где |
+|---|---|---|---|
+| 8 | `LEAK-INVARIANT:` / `FEEL-PARITY:` строки в отчёте | ✅ | §8 / §6 |
+EOF
+
 # F11. worker module touched (FEEL/ioMapping/worker semantics), engine untouched:
 #      G26 fires, G25 does not.
 mkdir -p zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector
@@ -331,6 +353,10 @@ expect_marker "worker module, report with statements -> G26 OK" "$BASE_SHA" "$he
   /tmp/wo-report-gate-selftest.report.$$.with.md
 expect_marker "worker module, report with n/a + reason -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
   /tmp/wo-report-gate-selftest.report.$$.na.md
+expect_marker "worker module, statement in a numbered heading -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.heading.md
+expect_marker "worker module, marker only in a criteria table -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.table.md
 BASE_SHA="$head"
 
 # F12. engine handler touched (BPMN execution) → G25 fires.
@@ -349,6 +375,10 @@ expect_marker "engine handler, marker only quoted in a code block -> G25 FAIL" "
   /tmp/wo-report-gate-selftest.report.$$.quoted.md
 expect_marker "engine handler, 'n/a' without a reason -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
   /tmp/wo-report-gate-selftest.report.$$.nabare.md
+expect_marker "engine handler, marker only in a criteria table -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.table.md
+expect_marker "engine handler, statement in a numbered heading -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.heading.md
 BASE_SHA="$head"
 
 # F13. probes removed → the diff of this commit still lists the deleted paths, so the
