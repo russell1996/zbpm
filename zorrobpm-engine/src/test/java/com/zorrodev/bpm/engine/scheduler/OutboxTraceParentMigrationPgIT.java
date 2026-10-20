@@ -40,9 +40,17 @@ class OutboxTraceParentMigrationPgIT extends PostgresIT {
 
         String traceParent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
         UUID id = UUID.randomUUID();
+        // Фикстура в общей таблице outbox (все PG-классы делят одну БД) обязана быть
+        // безвредной для соседей: published=true — поллер (published=false AND
+        // status != 'FAILED') её не подхватывает, а payload повторяет форму настоящего
+        // JobDetailModel со случайными id — тесты, сканирующие outbox по
+        // kind=SERVICE_TASK и разбирающие payload, не падают на NPE (WO-OPS-25).
+        String payload = "{\"serviceTaskId\":\"" + UUID.randomUUID() + "\","
+            + "\"processInstanceId\":\"" + UUID.randomUUID() + "\","
+            + "\"job\":\"trace-parent-probe\",\"variables\":{}}";
         jdbc.update("INSERT INTO outbox (id, kind, payload, created_at, published, attempts, status, trace_parent) "
-            + "VALUES (?, 'SERVICE_TASK', '{\"a\":1}', now(), false, 0, 'PENDING', ?)",
-            id, traceParent);
+            + "VALUES (?, 'SERVICE_TASK', ?, now(), true, 0, 'PENDING', ?)",
+            id, payload, traceParent);
         String readBack = jdbc.queryForObject(
             "SELECT trace_parent FROM outbox WHERE id = ?", String.class, id);
         assertThat(readBack).isEqualTo(traceParent);
