@@ -681,7 +681,6 @@
   "presetTargetRef": "Привязка",
   "presetTemplateLabel": "Шаблон",
   "presetTemplateApplied": "Шаблон применён",
-  "presetTemplateCleared": "Шаблон снят",
   "presetTooManyVariables": "Слишком много переменных (макс. 100)",
   "presetUuidPlaceholder": "xxxxxxxx-xxxx-… or {'{{uuid}}'}",
   "presetValuePlaceholder": "value or {'{{uuid}}'} / {'{{now}}'} / {'{{random:long}}'} / {'{{seq}}'}",

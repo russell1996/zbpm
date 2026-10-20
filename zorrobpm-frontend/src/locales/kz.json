@@ -681,7 +681,6 @@
   "presetTargetRef": "Байланыс",
   "presetTemplateLabel": "Үлгі",
   "presetTemplateApplied": "Үлгі қолданылды",
-  "presetTemplateCleared": "Үлгі алынды",
   "presetTooManyVariables": "Айнымалылар көп (макс. 100)",
   "presetUuidPlaceholder": "xxxxxxxx-xxxx-… or {'{{uuid}}'}",
   "presetValuePlaceholder": "value or {'{{uuid}}'} / {'{{now}}'} / {'{{random:long}}'} / {'{{seq}}'}",

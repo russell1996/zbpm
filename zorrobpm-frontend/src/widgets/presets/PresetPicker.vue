@@ -4,7 +4,6 @@ import { useI18n } from 'vue-i18n'
 import { ChevronDown } from 'lucide-vue-next'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { Badge } from '@/components/ui/badge'
 import {
   Select,
   SelectContent,
@@ -44,7 +43,10 @@ import { useToast } from '@/composables/useToast'
  * — ввести вручную» (по умолчанию). Ниже ОДИН VariablesEditor: выбор
  * шаблона заполняет тот же редактор (строки правятся, как ручной ввод).
  * Замена уже введённых строк — без тихой потери: тихий тост
- * «Шаблон применён/снят · Отменить» (undo возвращает прежние строки).
+ * «Шаблон применён · Отменить» (undo возвращает прежние строки).
+ * WO-UI-38: выбор «Без шаблона» — НЕ потеря данных (строки остаются ручным
+ * вводом), поэтому тоста/«Отменить» для этого сценария нет; имя шаблона и
+ * его видимость показываются РАЗДЕЛЬНО (« · »), а не склеенными.
  * При выключенном флаге (available=false) список «Шаблон» не показывается
  * вообще — только редактор (WO п.3).
  * Контракт для потребителей (8 страниц) сохранён: getVariables/missingAsk/
@@ -113,11 +115,32 @@ function visibilityLabel(visibility: string): string {
   return visibility === 'PROCESS' ? t('presetVisibilityProcess') : t('presetVisibilityPrivate')
 }
 
-function selectedLabel(): string {
-  if (!selectedId.value) return t('presetNoTemplate')
-  const p = presets.value.find((x) => x.id === selectedId.value)
-  return p ? `${p.name}${p.favorite ? t('presetFavoriteStar') : ''}` : t('presetNoTemplate')
+/**
+ * WO-UI-38: подпись шаблона — ДВА фрагмента (имя и видимость), а не один
+ * склеенный текст. reka-ui `SelectValue` рендерит `textContent` выбранного
+ * пункта (node_modules/reka-ui/dist/Select/SelectValue.js), поэтому раньше в
+ * закрытом поле было «Start ApprovalУчастники процесса» — без разделителя.
+ * Теперь фрагменты разделены « · », видимость — мелким приглушённым шрифтом
+ * (как в ElementPresetsPanel), имя — обрезается с многоточием, полный текст —
+ * по наведению (title на триггере).
+ */
+function presetNameLabel(p: VariablePreset): string {
+  return `${p.name}${p.favorite ? t('presetFavoriteStar') : ''}`
 }
+
+function presetVisibilityText(p: VariablePreset): string {
+  return visibilityLabel(p.visibility)
+}
+
+/** Полный текст подписи (разделитель « · ») — для title и для Combobox. */
+function presetFullLabel(p: VariablePreset): string {
+  return `${presetNameLabel(p)} · ${presetVisibilityText(p)}`
+}
+
+/** Выбранный шаблон из списка — источник подписи закрытого значения. */
+const selectedPreset = computed<VariablePreset | null>(
+  () => presets.value.find((p) => p.id === selectedId.value) ?? null,
+)
 
 const editorRef = useTemplateRef<InstanceType<typeof VariablesEditor> | null>('editor')
 
@@ -163,10 +186,9 @@ function onSelect(value: unknown) {
   const id = raw === NONE_VALUE ? '' : raw
   if (id === selectedId.value) return
   if (id === '') {
-    if (selectedId.value !== '' && vars.value.length) {
-      offerUndo({ vars: deepCloneRows(vars.value), selectedId: selectedId.value }, t('presetTemplateCleared'))
-    }
-    vars.value = []
+    // WO-UI-38: «Без шаблона» — это НЕ потеря данных. Пользователь сам
+    // выбрал ручной ввод, поэтому строки остаются (как ручные) и тост
+    // «Шаблон снят · Отменить» не показывается: шум без причины.
     selectedId.value = ''
     emit('change', vars.value)
     return
@@ -276,8 +298,30 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
           :model-value="selectedId || NONE_VALUE"
           @update:model-value="onSelect($event)"
         >
-          <SelectTrigger id="preset-select" data-testid="preset-select" class="h-9 min-w-56 flex-1 text-sm">
-            <SelectValue :placeholder="t('presetNoTemplate')" />
+          <!-- WO-UI-38: закрытое значение — имя и видимость РАЗДЕЛЬНО (« · »).
+               Свой слот вместо reka-авто-текста (SelectValue рендерит
+               textContent пункта — было «Start ApprovalУчастники процесса»).
+               title на триггере — полный текст по наведению. -->
+          <SelectTrigger
+            id="preset-select"
+            data-testid="preset-select"
+            class="h-9 min-w-56 flex-1 text-sm"
+            :title="selectedPreset ? presetFullLabel(selectedPreset) : t('presetNoTemplate')"
+          >
+            <SelectValue :placeholder="t('presetNoTemplate')">
+              <span
+                v-if="selectedPreset"
+                class="flex min-w-0 items-center gap-1.5"
+                data-testid="preset-selected-label"
+              >
+                <span class="truncate">{{ presetNameLabel(selectedPreset) }}</span>
+                <span aria-hidden="true" class="shrink-0 text-muted-foreground"> · </span>
+                <span class="shrink-0 text-[11px] text-muted-foreground">
+                  {{ presetVisibilityText(selectedPreset) }}
+                </span>
+              </span>
+              <span v-else class="truncate">{{ t('presetNoTemplate') }}</span>
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem :value="NONE_VALUE" data-testid="preset-opt-manual">{{ t('presetNoTemplate') }}</SelectItem>
@@ -288,13 +332,12 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
               :data-testid="`preset-opt-${p.id}`"
               class="gap-2"
             >
-              <span class="flex min-w-0 items-center gap-2">
-                <span class="truncate">
-                  {{ p.name }}{{ p.favorite ? t('presetFavoriteStar') : '' }}
+              <span class="flex min-w-0 items-center gap-1.5">
+                <span class="truncate">{{ presetNameLabel(p) }}</span>
+                <span aria-hidden="true" class="shrink-0 text-muted-foreground"> · </span>
+                <span class="shrink-0 text-[11px] text-muted-foreground">
+                  {{ presetVisibilityText(p) }}
                 </span>
-                <Badge variant="secondary" class="shrink-0 px-1.5 py-0 text-[10px] font-normal">
-                  {{ visibilityLabel(p.visibility) }}
-                </Badge>
               </span>
             </SelectItem>
           </SelectContent>
@@ -309,8 +352,21 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
               id="preset-select"
               data-testid="preset-select"
               class="flex h-9 min-w-56 flex-1 items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              :title="selectedPreset ? presetFullLabel(selectedPreset) : t('presetNoTemplate')"
             >
-              <span class="truncate">{{ selectedLabel() }}</span>
+              <!-- WO-UI-38: то же разделение, что и в Select. -->
+              <span
+                v-if="selectedPreset"
+                class="flex min-w-0 items-center gap-1.5"
+                data-testid="preset-selected-label"
+              >
+                <span class="truncate">{{ presetNameLabel(selectedPreset) }}</span>
+                <span aria-hidden="true" class="shrink-0 text-muted-foreground"> · </span>
+                <span class="shrink-0 text-[11px] text-muted-foreground">
+                  {{ presetVisibilityText(selectedPreset) }}
+                </span>
+              </span>
+              <span v-else class="truncate">{{ t('presetNoTemplate') }}</span>
               <ChevronDown class="h-4 w-4 shrink-0 opacity-50" />
             </ComboboxTrigger>
           </ComboboxAnchor>
@@ -328,12 +384,13 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
               :value="p.id"
               :data-testid="`preset-opt-${p.id}`"
             >
-              <span class="min-w-0 flex-1 truncate">
-                {{ p.name }}{{ p.favorite ? t('presetFavoriteStar') : '' }}
+              <span class="flex min-w-0 flex-1 items-center gap-1.5">
+                <span class="truncate">{{ presetNameLabel(p) }}</span>
+                <span aria-hidden="true" class="shrink-0 text-muted-foreground"> · </span>
+                <span class="shrink-0 text-[11px] text-muted-foreground">
+                  {{ presetVisibilityText(p) }}
+                </span>
               </span>
-              <Badge variant="secondary" class="shrink-0 px-1.5 py-0 text-[10px] font-normal">
-                {{ visibilityLabel(p.visibility) }}
-              </Badge>
             </ComboboxItem>
             <ComboboxEmpty class="px-2 py-1.5 text-sm text-muted-foreground">{{ t('presetNoTemplates') }}</ComboboxEmpty>
           </ComboboxList>

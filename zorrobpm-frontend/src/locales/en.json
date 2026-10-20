@@ -681,7 +681,6 @@
   "presetTargetRef": "Target ref",
   "presetTemplateLabel": "Template",
   "presetTemplateApplied": "Template applied",
-  "presetTemplateCleared": "Template removed",
   "presetTooManyVariables": "Too many variables (max 100)",
   "presetUuidPlaceholder": "xxxxxxxx-xxxx-… or {'{{uuid}}'}",
   "presetValuePlaceholder": "value or {'{{uuid}}'} / {'{{now}}'} / {'{{random:long}}'} / {'{{seq}}'}",
