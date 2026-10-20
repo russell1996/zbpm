@@ -194,8 +194,8 @@ public class FeelSyntaxValidator {
         }
         // WO-C8-55: an INPUT source without a leading '=' is a STATIC VALUE (live 8.5), not FEEL —
         // the runtime delivers the source text verbatim, so the parser has nothing to say about it
-        // (and a static value that is not even parseable FEEL — 'hello world', '{"a":1}' — must
-        // still deploy, exactly as it does on live 8.5).
+        // (and a static value that is not parseable as FEEL at all — 'hello world' — must still
+        // deploy, exactly as it does on live 8.5).
         collectInputMappingSources(element, io.getInputs(), "ioMapping.input.source", findings);
         // an OUTPUT source is an EXPRESSION — live 8.5 refuses a static value there at DEPLOY.
         collectOutputMappingSources(element, io.getOutputs(), "ioMapping.output.source", findings);
