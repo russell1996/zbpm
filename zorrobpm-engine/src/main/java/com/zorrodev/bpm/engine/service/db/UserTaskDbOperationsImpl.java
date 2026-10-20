@@ -62,18 +62,29 @@ public class UserTaskDbOperationsImpl implements UserTaskDbOperations {
 
     @Override
     public void completeUserTask(UUID userTaskId) {
-        // WO-C8-57 (F-15): null-SAFE. Путь «терминировать задачу» (добивка сиблингов
-        // MI по completionCondition) закрывает задачу, строки которой может не быть
-        // (задача ещё не создана — creating-фаза C8-21). orElseThrow здесь откатывал бы
-        // ВСЮ транзакцию завершения инстанса — цена одного отсутствующего мусора была бы
-        // непропорциональна. Строка есть → закрываем и шлём событие; строки нет →
-        // закрывать нечего (setCompletedAt — UPDATE, 0 строк, без ошибки).
-        UserTaskEntity ut = userTaskRepository.findById(userTaskId).orElse(null);
+        // Контракт пути «пользователь завершил задачу» НЕ трогаем: строки может не быть
+        // (creating-фаза C8-21) → NoSuchElementException → REST 404-класс, а не 500
+        // (WO-C8-41 раунд 2, крит. 2: Camunda8ParityCharacterizationTests
+        // .creatingPhase_completeMidPhase_notFound). Терминация инстанса — отдельный
+        // путь (terminateUserTask ниже): он null-safe и НЕ шлёт событие «completed».
+        UserTaskEntity ut = userTaskRepository.findById(userTaskId).orElseThrow();
         userTaskRepository.setCompletedAt(userTaskId, Instant.now());
-        if (ut == null) {
-            return;
-        }
         domainEventEmitter.emitUserTaskCompleted(ut.getProcessInstanceId(), ut.getProcessDefinitionId(), ut.getBpmnElementId(), userTaskId, ut.getAssignee());
+    }
+
+    @Override
+    public void terminateUserTask(UUID userTaskId) {
+        // WO-C8-57 (F-15): закрыть job-строку ТЕРМИНИРОВАННОГО инстанса (MI-сиблинг,
+        // сработал completionCondition). Отличие от completeUserTask:
+        //   (1) null-SAFE по построению — setCompletedAt это UPDATE по id, строки может
+        //       не быть (creating-фаза C8-21: задача ещё не создана, а условие уже
+        //       сработало) → 0 затронутых строк, без ошибки. orElseThrow в
+        //       completeUserTask здесь откатил бы ВСЮ транзакцию завершения инстанса
+        //       из-за одного отсутствующего мусора;
+        //   (2) БЕЗ события «user task completed» — инстанс не завершён, а терминирован
+        //       (Zeebe: job терминирован, завершения не было). Жизненный цикл задачи
+        //       хранится на строке activity (CANCELLED) — там он и остаётся.
+        userTaskRepository.setCompletedAt(userTaskId, Instant.now());
     }
 
     @Override

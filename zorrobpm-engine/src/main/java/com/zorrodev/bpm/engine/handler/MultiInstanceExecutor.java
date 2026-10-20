@@ -354,8 +354,14 @@ public class MultiInstanceExecutor {
      * активировать, ни завершить (живая запись oracle S10: late completion →
      * {@code NOT_FOUND}). У нас job MI-задачи — это строка {@code service_tasks}
      * (service task) либо {@code user_tasks} (user task): «больше не outstanding»
-     * = проставленный {@code completed_at}. Без этого счётчик «активных заданий»
-     * по определению (WO-C8-57) висел бы на терминированных сиблингах вечно.
+     * = проставленный {@code completed_at}. Без этого открытая задача остаётся
+     * в инбоксе, а retention-guard инстанта
+     * ({@code NOT EXISTS (... user_tasks ... completed_at IS NULL)}) не даёт
+     * инстансу уйти в очистку ВООБЩЕ — то есть это не косметика, а утечка.
+     *
+     * <p>Терминация — ОТДЕЛЬНЫЙ путь от «пользователь/воркер завершил задачу»:
+     * он null-safe (строки может не быть — creating-фаза C8-21) и не шлёт событие
+     * «completed» (инстанс терминирован, а не завершён).
      *
      * <p>Поздний результат воркера по такой задаче отвергается существующим
      * идемпотентным guard'ом {@code CompletionService.isCompletionAllowed}
@@ -364,9 +370,9 @@ public class MultiInstanceExecutor {
      */
     private void terminateSiblingJob(com.zorrodev.bpm.engine.dto.Activity sibling) {
         if (sibling.getType() == BpmnElementType.SERVICE_TASK) {
-            dbService.completeServiceTask(sibling.getId());
+            dbService.terminateServiceTask(sibling.getId());
         } else if (sibling.getType() == BpmnElementType.USER_TASK) {
-            dbService.completeUserTask(sibling.getId());
+            dbService.terminateUserTask(sibling.getId());
         }
     }
 

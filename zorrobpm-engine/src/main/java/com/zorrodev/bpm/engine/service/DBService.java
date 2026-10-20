@@ -133,6 +133,12 @@ public interface DBService {
 
     void completeServiceTask(UUID serviceTaskId);
 
+    /**
+     * WO-C8-57 (F-15): закрывает job-строку ТЕРМИНИРОВАННОГО MI-сиблинга
+     * (completionCondition сработал раньше всех приходов). Null-safe, без события.
+     */
+    void terminateServiceTask(UUID serviceTaskId);
+
     void createUserTask(UUID activityId, String assignee, String candidateGroups, String candidateUsers, String formKey, String formId, String bindingType, String dueDate, String followUpDate, Integer priority);
 
     /**
@@ -243,6 +249,12 @@ public interface DBService {
     boolean hasOpenCancelingListenerPhaseInInstance(UUID processInstanceId);
 
     void completeUserTask(UUID serviceTaskId);
+
+    /**
+     * WO-C8-57 (F-15): закрывает job-строку ТЕРМИНИРОВАННОГО MI-сиблинга
+     * (completionCondition сработал раньше всех приходов). Null-safe, без события.
+     */
+    void terminateUserTask(UUID userTaskId);
 
     void claimUserTask(UUID taskId, String assignee);
 

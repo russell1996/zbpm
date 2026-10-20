@@ -99,4 +99,13 @@ public class ServiceTaskDbOperationsImpl implements ServiceTaskDbOperations {
     public void completeServiceTask(UUID serviceTaskId) {
         serviceTaskRepository.setCompletedAt(serviceTaskId, Instant.now());
     }
+
+    @Override
+    public void terminateServiceTask(UUID serviceTaskId) {
+        // WO-C8-57 (F-15): закрыть job-строку ТЕРМИНИРОВАННОГО MI-сиблинга. Тот же
+        // UPDATE, что и completeServiceTask (строки может не быть — phase-only элементы
+        // C8-25 не имеют service_tasks-строки; UPDATE без строки — no-op), но имя
+        // говорит правду: инстанс ТЕРМИНИРОВАН, а не завершён.
+        serviceTaskRepository.setCompletedAt(serviceTaskId, Instant.now());
+    }
 }
