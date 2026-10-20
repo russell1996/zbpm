@@ -105,7 +105,7 @@ JS-объект `variables` теряет точность int64 (см. `num-larg
 | 58 | <code>noeq-var</code> | 8.9 expressions: without '=' the source is a static string, even if it matches a variable name | <code>completed: work {"r":"present","present":"V"} \| dump {"present":"V"}</code> | <code>completed: work {r=STRING:"present", present=STRING:"V"} \| dump {present=STRING:"V"}</code> | <code>completed: work {r=STRING:"present", present=STRING:"V"} \| dump {present=STRING:"V"}</code> | **match** (WO-C8-55) — the literal wins over the variable of the same name (ours resolved the variable `V` before the fix) |
 | 59 | <code>empty-source</code> | 8.9 variables: an ioMapping source is optional; an omitted/empty source yields null (live 8.5 rejects at deploy) | <code>deployError: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors:\n'f1_empty_source.bpmn': - Elemen</code> | <code>noWorkJob: RuntimeException: javax.script.ScriptException: failed to parse expression '': Expected (start-of-input \| ifOp \| forOp \| quantifiedOp \| disjunction):1…</code> | <code>noWorkJob: RuntimeException: javax.script.ScriptException: failed to parse expression '': Expected (start-of-input \| ifOp \| forOp \| quantifiedOp \| disjunction):1…</code> | **docs≠8.5** — 8.9: optional source → null; live 8.5 DEPLOY-rejects; ours runtime-rejects; design target — not implemented without owner |
 | 60 | <code>eq-only</code> | 8.9 expressions: '=' introduces a FEEL expression; an empty expression is not valid FEEL | <code>completed: work {"r":"="} \| dump {}</code> | <code>deployError: ApiException: Invalid FEEL expression: work.ioMapping.input.source (=): failed to parse expression '': Expected (start…</code> | <code>deployError: ApiException: Invalid FEEL expression: work.ioMapping.input.source (=): failed to parse expression '': Expected (start…</code> | **docs≠8.5** — 8.9: `=` needs an expression; live treats `=` as static (completes); ours rejects at DEPLOY после WO-C8-56 (2026-10-19; раньше — runtime) |
-| 61 | <code>target-nested</code> | 8.9 variables: a target with dots creates a nested context in the element scope | <code>completed: work {"a":{"b":1}} \| dump {}</code> | <code>completed: work {a.b=LONG:1} \| dump {}</code> | <code>completed: work {a.b=LONG:1} \| dump {}</code> | **ours differs** — live creates nested `a:{b:1}`; ours writes flat key `a.b` |
+| 61 | <code>target-nested</code> | 8.9 variables: a target with dots creates a nested context in the element scope | <code>completed: work {"a":{"b":1}} \| dump {}</code> | <code>completed: work {a=JSON:{"b":1}} \| dump {}</code> | <code>completed: work {a=JSON:{"b":1}} \| dump {}</code> | **match** (WO-C8-58) — a target with a dot creates a nested context; ours wrote the flat key `a.b` before the fix |
 
 ## ioMapping: scope и порядок
 
@@ -196,18 +196,38 @@ expression must start with '=' (e.g. '=hello')»).
 | 93 | <code>mi-outputelement-bare-parent-var</code> | 8.9 multi-instance: the output element is a FEEL expression; a bare identifier is pre-created as NULL in the MI scope (F1 root 6), so a process-level variable of the same name is shadowed | <code>completed: miJobs {"item":"a","probeId":null,"loopCounter":1,"results":[null,null],"items":["a","b"]} \| dump {"items":["a","b"],"probeId":"P","results":[null,null]}</code> | <code>completed: miJobs {item=STRING:"a", probeId=JSON:null, loopCounter=LONG:1, results=JSON:[null,null], items=JSON:["a","b"]} \| dump {probeId=STRING:"P", items=JSON:["a","b"], results=JSON:[null,null]}</code> | <code>completed: miJobs {item=STRING:"a", probeId=JSON:null, loopCounter=LONG:1, results=JSON:[null,null], items=JSON:["a","b"]} \| dump {probeId=STRING:"P", items=JSON:["a","b"], results=JSON:[null,null]}</code> | **match** (WO-C8-55) — минимальная легальная замена консьюмера (`outputElement="=probeId"`): модель деплоится, но значение в output collection — **null** (предсозданная null-переменная корня 6 перекрывает переменную процесса) — и на 8.5, и у нас |
 | 94 | <code>mi-outputelement-ctx-parent-var</code> | 8.9 multi-instance: a context expression is not pre-created, so the process-level value stays visible | <code>completed: miJobs {"item":"a","probeId":"P","loopCounter":1,"results":[null,null],"items":["a","b"]} \| dump {"items":["a","b"],"probeId":"P","results":[{"v":"P"},{"v":"P"}]}</code> | <code>completed: miJobs {item=STRING:"a", probeId=STRING:"P", loopCounter=LONG:1, results=JSON:[null,null], items=JSON:["a","b"]} \| dump {probeId=STRING:"P", items=JSON:["a","b"], results=JSON:[{"v":"P"},{"v":"P"}]}</code> | <code>completed: miJobs {item=STRING:"a", probeId=STRING:"P", loopCounter=LONG:1, results=JSON:[null,null], items=JSON:["a","b"]} \| dump {probeId=STRING:"P", items=JSON:["a","b"], results=JSON:[{"v":"P"},{"v":"P"}]}</code> | **match** (WO-C8-55) — форма, которая ДЕЙСТВИТЕЛЬНО несёт значение процесса (`outputElement='={"v": probeId}'`); контекст не предсоздаётся, поэтому переменная видна |
 
+## Вложенный target: класс правил (корень 4 Ф1, WO-C8-58)
+
+Правило live 8.5: target с точкой создаёт **вложенный контекст** (не плоский ключ с точкой в
+имени). Замеры — на живом Zeebe 8.5.0 (`docs/analysis/c8-oracle/feel-iomapping-static-nested.js`,
+пробы `tgt-nested`, `tgt-nested-deep`, `tgt-nested-parent-string`, `tgt-nested-parent-ctx`,
+`tgt-nested-sibling`, `tgt-nested-output`, `tgt-nested-output-sibling` — 2026-10-20) и на нашем
+движке (те же кейсы в `feel-iomapping-cases.json`, те же live-8.5 ожидания в харнессе
+`FeelIoMappingConformanceIntegrationTests`).
+
+Четыре правила класса: (1) вложенность по всем сегментам; (2) родитель **ЗАМЕНЯЕТСЯ** (значение
+родителя из внешнего скоупа не сливается — оно затеняется скоупом элемента); (3) два маппинга в
+ОДИН родителя объединяются; (4) то же — на стороне output (там запись идёт в скоуп родителя).
+
+| # | case | 8.9 docs | Zeebe 8.5 live (raw) | ours strict | ours lenient | verdict / finding |
+|---:|---|---|---|---|---|---|
+| 95 | <code>target-nested-deep</code> | 8.9 variables: a target with dots creates a nested context in the element scope | <code>completed: work {"a":{"b":{"c":1}}} \| dump {}</code> | <code>completed: work {a=JSON:{"b":{"c":1}}} \| dump {}</code> | <code>completed: work {a=JSON:{"b":{"c":1}}} \| dump {}</code> | **match** (WO-C8-58) — the nesting follows every segment of the target |
+| 96 | <code>target-nested-parent-string</code> | 8.9 variables: a target with dots creates a nested context in the element scope; the element scope shadows the parent value | <code>completed: work {"a":{"b":1}} \| dump {"a":"S"}</code> | <code>completed: work {a=JSON:{"b":1}} \| dump {a=STRING:"S"}</code> | <code>completed: work {a=JSON:{"b":1}} \| dump {a=STRING:"S"}</code> | **match** (WO-C8-58) — the parent is REPLACED (the root value stays in the root, the element scope shadows it) |
+| 97 | <code>target-nested-parent-ctx</code> | 8.9 variables: a target with dots creates a nested context in the element scope; the element scope shadows the parent value | <code>completed: work {"a":{"b":1}} \| dump {"a":{"x":1}}</code> | <code>completed: work {a=JSON:{"b":1}} \| dump {a=JSON:{"x":1}}</code> | <code>completed: work {a=JSON:{"b":1}} \| dump {a=JSON:{"x":1}}</code> | **match** (WO-C8-58) — the parent is REPLACED, not merged with the outer context |
+| 98 | <code>target-nested-sibling</code> | 8.9 variables: mappings into the same parent accumulate into one nested context | <code>completed: work {"a":{"b":1,"c":2}} \| dump {}</code> | <code>completed: work {a=JSON:{"b":1,"c":2}} \| dump {}</code> | <code>completed: work {a=JSON:{"b":1,"c":2}} \| dump {}</code> | **match** (WO-C8-58) — two mappings into one parent both survive |
+| 99 | <code>target-nested-output</code> | 8.9 variables: a target with dots creates a nested context; output mappings write into the parent scope | <code>completed: work {} \| dump {"a":{"b":1}}</code> | <code>completed: work {} \| dump {a=JSON:{"b":1}}</code> | <code>completed: work {} \| dump {a=JSON:{"b":1}}</code> | **match** (WO-C8-58) — the output side nests the same way, in the parent scope |
+| 100 | <code>target-nested-output-sibling</code> | 8.9 variables: mappings into the same parent accumulate into one nested context | <code>completed: work {} \| dump {"a":{"b":1,"c":2}}</code> | <code>completed: work {} \| dump {a=JSON:{"b":1,"c":2}}</code> | <code>completed: work {} \| dump {a=JSON:{"b":1,"c":2}}</code> | **match** (WO-C8-58) — two output mappings into one parent both survive |
+
 ## Примечания и ограничения
 
-- `target-nested` (строка 61, корень 4 Ф1) — **НЕ ЧИНИТСЯ в этом WO**: по правилу самого WO
-  («если prod-корпус меняет поведение — СТОП и эскалация ДО реализации») исполнитель остановил
-  корень 4 и вынес его maintainer (`docs/internal`, «WO-C8-55 — ЭСКАЛАЦИА», 2026-10-20):
-  на проде 2 живых инстанса с плоскими ключами `http.*` + 11 живых переменных с точкой в имени,
-  а `HttpConnectorWorker`/`CamundaHttpJsonWorker` читают плоские `http.url`/`http.method`/
-  `http.authType` — это КОНТРАКТ коннектора, и вложенный target без правки коннектора его ломает.
-  Замеры по теме (вложенность, родитель-строка, родитель-контекст, два маппинга в одного родителя)
-  — `docs/analysis/c8-oracle/feel-iomapping-static-nested.js`, сценарий
-  `feel-iomapping-static-nested` (результат: `{"a":{"b":1}}`, родитель ЗАМЕНЯЕТСЯ, оба маппинга
-  в одного родителя выживают). Решение — за maintainer; матрица пересчитается вместе с ним.
+- `target-nested` (строка 61, корень 4 Ф1) — **ПОЧИНЕН в WO-C8-58 (2026-10-20)**. Решение maintainer
+  от 2026-10-20 (вариант 2 эскалации WO-C8-55): отдельная WO «nested target + контракт
+  коннектора». Прод-совместимость обеспечена порядком «сначала воркеры»: `HttpConnectorWorker`
+  и `CamundaHttpJsonWorker` читают ОБЕ формы (плоский ключ `http.url` И вложенный путь
+  `http`→`url`), приоритет — вложенная форма, плоский ключ — fallback; сохранённое состояние
+  живых инстансов (`connCamunda v1`, `connNative v1` — плоские `http.*` в таблице `variables`)
+  продолжает работать без миграции данных. Класс правил измерен на живом 8.5.0 и закрыт
+  полностью: строки 61 и 95–100 — `match`.
 - Правило «source без «=» — статическое значение» НЕ переносится на MI-поля
   (`inputCollection`/`inputElement`/`outputElement`) — там своя семантика, и live 8.5 отказывает
   такой модели НА ДЕПЛОЕ («Expected expression but found static value 'probeId'…»), а не доставляет

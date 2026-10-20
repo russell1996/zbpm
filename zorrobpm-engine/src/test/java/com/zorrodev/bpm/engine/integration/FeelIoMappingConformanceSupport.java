@@ -256,12 +256,32 @@ public abstract class FeelIoMappingConformanceSupport {
                 case "LONG" -> Long.parseLong(String.valueOf(value));
                 case "DOUBLE" -> Double.parseDouble(String.valueOf(value));
                 case "BOOLEAN" -> Boolean.parseBoolean(String.valueOf(value));
-                case "JSON" -> objectMapper.readValue(String.valueOf(value), Object.class);
+                // WO-C8-58: JSON-числа приводим к той же конвенции, что и ожидания
+                // (expectedValue: Integer → Long). Jackson по умолчанию даёт Integer для
+                // целых — без приведения ожидание и наблюдение расходились бы ТИПОМ,
+                // а не значением (значение то же самое).
+                case "JSON" -> normalizeNumbers(objectMapper.readValue(String.valueOf(value), Object.class));
                 default -> String.valueOf(value);
             };
         } catch (Exception e) {
             throw new IllegalStateException("unreadable variable wrapper " + entry, e);
         }
+    }
+
+    /** Рекурсивно: целые числа JSON → Long (конвенция ожиданий корпуса). */
+    private static Object normalizeNumbers(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            map.forEach((k, v) -> out.put(String.valueOf(k), normalizeNumbers(v)));
+            return out;
+        }
+        if (value instanceof List<?> list) {
+            return list.stream().map(FeelIoMappingConformanceSupport::normalizeNumbers).toList();
+        }
+        if (value instanceof Integer i) {
+            return i.longValue();
+        }
+        return value;
     }
 
     private void measureRoot(UUID pi, Map<String, Object> c, Map<String, Object> obs) {
