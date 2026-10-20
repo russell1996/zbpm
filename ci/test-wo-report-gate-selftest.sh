@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # WO-REL-69 П.3 + WO-REL-70 part B: self-test for the G2 docs-only carve-out
 # and the G24 shadcn-vue check in ci/wo-report-gate.sh.
+# WO-OPS-31: self-test for the G25 (LEAK-INVARIANT, CONTRIBUTING.md G-P) and
+# G26 (FEEL-PARITY, CONTRIBUTING.md G-Q) report-statement checks.
 #
 # Why a NEW script (not a section in ci/test-gate-selftest.sh): that script
 # drives ci/test-gate.sh (the src/main→test coverage gate) and asserts its exit
@@ -31,12 +33,19 @@ ORIG_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 ORIG_SHA="$(git rev-parse HEAD)"
 TMP="wo-gate-selftest-$$"
 FAILED=0
+TOTAL=0
 
 cleanup() {
   git reset -q --hard "$ORIG_SHA" 2>/dev/null || true
   git switch -q "$ORIG_BRANCH" 2>/dev/null || git switch -q --detach "$ORIG_SHA" 2>/dev/null || true
   git branch -q -D "$TMP" 2>/dev/null || true
-  rm -f /tmp/wo-report-gate-selftest.report.$$.md /tmp/wo-report-gate-selftest.out.$$
+  rm -f /tmp/wo-report-gate-selftest.report.$$.md \
+        /tmp/wo-report-gate-selftest.report.$$.plain.md \
+        /tmp/wo-report-gate-selftest.report.$$.with.md \
+        /tmp/wo-report-gate-selftest.report.$$.na.md \
+        /tmp/wo-report-gate-selftest.report.$$.quoted.md \
+        /tmp/wo-report-gate-selftest.report.$$.nabare.md \
+        /tmp/wo-report-gate-selftest.out.$$
 }
 trap cleanup EXIT
 
@@ -63,6 +72,7 @@ EOF
 # expect_g2 <label> <base> <head> <expected: ok|fail> <grep-pattern>
 expect_g2() {
   local label="$1" base="$2" head="$3" want="$4" pattern="$5" got=0 out
+  TOTAL=$((TOTAL + 1))
   set +e
   out="$(WO_GATE_BASE="$base" bash "$GATE" SELFTEST /tmp/wo-report-gate-selftest.report.$$.md 2>&1)"
   printf '%s\n' "$out" > /tmp/wo-report-gate-selftest.out.$$
@@ -90,6 +100,7 @@ expect_g2() {
 # Same driver as expect_g2, but asserts the G24 verdict line (WO-REL-70).
 expect_g24() {
   local label="$1" base="$2" head="$3" want="$4" pattern="$5" out
+  TOTAL=$((TOTAL + 1))
   set +e
   out="$(WO_GATE_BASE="$base" bash "$GATE" SELFTEST /tmp/wo-report-gate-selftest.report.$$.md 2>&1)"
   printf '%s\n' "$out" > /tmp/wo-report-gate-selftest.out.$$
@@ -110,6 +121,39 @@ expect_g24() {
       cat /tmp/wo-report-gate-selftest.out.$$
       FAILED=$((FAILED + 1))
     fi
+  fi
+}
+
+# expect_marker <label> <base> <head> <expected: ok|fail|skip> <grep-pattern> <report-path>
+# WO-OPS-31: asserts the G25 (LEAK-INVARIANT) / G26 (FEEL-PARITY) verdict line.
+# "skip" additionally requires that NO FAIL line for that marker was printed — a skipped
+# check must not also report a failure, or the case would pass for the wrong reason.
+expect_marker() {
+  local label="$1" base="$2" head="$3" want="$4" pattern="$5" report="$6" out ln ok=0
+  ln="${BASH_LINENO[0]}"
+  TOTAL=$((TOTAL + 1))
+  set +e
+  out="$(WO_GATE_BASE="$base" bash "$GATE" SELFTEST "$report" 2>&1)"
+  printf '%s\n' "$out" > /tmp/wo-report-gate-selftest.out.$$
+  set -e
+  case "$want" in
+    ok)
+      if printf '%s\n' "$out" | grep -q "OK.*$pattern"; then ok=1; fi
+      ;;
+    fail)
+      if printf '%s\n' "$out" | grep -q "FAIL.*$pattern"; then ok=1; fi
+      ;;
+    skip)
+      if printf '%s\n' "$out" | grep -q "SKIP.*$pattern" \
+         && ! printf '%s\n' "$out" | grep -q "FAIL.*$pattern"; then ok=1; fi
+      ;;
+  esac
+  if [ "$ok" -eq 1 ]; then
+    echo "SELFTEST OK      $label ($pattern '$want' as expected)"
+  else
+    echo "SELFTEST FAILURE $label - ci/test-wo-report-gate-selftest.sh:$ln expected a '$want' line matching '$pattern'"
+    cat /tmp/wo-report-gate-selftest.out.$$
+    FAILED=$((FAILED + 1))
   fi
 }
 
@@ -212,9 +256,124 @@ head="$(commit_all "selftest: clean page removed, docs-only")"
 expect_g24 "no .vue in diff -> G24 N/A" "$BASE_SHA" "$head" ok "G24 no .vue changes"
 BASE_SHA="$head"
 
+# --- WO-OPS-31 G25/G26 fixtures (LEAK-INVARIANT / FEEL-PARITY statements) --------
+# CONTRIBUTING.md G-P (2026-10-14) and G-Q (2026-10-15) require the REPORT to carry a statement.
+# The TRIGGER is the branch diff (git, merge-base) — never the report's prose — so a report
+# cannot talk its way into or out of the requirement.
+#
+# Report fixtures (the diff is the same in a group of cases; only the report changes):
+#   plain   — no marker at all
+#   with    — both markers as real statements
+#   na      — both markers as "n/a — <reason>"
+#   quoted  — the markers appear ONLY inside a fenced block (quoted test output)
+#   nabare  — "LEAK-INVARIANT: n/a" with no reason after it
+cat > /tmp/wo-report-gate-selftest.report.$$.plain.md <<'EOF'
+# SELFTEST fixture report (plain)
+
+## PRE-DONE
+
+fixture report — no LEAK-INVARIANT / FEEL-PARITY statement on purpose.
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.with.md <<'EOF'
+# SELFTEST fixture report (with statements)
+
+## PRE-DONE
+
+LEAK-INVARIANT: проверено в SelftestLeakProbeIntegrationTests (1/1)
+
+FEEL-PARITY: матрица docs/analysis/feel-iomapping-conformance-matrix.md, 1 кейс match
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.na.md <<'EOF'
+# SELFTEST fixture report (n/a with a reason)
+
+## PRE-DONE
+
+LEAK-INVARIANT: n/a — фикстура селфтеста, исполнение BPMN не меняется
+
+FEEL-PARITY: n/a — фикстура селфтеста, вычисление FEEL не меняется
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.quoted.md <<'EOF'
+# SELFTEST fixture report (marker only inside a quoted test output)
+
+## PRE-DONE
+
+```
+[ERROR]   SelftestLeakProbeIntegrationTests.someCase:42 [LEAK-INVARIANT: no open service task (job) left]
+[ERROR]   SelftestLeakProbeIntegrationTests.otherCase:43 [FEEL-PARITY: matrix missing]
+```
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.nabare.md <<'EOF'
+# SELFTEST fixture report (n/a without a reason)
+
+## PRE-DONE
+
+LEAK-INVARIANT: n/a
+
+FEEL-PARITY: матрица docs/analysis/feel-iomapping-conformance-matrix.md, 1 кейс match
+EOF
+
+# F11. worker module touched (FEEL/ioMapping/worker semantics), engine untouched:
+#      G26 fires, G25 does not.
+mkdir -p zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector
+printf '%s\n' "package com.zorrodev.bpm.httpconnector; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector/SelftestHttpWorkerProbe.java
+git add zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector/SelftestHttpWorkerProbe.java
+head="$(commit_all "selftest: http-connector worker probe")"
+expect_marker "worker module, plain report -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "worker module, plain report -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "worker module, report with statements -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "worker module, report with n/a + reason -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.na.md
+BASE_SHA="$head"
+
+# F12. engine handler touched (BPMN execution) → G25 fires.
+mkdir -p zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/handler
+printf '%s\n' "package com.zorrodev.bpm.engine.handler; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/handler/SelftestLeakProbe.java
+git add zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/handler/SelftestLeakProbe.java
+head="$(commit_all "selftest: engine handler probe")"
+expect_marker "engine handler, plain report -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "engine handler, report with statements -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "engine handler, report with n/a + reason -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.na.md
+expect_marker "engine handler, marker only quoted in a code block -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.quoted.md
+expect_marker "engine handler, 'n/a' without a reason -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.nabare.md
+BASE_SHA="$head"
+
+# F13. probes removed → the diff of this commit still lists the deleted paths, so the
+#      checks keep firing; the NEXT commit (docs only) is the one with no trigger at all.
+git rm -q zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/handler/SelftestLeakProbe.java \
+       zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector/SelftestHttpWorkerProbe.java
+head="$(commit_all "selftest: probes removed")"
+BASE_SHA="$head"
+
+# F14. docs-only diff (no engine/worker file) → both checks are skipped, not failed.
+mkdir -p docs
+printf '%s\n' "# selftest fixture" "" "docs-only probe (no engine, no worker)." > docs/ops31-selftest-note.md
+git add docs/ops31-selftest-note.md
+head="$(commit_all "selftest: docs-only, no G25/G26 trigger")"
+expect_marker "docs-only diff -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "docs-only diff -> G26 SKIP" "$BASE_SHA" "$head" skip "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+BASE_SHA="$head"
+
 if [ "$FAILED" -ne 0 ]; then
-  echo "SELFTEST: $FAILED case(s) FAILED - wo-report-gate.sh G2/G24 regressed."
+  echo "SELFTEST: $FAILED case(s) FAILED - wo-report-gate.sh G2/G24/G25/G26 regressed."
+  echo "Tests run: $TOTAL, Failures: $FAILED, Errors: 0"
   exit 1
 fi
-echo "SELFTEST: ALL PASS - wo-report-gate.sh G2/G24 behave as specified."
+echo "SELFTEST: ALL PASS - wo-report-gate.sh G2/G24/G25/G26 behave as specified."
+echo "Tests run: $TOTAL, Failures: 0, Errors: 0"
 exit 0
