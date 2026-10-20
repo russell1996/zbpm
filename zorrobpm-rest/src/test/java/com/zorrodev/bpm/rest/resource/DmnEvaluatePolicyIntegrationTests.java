@@ -282,6 +282,10 @@ class DmnEvaluatePolicyIntegrationTests {
         assertThat(instanceSnapshot(piId))
             .as("evaluate не меняет состояние инстанса")
             .isEqualTo(instanceBefore);
+        // Инстанс остался живым и в нём та же единственная открытая задача — оценка
+        // решения не «прокрутила» процесс (G-P: нет побочных эффектов у evaluate).
+        assertThat(instanceCompleted(piId)).as("инстанс не завершён").isFalse();
+        assertThat(openTaskCount(piId)).as("открытая задача инстанса жива").isEqualTo(1);
     }
 
     // ==================== Политика опубликована в OpenAPI-описании эндпоинта ====================
@@ -333,6 +337,24 @@ class DmnEvaluatePolicyIntegrationTests {
             .andExpect(status().isOk())
             .andReturn();
         return mapper.readTree(pi.getResponse().getContentAsString()).toString();
+    }
+
+    /** Завершён ли инстанс (completedAt заполнен). */
+    private boolean instanceCompleted(UUID piId) throws Exception {
+        MvcResult pi = mockMvc.perform(get("/process-instances/" + piId)
+                .header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andReturn();
+        return mapper.readTree(pi.getResponse().getContentAsString()).hasNonNull("completedAt");
+    }
+
+    /** Сколько открытых задач у инстанса. */
+    private int openTaskCount(UUID piId) throws Exception {
+        MvcResult tasks = mockMvc.perform(get("/user-tasks?processInstanceId=" + piId)
+                .header("Authorization", "Bearer " + adminToken))
+            .andExpect(status().isOk())
+            .andReturn();
+        return mapper.readTree(tasks.getResponse().getContentAsString()).get("data").size();
     }
 
     private static ProcessVariable variable(String name, String value, String type) {
