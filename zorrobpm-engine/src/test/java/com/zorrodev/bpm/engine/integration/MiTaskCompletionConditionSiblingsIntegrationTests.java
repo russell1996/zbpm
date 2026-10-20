@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.integration;
 
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
+import com.zorrodev.bpm.contract.dto.event.DomainEventType;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.TestMain;
@@ -9,6 +10,7 @@ import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.dto.IdDTO;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.DomainEventRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.UserTaskRepository;
@@ -27,8 +29,10 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -80,6 +84,8 @@ public class MiTaskCompletionConditionSiblingsIntegrationTests {
     private QueryService queryService;
     @Autowired
     private ActivityRepository activityRepository;
+    @Autowired
+    private DomainEventRepository domainEventRepository;
     @Autowired
     private IncidentRepository incidentRepository;
     @Autowired
@@ -153,6 +159,20 @@ public class MiTaskCompletionConditionSiblingsIntegrationTests {
         return userTaskRepository.findAll().stream()
             .filter(t -> pi.equals(t.getProcessInstanceId()) && t.getCompletedAt() == null)
             .count();
+    }
+
+    /**
+     * activityId всех событий «user-task.completed» инстанса.
+     *
+     * <p>Инвариант терминации: у ТЕРМИНИРОВАННОГО сиблинга события «completed» быть
+     * НЕ должно — инстанс не завершён, а терминирован (Zeebe: job терминирован,
+     * завершения не было). Поэтому в наборе ровно один id — завершённого инстанса.
+     */
+    private Set<String> userTaskCompletedActivityIds(UUID pi) {
+        return domainEventRepository.findByProcessInstanceId(pi, 1000).stream()
+            .filter(e -> DomainEventType.USER_TASK_COMPLETED.getValue().equals(e.getType()))
+            .map(e -> String.valueOf(e.getData().get("activityId")))
+            .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     /** G-P: после завершения инстанта живого мусора быть не должно. */
@@ -334,6 +354,41 @@ public class MiTaskCompletionConditionSiblingsIntegrationTests {
 
         assertThat(queryService.getProcessInstance(pi).getCompletedAt()).as("instance completed").isNotNull();
         assertNoLeaks(pi);
+    }
+
+    /**
+     * Терминация сиблинга НЕ эмитит «user-task.completed»: инстанс не завершён,
+     * а терминирован. Проверка на КОНКРЕТНОЕ значение (id в наборе событий), а не
+     * «событие где-то есть» — иначе ассерт прошёл бы и при терминации с событием.
+     *
+     * <p>Мутация, которая обязана ронять этот тест: {@code terminateUserTask},
+     * вызывающая {@code completeUserTask} (то есть эмитящая «completed»).
+     */
+    @Transactional
+    @Test
+    void terminatedUserTaskSibling_emitsNoUserTaskCompletedEvent() throws Exception {
+        UUID pdId = deploy("test-c857-mi-user-task-cc-parallel.bpmn");
+        UUID pi = start(pdId);
+
+        List<ActivityEntity> instances = liveInstances(pi, "miTask");
+        Map<String, ActivityEntity> byItem = byItem(pi, instances);
+        ActivityEntity completed = byItem.get("b");
+        ActivityEntity terminatedA = byItem.get("a");
+        ActivityEntity terminatedC = byItem.get("c");
+
+        runtimeService.completeUserTask(completed.getId(), List.of());
+
+        Set<String> completedIds = userTaskCompletedActivityIds(pi);
+
+        assertThat(completedIds)
+            .as("exactly one 'user-task.completed' event — only the really completed instance")
+            .containsExactly(completed.getId().toString());
+        assertThat(completedIds)
+            .as("terminated sibling A has NO 'user-task.completed' event")
+            .doesNotContain(terminatedA.getId().toString());
+        assertThat(completedIds)
+            .as("terminated sibling C has NO 'user-task.completed' event")
+            .doesNotContain(terminatedC.getId().toString());
     }
 
     // ──────────────────────────────────────────────────────────────
