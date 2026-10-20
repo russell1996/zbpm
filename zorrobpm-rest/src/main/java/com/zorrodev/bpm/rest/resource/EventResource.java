@@ -86,6 +86,10 @@ public class EventResource {
             PagedDataDTO<Map<String, Object>> empty = new PagedDataDTO<>();
             empty.setData(List.of());
             empty.setTotalElements(0L);
+            // WO-AUDIT-14 (F-18): the empty answer is a final answer — say so
+            // explicitly, so the client does not have to guess from data.length.
+            empty.setHasMore(false);
+            empty.setNextCursor(null);
             return ResponseEntity.ok(empty);
         }
 
@@ -95,6 +99,12 @@ public class EventResource {
         List<Map<String, Object>> envelopes = eventQueryService.findEventEnvelopes(
             since != null ? since : 0, pdFilter, piId, type, maxResults);
 
+        // WO-AUDIT-14 (F-18): the query reads maxResults + 1 rows PRECISELY to
+        // detect "there is more" — the flag used to be computed and thrown away,
+        // while totalElements said "size of the delivered page". The client
+        // therefore could not tell that events 101+ existed and silently lost
+        // the tail of the feed on every call. Now the flag is reported and the
+        // cursor of the next page travels with it.
         boolean hasMore = envelopes.size() > maxResults;
         if (hasMore) {
             envelopes = envelopes.subList(0, maxResults);
@@ -103,7 +113,22 @@ public class EventResource {
         PagedDataDTO<Map<String, Object>> result = new PagedDataDTO<>();
         result.setData(envelopes);
         result.setTotalElements((long) envelopes.size());
+        result.setHasMore(hasMore);
+        result.setNextCursor(hasMore ? lastFeedPosition(envelopes) : null);
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Feed-позиция последнего выданного события = курсор следующей страницы.
+     * Запрос фильтрует по {@code feedPosition > since}, а сравнение с NULL в
+     * SQL никогда не истинно — значит у каждой выданной строки позиция есть.
+     */
+    private Long lastFeedPosition(List<Map<String, Object>> envelopes) {
+        if (envelopes.isEmpty()) {
+            return null;
+        }
+        Object value = envelopes.get(envelopes.size() - 1).get("feedPosition");
+        return value instanceof Number number ? number.longValue() : null;
     }
 
     /** null = unrestricted; intersecting "see all" with a key filter yields the key filter. */
