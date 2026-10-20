@@ -151,12 +151,22 @@ public class ScenarioMatrixIntegrationTests {
             Map<String, Object> oracleVars = (Map<String, Object>) expected.get("vars");
             // «Что осталось активным» — третье наблюдаемое дифференциального режима
             // (WO п.3). У оракула это job'ы, оставшиеся активируемыми после точки
-            // наблюдения; у нас — нарушения инварианта утечек. Если оракул не оставил
-            // ничего активным, а мы оставили — это расхождение.
+            // наблюдения; у нас — нарушения инварианта утечек (живые activity/задачи/
+            // таймеры/подписки/arrival-строки в завершённом инстансе). Сравнение
+            // СИММЕТРИЧНО: оракул оставил активным ⇔ мы оставили активным. Иначе
+            // расхождение (кто-то оставил мусор — разбирать).
             List<?> oracleLeftovers = (List<?>) expected.get("leftovers");
-            if (oracleLeftovers != null && oracleLeftovers.isEmpty() && !outcome.leaks().isEmpty()) {
-                problems.add(scenario.id() + ": оракул не оставил ничего активным, у нас остатки "
-                        + outcome.leaks());
+            if (oracleLeftovers == null) {
+                problems.add(scenario.id() + ": прибитый факт оракула без поля leftovers — "
+                        + "пересними эталон (docs/analysis/c8-oracle/scenario-matrix-diff.js)");
+            } else {
+                boolean oracleLeft = !oracleLeftovers.isEmpty();
+                boolean oursLeft = !outcome.leaks().isEmpty();
+                if (oracleLeft != oursLeft) {
+                    problems.add(scenario.id() + ": расхождение по третьему наблюдаемому — "
+                            + "оракул оставил активным=" + oracleLeft + " (" + oracleLeftovers
+                            + "), мы оставили активным=" + oursLeft + " (" + outcome.leaks() + ")");
+                }
             }
             for (String key : oracleVars.keySet()) {
                 Object want = oracleVars.get(key);
