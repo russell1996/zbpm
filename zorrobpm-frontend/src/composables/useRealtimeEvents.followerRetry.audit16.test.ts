@@ -23,6 +23,14 @@
  * его isConnected синхронизировано health-запросами ещё до retry, и тест
  * не строит «follower не знал о здоровье» (в реальных вкладках так было бы,
  * здесь это свойство топологии, а не предмет теста). Предмет — КАНАЛ.
+ *
+ * WO-UI-40 — ДЕТЕРМИНИРОВАННОСТЬ. Тест больше НЕ ждёт стенного времени:
+ * фейковые таймеры (`vi.useFakeTimers` + `vi.advanceTimersByTimeAsync`)
+ * проматывают ровно те интервалы ПРОДА, на которых стоит топология кейсов.
+ * На реальных таймерах (`await new Promise(r => setTimeout(r, 2800))` +
+ * `vi.waitFor` с таймаутом 1000 мс) тест падал под нагрузкой (load average
+ * 30–50): воспроизведено 4 красных прогона из 6 (см. отчёт WO-UI-40).
+ * Поведение кейсов НЕ ослаблено: те же ассерты, те же два сценария.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
@@ -93,6 +101,21 @@ class FakeEventSource {
   }
 }
 
+/**
+ * Тайминги ПРОДА, на которых стоит топология обоих кейсов (WO-UI-40:
+ * выписаны константами, чтобы тест зависел от поведения, а не от цифр,
+ * размазанных по коду):
+ *  - 1500 мс — таймаут follower-резолва в `acquireSseLeadership`
+ *    (`sseFanout.ts`: лок занят другой вкладкой → резолв «я follower»);
+ *  - 500 мс — интервал повторного health-запроса лидеру
+ *    (`useRealtimeEvents.connect()`, ветка follower: 3 попытки, t = 1500/2000/2500);
+ *  - 10 мс — период опроса лока в стабе Web Locks (передача лока ожидающему).
+ */
+const FOLLOWER_RESOLVE_TIMEOUT_MS = 1500
+const HEALTH_ASK_INTERVAL_MS = 500
+const HEALTH_ASK_TRIES = 3
+const LOCK_POLL_INTERVAL_MS = 10
+
 // Web Locks стаб: первый запросивший — лидер, лок держится до release;
 // ждущие отзываются на releaseLockForTest (опрос 10 мс).
 let lockOwner: (() => void) | null = null
@@ -127,20 +150,35 @@ function releaseLockForTest() {
 }
 
 /**
- * Реальное ожидание устойчивого follower: 1500 мс — таймаут follower-резолва
- * acquireSseLeadership, ещё ~1000 мс — его 3 health-запроса лидеру (500 мс
- * интервал) и ответы на них. Итого все health-request ДО подписки наблюдателя
- * в тесте: счётчик `seen` чист для самого retry.
+ * Детерминированное «устаканивание» follower-вкладки (было: 2800 мс стенного
+ * ожидания — ровно те интервалы, но по реальным часам, из-за чего кейс падал
+ * под нагрузкой):
+ *  1) резолв follower'а — 1500 мс (таймаут в `acquireSseLeadership`);
+ *  2) все его health-запросы лидеру — 3 попытки с интервалом 500 мс
+ *     (t = 1500 / 2000 / 2500). Все они ДО подписки наблюдателя в тесте —
+ *     счётчик `seen` чист для самого retry.
  */
-async function waitFollowerSettled(): Promise<void> {
-  await new Promise((r) => setTimeout(r, 2800))
-  await Promise.resolve()
+async function settleFollower(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(FOLLOWER_RESOLVE_TIMEOUT_MS)
+  await vi.advanceTimersByTimeAsync(HEALTH_ASK_INTERVAL_MS * (HEALTH_ASK_TRIES - 1))
+}
+
+/**
+ * Передача лока ожидающему follower'у: стаб отдаёт лок на ближайшем poll-тике
+ * (10 мс) → `onPromoted` → свой EventSource. Два интервала — чтобы окно
+ * гарантированно накрыло poll-тик независимо от его фазы.
+ */
+async function awaitPromotion(): Promise<void> {
+  await vi.advanceTimersByTimeAsync(LOCK_POLL_INTERVAL_MS * 2)
 }
 
 describe('follower retry не создаёт EventSource (WO-AUDIT-16, F-13)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    // WO-UI-40: никакого стенного времени — все интервалы прод-таймингов
+    // проматываются фейковыми часами (детерминированно и мгновенно).
+    vi.useFakeTimers()
     FakeEventSource.instances = []
     vi.stubGlobal('EventSource', FakeEventSource)
     resetSseFanoutForTest()
@@ -149,6 +187,7 @@ describe('follower retry не создаёт EventSource (WO-AUDIT-16, F-13)', (
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     resetSseFanoutForTest()
     lockOwner = null
@@ -156,21 +195,22 @@ describe('follower retry не создаёт EventSource (WO-AUDIT-16, F-13)', (
 
   it('follower retry не создаёт EventSource — спрашивает лидера о состоянии', async () => {
     const leader = useRealtimeEvents()
-    let follower: ReturnType<typeof useRealtimeEvents> | undefined
+    const follower = useRealtimeEvents()
     let unsub: (() => void) | undefined
     // finally обязателен: при RED-падении ассерта cleanup всё равно должен
     // отпустить лок и инкрементировать поколения — иначе висящий lock-опрос
     // follower сработает ПОСЛЕ teardown (unstub globals) на живом поколении.
     try {
       leader.connect()
-      await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
+      // Резолв лидерства — микротаска: фейковые часы её смывают.
+      await vi.advanceTimersByTimeAsync(0)
+      expect(FakeEventSource.instances).toHaveLength(1)
       // Здоровое рукопожатие лидера.
       FakeEventSource.instances[0].onopen?.(new Event('open'))
       expect(leader.isConnected.value).toBe(true)
 
-      follower = useRealtimeEvents()
       follower.connect()
-      await waitFollowerSettled()
+      await settleFollower()
       expect(follower.isLeaderTab()).toBe(false)
       // Follower своего канала не открывает (механизм Доп.5, кр.21).
       expect(FakeEventSource.instances).toHaveLength(1)
@@ -195,7 +235,7 @@ describe('follower retry не создаёт EventSource (WO-AUDIT-16, F-13)', (
       expect(follower.isConnected.value).toBe(true)
     } finally {
       unsub?.()
-      follower?.disconnect()
+      follower.disconnect()
       leader.disconnect()
       releaseLockForTest()
     }
@@ -203,30 +243,28 @@ describe('follower retry не создаёт EventSource (WO-AUDIT-16, F-13)', (
 
   it('promotion после retry не оставляет висящего EventSource', async () => {
     const leader = useRealtimeEvents()
-    let follower: ReturnType<typeof useRealtimeEvents> | undefined
+    const follower = useRealtimeEvents()
     try {
       leader.connect()
-      await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(1))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(FakeEventSource.instances).toHaveLength(1)
       FakeEventSource.instances[0].onopen?.(new Event('open'))
 
-      follower = useRealtimeEvents()
-      // const-алиас с narrowed-типом: `let follower: ... | undefined` не
-      // сужается внутри замыканий (vi.waitFor ниже).
-      const follow = follower
       follower.connect()
-      await waitFollowerSettled()
-      expect(follow.isLeaderTab()).toBe(false)
+      await settleFollower()
+      expect(follower.isLeaderTab()).toBe(false)
       expect(FakeEventSource.instances).toHaveLength(1)
 
       // Retry на follower-вкладке (кнопка «Повторить сейчас»).
-      follow.retryConnection()
+      follower.retryConnection()
 
       // Смерть лидера: disconnect закрывает его ES и отпускает лок — ждущий
       // в очереди лока follower повышен (onPromoted → openSource).
       leader.disconnect()
       releaseLockForTest()
-      await vi.waitFor(() => expect(follow.isLeaderTab()).toBe(true))
-      await vi.waitFor(() => expect(FakeEventSource.instances).toHaveLength(2))
+      await awaitPromotion()
+      expect(follower.isLeaderTab()).toBe(true)
+      expect(FakeEventSource.instances).toHaveLength(2)
 
       // Ровно ОДИН открытый источник — ES повышенного лидера. Первый закрыт
       // (disconnect лидера), а retry НЕ оставил второй висящим: мутация
@@ -236,7 +274,7 @@ describe('follower retry не создаёт EventSource (WO-AUDIT-16, F-13)', (
       expect(FakeEventSource.instances[0].closed).toBe(true)
       expect(FakeEventSource.instances[1].closed).toBe(false)
     } finally {
-      follower?.disconnect()
+      follower.disconnect()
       leader.disconnect()
       releaseLockForTest()
     }
