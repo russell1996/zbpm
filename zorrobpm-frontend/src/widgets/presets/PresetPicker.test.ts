@@ -223,43 +223,11 @@ describe('PresetPicker — WO-UI-34 single dropdown', () => {
     expect(trigger.attributes('title')).toContain('presetVisibilityProcess')
   })
 
-  it('(b-bis) the list item also separates the name and the visibility', async () => {
-    const w = render()
-    await flushPromises()
-    const trigger = w.find('[data-testid="preset-select"]')
-    trigger.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))
-    await flushPromises()
-    await new Promise((r) => setTimeout(r, 50))
-    const opt = document.querySelector('[data-testid="preset-opt-p2"]')
-    expect(opt, 'preset option rendered').not.toBeNull()
-    const text = opt!.textContent ?? ''
-    expect(text).toContain('Шаблон 2')
-    expect(text).toContain('presetVisibilityPrivate')
-    expect(text, 'fragments are separated by «·»').toContain('·')
-    expect(text, 'fragments are NOT glued').not.toContain('Шаблон 2presetVisibilityPrivate')
-  })
-
-  it('(b-ter) the Combobox closed value separates the name and the visibility too', async () => {
-    mockList.mockResolvedValue(Array.from({ length: 10 }, (_, i) => preset(i + 1)))
-    const w = render()
-    await flushPromises()
-    // jsdom: Combobox открывается кликом (не ArrowDown, как plain-Select).
-    await w.find('[data-testid="preset-select"]').trigger('click')
-    await flushPromises()
-    await new Promise((r) => setTimeout(r, 50))
-    const opts = document.querySelectorAll('[role="option"]')
-    expect(opts.length, 'combobox options rendered').toBeGreaterThan(1)
-    // reka ComboboxItem выбирает по click (ListboxItem onClick).
-    ;(opts[1] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }))
-    await flushPromises()
-    await new Promise((r) => setTimeout(r, 50))
-    const trigger = w.find('[data-testid="preset-select"]')
-    const text = trigger.text()
-    expect(text).toContain('Шаблон 1')
-    expect(text).toContain('presetVisibilityProcess')
-    expect(text).toContain('·')
-    expect(text).not.toContain('Шаблон 1presetVisibilityProcess')
-  })
+  // Пункт ВЫПАДАЮЩЕГО СПИСКА и режим Combobox (>8 шаблонов) проверяются в
+  // браузерном наборе (src/visual/preset-picker.ui38.browser.test.ts): там
+  // видно настоящую геометрию — разделитель отрисован, фрагменты не
+  // наложены, длинное имя обрезается, видимость не выдавлена. В jsdom
+  // геометрии нет, поэтому текстовые проверки здесь были бы слабее.
 
   it('(d) available=false: списка («Шаблон») нет, редактор остаётся', async () => {
     mockList.mockRejectedValue({ disabled: true })

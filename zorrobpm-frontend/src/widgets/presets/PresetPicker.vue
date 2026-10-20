@@ -325,9 +325,9 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
                 class="flex min-w-0 items-center gap-1.5"
                 data-testid="preset-selected-label"
               >
-                <span class="truncate">{{ presetNameLabel(selectedPreset) }}</span>
-                <span aria-hidden="true" class="shrink-0 text-muted-foreground"> · </span>
-                <span class="shrink-0 text-[11px] text-muted-foreground">
+                <span class="truncate" data-testid="preset-label-name">{{ presetNameLabel(selectedPreset) }}</span>
+                <span class="shrink-0 text-muted-foreground" data-testid="preset-label-separator"> · </span>
+                <span class="shrink-0 text-[11px] text-muted-foreground" data-testid="preset-label-visibility">
                   {{ presetVisibilityText(selectedPreset) }}
                 </span>
               </span>
@@ -343,10 +343,10 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
               :data-testid="`preset-opt-${p.id}`"
               class="gap-2"
             >
-              <span class="flex min-w-0 items-center gap-1.5">
-                <span class="truncate">{{ presetNameLabel(p) }}</span>
-                <span aria-hidden="true" class="shrink-0 text-muted-foreground"> · </span>
-                <span class="shrink-0 text-[11px] text-muted-foreground">
+              <span class="flex min-w-0 items-center gap-1.5" data-testid="preset-item-label">
+                <span class="truncate" data-testid="preset-label-name">{{ presetNameLabel(p) }}</span>
+                <span class="shrink-0 text-muted-foreground" data-testid="preset-label-separator"> · </span>
+                <span class="shrink-0 text-[11px] text-muted-foreground" data-testid="preset-label-visibility">
                   {{ presetVisibilityText(p) }}
                 </span>
               </span>
@@ -371,9 +371,9 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
                 class="flex min-w-0 items-center gap-1.5"
                 data-testid="preset-selected-label"
               >
-                <span class="truncate">{{ presetNameLabel(selectedPreset) }}</span>
-                <span aria-hidden="true" class="shrink-0 text-muted-foreground"> · </span>
-                <span class="shrink-0 text-[11px] text-muted-foreground">
+                <span class="truncate" data-testid="preset-label-name">{{ presetNameLabel(selectedPreset) }}</span>
+                <span class="shrink-0 text-muted-foreground" data-testid="preset-label-separator"> · </span>
+                <span class="shrink-0 text-[11px] text-muted-foreground" data-testid="preset-label-visibility">
                   {{ presetVisibilityText(selectedPreset) }}
                 </span>
               </span>
@@ -395,10 +395,10 @@ defineExpose({ getVariables, missingAsk, canApply, hasErrors, available, mode })
               :value="p.id"
               :data-testid="`preset-opt-${p.id}`"
             >
-              <span class="flex min-w-0 flex-1 items-center gap-1.5">
-                <span class="truncate">{{ presetNameLabel(p) }}</span>
-                <span aria-hidden="true" class="shrink-0 text-muted-foreground"> · </span>
-                <span class="shrink-0 text-[11px] text-muted-foreground">
+              <span class="flex min-w-0 flex-1 items-center gap-1.5" data-testid="preset-item-label">
+                <span class="truncate" data-testid="preset-label-name">{{ presetNameLabel(p) }}</span>
+                <span class="shrink-0 text-muted-foreground" data-testid="preset-label-separator"> · </span>
+                <span class="shrink-0 text-[11px] text-muted-foreground" data-testid="preset-label-visibility">
                   {{ presetVisibilityText(p) }}
                 </span>
               </span>
