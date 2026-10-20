@@ -3,7 +3,6 @@ package com.zorrodev.bpm.engine.retention;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.PropertySource;
 import org.springframework.core.env.SystemEnvironmentPropertySource;
 
@@ -301,10 +300,23 @@ class Audit15RetentionComposeEnvBindingTest {
      * Боевой контекст: настоящий {@code zorrobpm-engine.properties} (тот файл,
      * который читает прод, и единственный источник этих ключей) и настоящий
      * бин {@link RetentionConfig} с {@code @ConfigurationProperties}-биндингом.
+     *
+     * <p><b>Здесь НЕТ {@code @Configuration}, и это не небрежность.</b> В модуле
+     * лежит {@code TestMain} с {@code @SpringBootApplication}, а он сканирует
+     * компоненты по {@code com.zorrodev.bpm.engine.**} — то есть ВКЛЮЧАЯ
+     * test-classes. Аннотированный стереотипом класс из тестовых исходников
+     * поэтому становится бином в каждом {@code @SpringBootTest(classes =
+     * TestMain.class)} модуля: {@code @EnableConfigurationProperties} на таком
+     * классе зарегистрировал бы ВТОРОГО {@code RetentionConfig} рядом с
+     * component-scanned, и {@code NoUniqueBeanDefinitionException} ронял бы
+     * контекст во всех чужих тестах модуля (наблюдалось: 331 ошибок в полном
+     * прогоне). Без стереотипа класс остаётся «лайтовым» кандидатом
+     * конфигурации: {@code withUserConfiguration} его регистрирует, а
+     * component scan не видит. Прецедент — тот же приём в
+     * {@code C836ComposeEnvBindingTest}.
      */
-    @Configuration
-    @PropertySource("classpath:zorrobpm-engine.properties")
     @EnableConfigurationProperties(RetentionConfig.class)
+    @PropertySource("classpath:zorrobpm-engine.properties")
     static class RetentionBeans {
     }
 
