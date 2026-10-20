@@ -77,6 +77,15 @@ public class HttpConnectorWorker implements JobHandler {
         "http.auth", "http.apikey", "http.api-key", "http.token",
         "http.password", "http.clientsecret", "http.client-secret", "http.authorization");
 
+    /**
+     * WO-C8-58: те же запрещённые имена как ЛИСТЬЯ вложенного контекста {@code http}
+     * ({@code http: {token: …}}). Производное от {@link #SECRET_LITERAL_INPUTS}, а не
+     * отдельный список — иначе правило разъедусь при правке любого из них.
+     */
+    private static final Set<String> SECRET_LITERAL_LEAVES = SECRET_LITERAL_INPUTS.stream()
+        .map(name -> name.substring("http.".length()))
+        .collect(java.util.stream.Collectors.toUnmodifiableSet());
+
     /** Заголовки ответа, недоступные маппингу (решение maintainer п.4 — фильтруется по умолчанию). */
     private static final Set<String> FILTERED_RESPONSE_HEADERS = Set.of("set-cookie");
 
@@ -277,28 +286,29 @@ public class HttpConnectorWorker implements JobHandler {
                 "zorrobpm.http-connector.enabled=false — ask the administrator to enable the connector");
         }
         Map<String, ProcessVariable> inputs = model.getVariables() != null ? model.getVariables() : Map.of();
-        rejectLiteralSecrets(inputs);
+        ConnectorInputLookup lookup = new ConnectorInputLookup(inputs);
+        rejectLiteralSecrets(lookup);
 
-        String url = requiredText(inputs, "http.url");
-        String method = textOrDefault(inputs, "http.method", "GET").toUpperCase(Locale.ROOT);
+        String url = requiredText(lookup, "http.url");
+        String method = textOrDefault(lookup, "http.method", "GET").toUpperCase(Locale.ROOT);
         if (!ALLOWED_METHODS.contains(method)) {
             throw new HttpConnectorConfigException(ERR_CONFIG,
                 "http.method must be one of " + ALLOWED_METHODS + " (got '" + method + "')");
         }
-        Map<String, String> headers = mapOrEmpty(inputs, "http.headers");
-        Map<String, String> queryParameters = mapOrEmpty(inputs, "http.queryParameters");
-        String body = inputs.containsKey("http.body") ? decodeText(inputs.get("http.body")) : null;
+        Map<String, String> headers = mapOrEmpty(lookup, "http.headers");
+        Map<String, String> queryParameters = mapOrEmpty(lookup, "http.queryParameters");
+        String body = lookup.has("http.body") ? lookup.body("http.body") : null;
         if (body != null && !BODY_METHODS.contains(method)) {
             throw new HttpConnectorConfigException(ERR_CONFIG,
                 "http.body is only allowed for POST/PUT/PATCH (got method '" + method + "')");
         }
-        int connectTimeout = timeoutSeconds(inputs, "http.connectionTimeout",
+        int connectTimeout = timeoutSeconds(lookup, "http.connectionTimeout",
             properties.getDefaultConnectionTimeoutSeconds(), properties.getMaxConnectionTimeoutSeconds());
-        int readTimeout = timeoutSeconds(inputs, "http.readTimeout",
+        int readTimeout = timeoutSeconds(lookup, "http.readTimeout",
             properties.getDefaultReadTimeoutSeconds(), properties.getMaxReadTimeoutSeconds());
 
-        String authType = textOrDefault(inputs, "http.authType", "none").toLowerCase(Locale.ROOT);
-        String authRef = textOrNull(inputs, "http.authRef");
+        String authType = textOrDefault(lookup, "http.authType", "none").toLowerCase(Locale.ROOT);
+        String authRef = textOrNull(lookup, "http.authRef");
         AuthHeader auth = resolveAuth(authType, authRef);
 
         URI uri = buildUri(url, queryParameters, auth);
@@ -332,6 +342,11 @@ public class HttpConnectorWorker implements JobHandler {
             result.add(longVar("http.status", status));
             result.add(jsonVar("http.headers", toJson(responseHeaders)));
             result.add(bodyVar(responseBody, bodyType));
+            // WO-C8-58, шаг 2b:completion-переменные коннектора публикуются ВЛОЖЕННЫМ
+            // контекстом http — тогда «=http.status» в output io-mapping разрешается
+            // (сегодня он даёт null: FEEL ищет контекст http, а ключ плоский).
+            // Плоская тройка остаётся: контракт воркера не меняется (аддитивно).
+            result.add(jsonVar("http", nestedHttpJson(status, responseHeaders, responseBody, bodyType)));
             return result;
         }
         // Решение maintainer п.3 — строго: non-2xx без молчаливого success.
@@ -342,8 +357,47 @@ public class HttpConnectorWorker implements JobHandler {
         errorVars.add(contractJsonVar("http.headers", toJson(responseHeaders)));
         errorVars.add(contractBodyVar(responseBody, bodyType));
         errorVars.add(contractErrorVar("HTTP " + status));
+        // Тот же вложенный контекст на ошибочной ветке: обработчик boundary/инцидента
+        // читает «=http.status» так же, как обработчик успеха.
+        errorVars.add(contractJsonVar("http", nestedHttpJson(status, responseHeaders, responseBody, bodyType)));
         activityService.throwServiceTaskError(model.getServiceTaskId(), "HTTP_" + status, errorVars);
         return List.of();
+    }
+
+    /**
+     * WO-C8-58: JSON вложенного контекста {@code http} — те же status/headers/body,
+     * что и плоская тройка, но вложенной формой (Zeebe/Camunda-стиль: контекст
+     * {@code http}, а не плоские ключи).
+     *
+     * <p>Тело ответа кладётся РАЗОБРАННЫМ (если Content-Type — JSON): так выглядит
+     * значение JSON-переменной в FEEL-контексте движка, и «=http.body.id» работает.
+     * Неразобранное тело (или не-JSON content-type) кладётся строкой — как в плоской
+     * форме.
+     */
+    private String nestedHttpJson(long status, Map<String, String> responseHeaders,
+            String responseBody, String bodyType) {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("status", status);
+        context.put("headers", responseHeaders);
+        context.put("body", "JSON".equals(bodyType) ? parseJsonOrRaw(responseBody) : responseBody);
+        try {
+            return objectMapper.writeValueAsString(context);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("cannot serialize the nested http completion context", e);
+        }
+    }
+
+    /** JSON-текст → дерево; битый JSON (content-type обманул) — исходный текст. */
+    private Object parseJsonOrRaw(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(raw);
+            return node == null ? raw : objectMapper.convertValue(node, Object.class);
+        } catch (JsonProcessingException e) {
+            return raw;
+        }
     }
 
     private HttpResponse<InputStream> sendWithRedirects(HttpClient client, String method, URI uri,
@@ -520,21 +574,31 @@ public class HttpConnectorWorker implements JobHandler {
     }
 
     /** Секреты — только ссылками через authRef, литералы в inputs — reject (fail-closed). */
-    private void rejectLiteralSecrets(Map<String, ProcessVariable> inputs) {
-        for (String name : inputs.keySet()) {
+    private void rejectLiteralSecrets(ConnectorInputLookup lookup) {
+        for (String name : lookup.names()) {
             if (name != null && SECRET_LITERAL_INPUTS.contains(name.toLowerCase(Locale.ROOT))) {
                 throw new HttpConnectorConfigException(ERR_CONFIG,
                     "secret '" + name + "' must not be passed literally — use http.authRef instead");
             }
         }
-        if (inputs.containsKey("http.headers")) {
-            Map<String, String> headers = tryParseStringMap(inputs.get("http.headers"));
-            if (headers != null) {
-                for (String headerName : headers.keySet()) {
-                    if ("authorization".equalsIgnoreCase(headerName) || "proxy-authorization".equalsIgnoreCase(headerName)) {
-                        throw new HttpConnectorConfigException(ERR_CONFIG,
-                            "Authorization header must not be passed literally in http.headers — use http.authRef instead");
-                    }
+        // WO-C8-58: вложенная форма — те же секреты лежают ЛИСТЬЯМИ контекста http
+        // ({http: {token: …}}). Без этой проверки правило «секрет не живёт в модели
+        // процесса» обходилось бы простой сменой формы записи.
+        JsonNode httpContext = lookup.context("http");
+        if (httpContext != null) {
+            for (String leaf : SECRET_LITERAL_LEAVES) {
+                if (httpContext.has(leaf)) {
+                    throw new HttpConnectorConfigException(ERR_CONFIG,
+                        "secret 'http." + leaf + "' must not be passed literally — use http.authRef instead");
+                }
+            }
+        }
+        Map<String, String> headers = lookup.stringMap("http.headers");
+        if (headers != null) {
+            for (String headerName : headers.keySet()) {
+                if ("authorization".equalsIgnoreCase(headerName) || "proxy-authorization".equalsIgnoreCase(headerName)) {
+                    throw new HttpConnectorConfigException(ERR_CONFIG,
+                        "Authorization header must not be passed literally in http.headers — use http.authRef instead");
                 }
             }
         }
@@ -671,83 +735,34 @@ public class HttpConnectorWorker implements JobHandler {
         return ct.contains("json");
     }
 
-    private String requiredText(Map<String, ProcessVariable> inputs, String name) {
-        ProcessVariable pv = inputs.get(name);
-        if (pv == null || pv.getValue() == null || pv.getValue().isBlank()) {
+    private String requiredText(ConnectorInputLookup lookup, String name) {
+        String value = lookup.text(name);
+        if (value == null) {
             throw new HttpConnectorConfigException(ERR_CONFIG, "missing required input '" + name + "'");
         }
-        return pv.getValue().strip();
+        return value;
     }
 
-    private String textOrDefault(Map<String, ProcessVariable> inputs, String name, String def) {
-        String v = textOrNull(inputs, name);
+    private String textOrDefault(ConnectorInputLookup lookup, String name, String def) {
+        String v = textOrNull(lookup, name);
         return v != null ? v : def;
     }
 
-    private static String textOrNull(Map<String, ProcessVariable> inputs, String name) {
-        ProcessVariable pv = inputs.get(name);
-        if (pv == null || pv.getValue() == null || pv.getValue().isBlank()) {
-            return null;
-        }
-        return pv.getValue().strip();
+    private static String textOrNull(ConnectorInputLookup lookup, String name) {
+        return lookup.text(name);
     }
 
-    private static String decodeText(ProcessVariable pv) {
-        return pv.getValue() != null ? pv.getValue() : "";
-    }
-
-    private Map<String, String> mapOrEmpty(Map<String, ProcessVariable> inputs, String name) {
-        ProcessVariable pv = inputs.get(name);
-        if (pv == null || pv.getValue() == null || pv.getValue().isBlank()) {
-            return Map.of();
-        }
-        Map<String, String> parsed = tryParseStringMap(pv);
+    private Map<String, String> mapOrEmpty(ConnectorInputLookup lookup, String name) {
+        Map<String, String> parsed = lookup.stringMap(name);
         if (parsed == null) {
             throw new HttpConnectorConfigException(ERR_CONFIG,
-                "input '" + name + "' must be a JSON object of string to string (got type '" + pv.getType() + "')");
+                "input '" + name + "' must be a JSON object of string to string");
         }
         return parsed;
     }
 
-    private Map<String, String> tryParseStringMap(ProcessVariable pv) {
-        return tryParseStringMapValue(pv.getValue());
-    }
-
-    private Map<String, String> tryParseStringMapValue(String value) {
-        if (value == null) {
-            return null;
-        }
-        try {
-            JsonNode node = objectMapper.readTree(value);
-            if (!node.isObject()) {
-                return null;
-            }
-            Map<String, String> result = new LinkedHashMap<>();
-            node.fields().forEachRemaining(e -> result.put(e.getKey(),
-                e.getValue().isTextual() ? e.getValue().asText() : e.getValue().toString()));
-            return result;
-        } catch (JsonProcessingException e) {
-            return null;
-        }
-    }
-
-    private int timeoutSeconds(Map<String, ProcessVariable> inputs, String name, int def, int max) {
-        ProcessVariable pv = inputs.get(name);
-        if (pv == null || pv.getValue() == null || pv.getValue().isBlank()) {
-            return def;
-        }
-        long seconds;
-        try {
-            seconds = (long) Double.parseDouble(pv.getValue().strip());
-        } catch (NumberFormatException e) {
-            throw new HttpConnectorConfigException(ERR_CONFIG,
-                "input '" + name + "' must be a number of seconds (got '" + pv.getValue() + "')");
-        }
-        if (seconds <= 0 || seconds > max) {
-            throw new HttpConnectorConfigException(ERR_CONFIG,
-                "input '" + name + "' must be within 1.." + max + " seconds (got " + seconds + ")");
-        }
-        return (int) seconds;
+    private int timeoutSeconds(ConnectorInputLookup lookup, String name, int def, int max) {
+        return lookup.timeoutSeconds(name, def, max);
     }
 
     private static ProcessVariable longVar(String name, long value) {
