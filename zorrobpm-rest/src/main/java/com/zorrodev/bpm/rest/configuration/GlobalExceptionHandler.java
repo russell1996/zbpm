@@ -13,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.validation.BindingResult;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -236,18 +237,58 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(ex.getStatus()).body(body);
     }
 
+    /**
+     * WO-AUDIT-14 (F-17): the envelope's {@code code} is a stable key clients
+     * branch on. Before this fix only 400/403/404/409 were known and EVERYTHING
+     * else — 401, 405, 415, 429 — fell into {@code INTERNAL_ERROR}: the HTTP
+     * status was right, but the code claimed "our fault" for an auth refusal or
+     * a throttled request.
+     *
+     * <p>The codes below are the ones the app already uses elsewhere for the
+     * same status ({@code METHOD_NOT_ALLOWED} — the 405 handler below,
+     * {@code RATE_LIMITED} — {@code RateLimitFilter.send429} and
+     * {@code handleRegistrationRateLimit}), so a client sees ONE vocabulary.
+     *
+     * <p>The fallback is deliberately NEUTRAL ({@code HTTP_ERROR}) and not
+     * {@code INTERNAL_ERROR}: the latter stays the marker of an unhandled
+     * exception ({@link #handleGenericRuntime}) — "we crashed" must not look
+     * like "this HTTP status happened".
+     */
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<Map<String, String>> handleResponseStatus(ResponseStatusException ex) {
         String code = switch (ex.getStatusCode().value()) {
+            case 400 -> "VALIDATION_ERROR";
+            case 401 -> "UNAUTHORIZED";
             case 403 -> "FORBIDDEN";
             case 404 -> "NOT_FOUND";
-            case 400 -> "VALIDATION_ERROR";
+            case 405 -> "METHOD_NOT_ALLOWED";
             case 409 -> "CONFLICT";
+            case 415 -> "UNSUPPORTED_MEDIA_TYPE";
+            case 429 -> "RATE_LIMITED";
             default -> "INTERNAL_ERROR";
         };
         return ResponseEntity.status(ex.getStatusCode()).body(Map.of(
             "code", code,
             "message", ex.getReason() != null ? ex.getReason() : "Error"
+        ));
+    }
+
+    /**
+     * WO-AUDIT-14 (F-17): the REAL 415 — a request whose {@code Content-Type}
+     * has no converter — used to bypass the envelope completely (Spring's own
+     * error body, no {@code code} field at all). Without this handler the
+     * {@code 415 -> UNSUPPORTED_MEDIA_TYPE} row of the table above would be a
+     * promise the server never keeps: the status would carry the app's
+     * envelope only when a controller threw {@code ResponseStatusException}
+     * with 415, and nothing in the codebase does that.
+     */
+    @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<Map<String, String>> handleMediaTypeNotSupported(
+            HttpMediaTypeNotSupportedException ex) {
+        log.warn("Unsupported media type (returning 415): {}", ex.getContentType());
+        return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE).body(Map.of(
+            "code", "UNSUPPORTED_MEDIA_TYPE",
+            "message", "Unsupported media type: " + ex.getContentType()
         ));
     }
 
