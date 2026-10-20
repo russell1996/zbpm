@@ -1,0 +1,49 @@
+{
+  "id": "f2a-fail-retries-raise",
+  "title": "fail с явным retries, БОЛЬШИМ текущего бюджета: бюджет устанавливается",
+  "bpmn": "process.bpmn",
+  "processId": "f2aFailRetriesRaise",
+  "vars": {},
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "work"
+    },
+    {
+      "action": "fail",
+      "element": "work",
+      "message": "raise",
+      "retries": 7
+    },
+    {
+      "action": "observeJob",
+      "element": "work"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "work",
+        "occurrence": 2,
+        "outcome": "jobObserved",
+        "retries": 7
+      }
+    ],
+    "note": "live-8.5: retries — АБСОЛЮТНОЕ значение (3 → 7), не дельта",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "CREATED"
+      },
+      "incidents": 0,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Job workers 8.9: «Fail job commands include the number of remaining retries, which is set by the job worker.» (значение задаёт воркер — абсолютное, а не дельта)",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-fail-retries-raise.bpmn"
+}

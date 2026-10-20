@@ -1,0 +1,53 @@
+{
+  "id": "f2a-merge-root-output",
+  "title": "Слияние переменных completion при наличии output-маппинга",
+  "bpmn": "process.bpmn",
+  "processId": "f2aMergeRootOutput",
+  "vars": {
+    "greeting": "camunda"
+  },
+  "steps": [
+    {
+      "action": "complete",
+      "element": "work",
+      "vars": {
+        "c": "C"
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "dump"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "dump",
+        "outcome": "jobObserved",
+        "jobType": "f2aDump",
+        "variables": {
+          "greeting": "camunda",
+          "o": "C"
+        }
+      }
+    ],
+    "note": "live-8.5: при наличии output-маппинга переменные completion в parent-скоуп НЕ сливаются",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "COMPLETED",
+        "f2": "COMPLETED",
+        "dump": "CREATED"
+      },
+      "incidents": 0,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Service tasks 8.9: «By default, all job variables merge into the process instance. This behavior can be customized by defining an output mapping at the service task.»",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-merge-root-output.bpmn"
+}

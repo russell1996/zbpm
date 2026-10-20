@@ -1,0 +1,47 @@
+{
+  "id": "f2a-taskdef-retries",
+  "title": "retries из zeebe:taskDefinition: бюджет виден воркеру",
+  "bpmn": "process.bpmn",
+  "processId": "f2aTaskdefRetries",
+  "vars": {},
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "work"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "work",
+        "outcome": "jobObserved",
+        "retries": 7,
+        "workerVisibleRetries": null
+      }
+    ],
+    "liveReference": [
+      {
+        "step": "observeJob",
+        "element": "work",
+        "outcome": "jobObserved",
+        "retries": 7
+      }
+    ],
+    "note": "РАСХОЖДЕНИЕ (корень R4): live-8.5 отдаёт воркеру остаток бюджета в теле задания (job.retries); у нас бюджет живёт в БД, в теле задания его НЕТ — воркер не может посчитать новый бюджет по контракту Camunda. Бюджет 7 (а не 3) — намеренно: дефолт в обоих движках 3, значение 7 доказывает, что бюджет пришёл из BPMN.",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "CREATED"
+      },
+      "incidents": 0,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Service tasks 8.9: «retries (optional): Specifies the number of times the job is retried when a worker signals failure. The default is three.»",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-taskdef-retries.bpmn"
+}

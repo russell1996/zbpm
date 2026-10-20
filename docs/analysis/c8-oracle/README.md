@@ -136,6 +136,31 @@ our engine; F0 rows carry the verdict `measured-8.5 (ours pending)`.
 | `matrix.ours` | what our engine does (column 3); empty = pending |
 | `maxRounds` | safety cap for the drive loop (default 40) |
 
+## 4b. Run the F2a job-protocol scenarios (WO-OPS-30 Ф2а)
+
+`job-protocol.js` drives the **job protocol** (completion merge, fail/retries/backoff,
+`throwError`, activation timeout/redelivery, `zeebe:taskDefinition` retries, `zeebe:taskHeaders`,
+dispatch by type, no worker) against the live broker. Its scenario format is the one above,
+extended with a `steps` array — a step is either a worker action (`complete` / `fail` /
+`throwError`) or an observation (`observeJob` / `observeJobImmediately` / `activateAndAbandon` /
+`observeIncident`).
+
+```bash
+node job-protocol.js --sync     # regenerate scenarios/f2a-*/ from the canonical case list
+node job-protocol.js             # run every F2a case against the live broker
+node job-protocol.js f2a-merge-root
+```
+
+**One source of truth for both engines.** The canonical case list is
+`zorrobpm-engine/src/test/resources/job-protocol-cases.json` (BPMN + steps + expectations);
+`--sync` writes the `scenarios/f2a-<id>/` copies from it, and every run **byte-compares**
+`scenarios/f2a-<id>/process.bpmn` against
+`zorrobpm-engine/src/test/resources/job-protocol/<id>.bpmn` — a mismatch aborts the run, so the
+two engines can never be measured against different models.
+
+The matrix itself: `docs/analysis/job-protocol-conformance-matrix.md`
+(8.9 docs | Zeebe 8.5 live | ours | verdict).
+
 ## F0 finding — Zeebe 8.5 variable scoping (measured live)
 
 Measured on live Zeebe 8.5.0 (see report `docs/internal`):

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 F2a — слияние переменных completion в скоуп (подпроцесс).
+     Задание 'work' ВНУТРИ подпроцесса завершается с переменными {c}: видно,
+     в какой скоуп они слились — в скоуп подпроцесса (виден 'dumpIn') или в root
+     (виден 'rootDump'). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_f2aMergeSub" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="f2aMergeSub" name="f2aMergeSub" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="sp" />
+    <bpmn:subProcess id="sp" name="sp">
+      <bpmn:extensionElements>
+        <zeebe:ioMapping>
+          <zeebe:input source="=&quot;subValue&quot;" target="x" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:startEvent id="spStart"><bpmn:outgoing>s1</bpmn:outgoing></bpmn:startEvent>
+      <bpmn:sequenceFlow id="s1" sourceRef="spStart" targetRef="work" />
+      <bpmn:serviceTask id="work" name="work">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="f2aWork" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>s1</bpmn:incoming>
+        <bpmn:outgoing>s2</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="s2" sourceRef="work" targetRef="dumpIn" />
+      <bpmn:serviceTask id="dumpIn" name="dumpIn">
+        <bpmn:extensionElements>
+          <zeebe:taskDefinition type="f2aDumpIn" />
+        </bpmn:extensionElements>
+        <bpmn:incoming>s2</bpmn:incoming>
+        <bpmn:outgoing>s3</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sequenceFlow id="s3" sourceRef="dumpIn" targetRef="spEnd" />
+      <bpmn:endEvent id="spEnd"><bpmn:incoming>s3</bpmn:incoming></bpmn:endEvent>
+    </bpmn:subProcess>
+    <bpmn:sequenceFlow id="f2" sourceRef="sp" targetRef="rootDump" />
+    <bpmn:serviceTask id="rootDump" name="rootDump">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2aRootDump" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="rootDump" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

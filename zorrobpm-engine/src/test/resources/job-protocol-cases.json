@@ -1,0 +1,855 @@
+{
+  "_comment": [
+    "WO-OPS-30 F2a — единый список кейсов протокола job (Zeebe 8.5 live vs наш движок).",
+    "Один источник правды для обеих сторон: BPMN лежит в zorrobpm-engine/src/test/resources/job-protocol/*.bpmn,",
+    "копии — в docs/analysis/c8-oracle/scenarios/f2a-*/process.bpmn (их генерирует job-protocol.js --sync,",
+    "а при каждом прогоне оракул сверяет побайтово).",
+    "",
+    "ПРОИСХОЖДЕНИЕ ОЖИДАНИЙ (важно, поправка reviewer Б-2):",
+    "  * в 9 СООТВЕТСТВУЮЩИХ кейсах expect.observations — это ИЗМЕРЕНИЕ на живом Zeebe 8.5",
+    "    (docs/analysis/c8-oracle/scenarios/f2a-*/result-8.5.json), перенесённое как ожидание;",
+    "  * в 5 РАСХОЖДЯЩИХся кейсах ожидание фиксирует НАШЕ измеренное поведение (характеризация",
+    "    известного расхождения), а измеренное значение живого 8.5 лежит рядом в expect.liveReference",
+    "    и в поле note — по корням R1..R4 (см. docs/analysis/job-protocol-conformance-matrix.md).",
+    "    Такие ожидания сломаются, когда расхождение исправят (это и есть цель баг-WO).",
+    "Шаги: observeJob / complete / fail / throwError / activateAndAbandon (живая сторона) / wait / watchdog (наша сторона) / observeIncident."
+  ],
+  "cases": [
+    {
+      "id": "f2a-merge-root",
+      "title": "Слияние переменных completion в скоуп: корневое задание",
+      "bpmn": "job-protocol/f2a-merge-root.bpmn",
+      "processId": "f2aMergeRoot",
+      "vars": {
+        "greeting": "camunda"
+      },
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "work"
+        },
+        {
+          "action": "complete",
+          "element": "work",
+          "vars": {
+            "c": "C",
+            "n": 42
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "dump"
+        }
+      ],
+      "docs89": "Job workers 8.9: «When the job worker completes its work, it sends a complete job command along with any variables, which in turn is merged into the process instance.» / «When Completing a job the variables are propagated from the scope of the task to its higher scopes.»",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "dump",
+            "outcome": "jobObserved",
+            "jobType": "f2aDump",
+            "retries": 3,
+            "variables": {
+              "c": "C",
+              "greeting": "camunda",
+              "n": 42
+            }
+          }
+        ],
+        "note": "live-8.5: переменные completion сливаются в root-скоуп и видны следующему элементу",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "COMPLETED",
+            "f2": "COMPLETED",
+            "dump": "CREATED"
+          },
+          "incidents": 0,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-merge-sub",
+      "title": "Слияние переменных completion в скоуп: задание внутри подпроцесса",
+      "bpmn": "job-protocol/f2a-merge-sub.bpmn",
+      "processId": "f2aMergeSub",
+      "vars": {},
+      "steps": [
+        {
+          "action": "complete",
+          "element": "work",
+          "vars": {
+            "c": "C"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "dumpIn"
+        },
+        {
+          "action": "complete",
+          "element": "dumpIn",
+          "vars": {}
+        },
+        {
+          "action": "observeJob",
+          "element": "rootDump"
+        }
+      ],
+      "docs89": "Job workers 8.9: «When Completing a job the variables are propagated from the scope of the task to its higher scopes.» (скоуп задания и ВЫШЕ — до root)",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "dumpIn",
+            "outcome": "jobObserved",
+            "jobType": "f2aDumpIn",
+            "variables": {
+              "c": "C",
+              "x": "subValue"
+            }
+          },
+          {
+            "step": "observeJob",
+            "element": "rootDump",
+            "outcome": "jobObserved",
+            "jobType": "f2aRootDump",
+            "variables": {
+              "c": "C"
+            }
+          }
+        ],
+        "note": "live-8.5: переменная скоупа подпроцесса (x) в root НЕ уходит, переменная completion (c) — уходит в root",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "sp": "COMPLETED",
+            "spStart": "COMPLETED",
+            "s1": "COMPLETED",
+            "work": "COMPLETED",
+            "s2": "COMPLETED",
+            "dumpIn": "COMPLETED",
+            "s3": "COMPLETED",
+            "spEnd": "COMPLETED",
+            "f2": "COMPLETED",
+            "rootDump": "CREATED"
+          },
+          "incidents": 0,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-merge-root-output",
+      "title": "Слияние переменных completion при наличии output-маппинга",
+      "bpmn": "job-protocol/f2a-merge-root-output.bpmn",
+      "processId": "f2aMergeRootOutput",
+      "vars": {
+        "greeting": "camunda"
+      },
+      "steps": [
+        {
+          "action": "complete",
+          "element": "work",
+          "vars": {
+            "c": "C"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "dump"
+        }
+      ],
+      "docs89": "Service tasks 8.9: «By default, all job variables merge into the process instance. This behavior can be customized by defining an output mapping at the service task.»",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "dump",
+            "outcome": "jobObserved",
+            "jobType": "f2aDump",
+            "variables": {
+              "greeting": "camunda",
+              "o": "C"
+            }
+          }
+        ],
+        "note": "live-8.5: при наличии output-маппинга переменные completion в parent-скоуп НЕ сливаются",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "COMPLETED",
+            "f2": "COMPLETED",
+            "dump": "CREATED"
+          },
+          "incidents": 0,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-fail-retries",
+      "title": "fail: бюджет попыток уменьшается, на нуле — инцидент",
+      "bpmn": "job-protocol/f2a-fail-retries.bpmn",
+      "processId": "f2aFailRetries",
+      "vars": {},
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "work"
+        },
+        {
+          "action": "fail",
+          "element": "work",
+          "message": "boom-2",
+          "retries": 2
+        },
+        {
+          "action": "observeJob",
+          "element": "work"
+        },
+        {
+          "action": "fail",
+          "element": "work",
+          "message": "boom-1",
+          "retries": 1
+        },
+        {
+          "action": "observeJob",
+          "element": "work"
+        },
+        {
+          "action": "fail",
+          "element": "work",
+          "message": "boom-0",
+          "retries": 0
+        },
+        {
+          "action": "observeJob",
+          "element": "work"
+        },
+        {
+          "action": "observeIncident",
+          "element": "work"
+        }
+      ],
+      "docs89": "Job workers 8.9: «Fail job commands include the number of remaining retries, which is set by the job worker. If remaining retries is greater than zero, the job is retried and reassigned. If remaining retries is zero or negative, an incident is raised and the job is not retried until the incident is resolved.»",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "work",
+            "occurrence": 1,
+            "outcome": "jobObserved",
+            "retries": 3
+          },
+          {
+            "step": "observeJob",
+            "element": "work",
+            "occurrence": 2,
+            "outcome": "jobObserved",
+            "retries": 2
+          },
+          {
+            "step": "observeJob",
+            "element": "work",
+            "occurrence": 3,
+            "outcome": "jobObserved",
+            "retries": 1
+          },
+          {
+            "step": "observeJob",
+            "element": "work",
+            "occurrence": 4,
+            "outcome": "noJob"
+          },
+          {
+            "step": "observeIncident",
+            "element": "work",
+            "outcome": "incident",
+            "messageContains": "boom-0"
+          }
+        ],
+        "note": "live-8.5: retries 3→2→1→0, на нуле job больше не выдаётся и поднимается инцидент с текстом отказа",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "ERROR"
+          },
+          "incidents": 1,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-fail-retries-raise",
+      "title": "fail с явным retries, БОЛЬШИМ текущего бюджета: бюджет устанавливается",
+      "bpmn": "job-protocol/f2a-fail-retries-raise.bpmn",
+      "processId": "f2aFailRetriesRaise",
+      "vars": {},
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "work"
+        },
+        {
+          "action": "fail",
+          "element": "work",
+          "message": "raise",
+          "retries": 7
+        },
+        {
+          "action": "observeJob",
+          "element": "work"
+        }
+      ],
+      "docs89": "Job workers 8.9: «Fail job commands include the number of remaining retries, which is set by the job worker.» (значение задаёт воркер — абсолютное, а не дельта)",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "work",
+            "occurrence": 2,
+            "outcome": "jobObserved",
+            "retries": 7
+          }
+        ],
+        "note": "live-8.5: retries — АБСОЛЮТНОЕ значение (3 → 7), не дельта",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "CREATED"
+          },
+          "incidents": 0,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-fail-backoff",
+      "title": "fail с backoff: задание не выдаётся до истечения backoff",
+      "bpmn": "job-protocol/f2a-fail-backoff.bpmn",
+      "processId": "f2aFailBackoff",
+      "vars": {},
+      "steps": [
+        {
+          "action": "fail",
+          "element": "work",
+          "message": "backoff",
+          "retries": 2,
+          "retryBackOffMs": 5000
+        },
+        {
+          "action": "observeJobImmediately",
+          "element": "work"
+        },
+        {
+          "action": "wait",
+          "ms": 6000
+        },
+        {
+          "action": "observeJob",
+          "element": "work"
+        }
+      ],
+      "docs89": "Job workers 8.9: «When failing a job it is possible to specify a retry back off. This back off allows waiting for a specified amount of time before retrying the job... If no retry back off the job is immediately retried.»",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJobImmediately",
+            "element": "work",
+            "outcome": "jobObserved",
+            "retries": 2
+          }
+        ],
+        "liveReference": [
+          {
+            "step": "observeJobImmediately",
+            "element": "work",
+            "outcome": "notActivatable"
+          }
+        ],
+        "note": "РАСХОЖДЕНИЕ (корень R1): live-8.5 не выдаёт задание до истечения retryBackOff; у нас повтор уходит в очередь сразу",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "CREATED"
+          },
+          "incidents": 0,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-fail-variables",
+      "title": "fail с переменными: они создаются только в локальном скоупе задания",
+      "bpmn": "job-protocol/f2a-fail-variables.bpmn",
+      "processId": "f2aFailVariables",
+      "vars": {
+        "greeting": "camunda"
+      },
+      "steps": [
+        {
+          "action": "fail",
+          "element": "work",
+          "message": "partial",
+          "retries": 2,
+          "vars": {
+            "c": "C"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "work"
+        },
+        {
+          "action": "complete",
+          "element": "work",
+          "vars": {}
+        },
+        {
+          "action": "observeJob",
+          "element": "dump"
+        }
+      ],
+      "docs89": "Job workers 8.9: «When Failing a job the variables are only created in the local scope of the task.»",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "work",
+            "occurrence": 1,
+            "outcome": "jobObserved",
+            "retries": 2,
+            "variables": {
+              "greeting": "camunda"
+            }
+          }
+        ],
+        "liveReference": [
+          {
+            "step": "observeJob",
+            "element": "work",
+            "occurrence": 1,
+            "outcome": "jobObserved",
+            "retries": 2,
+            "variables": {
+              "c": "C",
+              "greeting": "camunda"
+            }
+          }
+        ],
+        "note": "РАСХОЖДЕНИЕ (корень R2): live-8.5 принимает переменные вместе с отказом (локальный скоуп задания); наш fail-API переменных не принимает",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "COMPLETED",
+            "f2": "COMPLETED",
+            "dump": "CREATED"
+          },
+          "incidents": 0,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-throw-boundary",
+      "title": "throwError, пойманный границей ошибки",
+      "bpmn": "job-protocol/f2a-throw-boundary.bpmn",
+      "processId": "f2aThrowBoundary",
+      "vars": {},
+      "steps": [
+        {
+          "action": "throwError",
+          "element": "work",
+          "code": "E1",
+          "message": "boom"
+        },
+        {
+          "action": "observeJob",
+          "element": "after"
+        },
+        {
+          "action": "observeJob",
+          "element": "dump"
+        }
+      ],
+      "docs89": "Error events 8.9: «A thrown error can be caught by an error catch event, specifically using an error boundary event or an error event subprocess.» / «Error boundary events and error event subprocesses must be interrupting... If the error is thrown for a job, the associated task is terminated first.»",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "after",
+            "outcome": "jobObserved",
+            "jobType": "f2aAfter"
+          },
+          {
+            "step": "observeJob",
+            "element": "dump",
+            "outcome": "noJob"
+          }
+        ],
+        "note": "live-8.5: граница ловит ошибку, поток продолжается из границы, обычный исходящий поток НЕ берётся",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "CANCELLED",
+            "f4": "COMPLETED",
+            "after": "CREATED"
+          },
+          "incidents": 0,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-throw-no-boundary",
+      "title": "throwError без границы ошибки: необработанная ошибка",
+      "bpmn": "job-protocol/f2a-throw-no-boundary.bpmn",
+      "processId": "f2aThrowNoBoundary",
+      "vars": {},
+      "steps": [
+        {
+          "action": "throwError",
+          "element": "work",
+          "code": "E1",
+          "message": "boom"
+        },
+        {
+          "action": "observeJob",
+          "element": "dump"
+        },
+        {
+          "action": "observeIncident",
+          "element": "work"
+        }
+      ],
+      "docs89": "Error events 8.9: «When an error is thrown and not caught, an incident (for example, Unhandled error event) is raised... The incident is attached to the corresponding element where the error was thrown (that is, the task of the processed job).»",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "dump",
+            "outcome": "noJob"
+          },
+          {
+            "step": "observeIncident",
+            "element": "work",
+            "outcome": "incident",
+            "messageContains": "Unhandled BPMN error 'E1'"
+          }
+        ],
+        "note": "live-8.5: необработанная ошибка → инцидент на элементе, инстанс жив, следующего задания нет",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "ERROR"
+          },
+          "incidents": 1,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-timeout-redelivery",
+      "title": "Таймаут активации задания и повторная выдача",
+      "bpmn": "job-protocol/f2a-timeout-redelivery.bpmn",
+      "processId": "f2aTimeoutRedelivery",
+      "vars": {},
+      "steps": [
+        {
+          "action": "activateAndAbandon",
+          "element": "work",
+          "timeoutMs": 2000
+        },
+        {
+          "action": "wait",
+          "ms": 5000
+        },
+        {
+          "action": "observeJob",
+          "element": "work"
+        }
+      ],
+      "docs89": "Job workers 8.9 (Timeouts): «If the job is not completed or failed within the configured job activation timeout, Zeebe reassigns the job to another job worker. This does not affect the number of remaining retries.»",
+      "expect": {
+        "observations": [
+          {
+            "step": "activateAndAbandon",
+            "element": "work",
+            "outcome": "dispatchedNoActivationTimeout"
+          }
+        ],
+        "liveReference": [
+          {
+            "step": "activateAndAbandon",
+            "element": "work",
+            "outcome": "activatedAndAbandoned",
+            "retries": 3
+          },
+          {
+            "step": "observeJob",
+            "element": "work",
+            "outcome": "jobObserved",
+            "retries": 3
+          }
+        ],
+        "note": "РАСХОЖДЕНИЕ (корень R3): live-8.5 по истечении таймаута активации отдаёт задание СНОВА (бюджет не тратится); у нас нет ни активации, ни лизы — задание ушло в очередь один раз",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "CREATED"
+          },
+          "incidents": 0,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-taskdef-retries",
+      "title": "retries из zeebe:taskDefinition: бюджет виден воркеру",
+      "bpmn": "job-protocol/f2a-taskdef-retries.bpmn",
+      "processId": "f2aTaskdefRetries",
+      "vars": {},
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "work"
+        }
+      ],
+      "docs89": "Service tasks 8.9: «retries (optional): Specifies the number of times the job is retried when a worker signals failure. The default is three.»",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "work",
+            "outcome": "jobObserved",
+            "retries": 7,
+            "workerVisibleRetries": null
+          }
+        ],
+        "liveReference": [
+          {
+            "step": "observeJob",
+            "element": "work",
+            "outcome": "jobObserved",
+            "retries": 7
+          }
+        ],
+        "note": "РАСХОЖДЕНИЕ (корень R4): live-8.5 отдаёт воркеру остаток бюджета в теле задания (job.retries); у нас бюджет живёт в БД, в теле задания его НЕТ — воркер не может посчитать новый бюджет по контракту Camunda. Бюджет 7 (а не 3) — намеренно: дефолт в обоих движках 3, значение 7 доказывает, что бюджет пришёл из BPMN.",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "CREATED"
+          },
+          "incidents": 0,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-taskheaders",
+      "title": "zeebe:taskHeaders: пользовательские заголовки задания",
+      "bpmn": "job-protocol/f2a-taskheaders.bpmn",
+      "processId": "f2aTaskHeaders",
+      "vars": {},
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "work"
+        }
+      ],
+      "docs89": "Service tasks 8.9: «A service task can define an arbitrary number of taskHeaders; they are static metadata handed to workers along with the job.»",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "work",
+            "outcome": "jobObserved",
+            "taskHeaders": {
+              "tenant": "acme",
+              "region": "eu"
+            }
+          }
+        ],
+        "note": "live-8.5: zeebe:taskHeaders доезжают до воркера (customHeaders)",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "CREATED"
+          },
+          "incidents": 0,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-dispatch-by-type",
+      "title": "Диспатч по типу: два типа заданий",
+      "bpmn": "job-protocol/f2a-dispatch-by-type.bpmn",
+      "processId": "f2aDispatchByType",
+      "vars": {},
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "workA"
+        },
+        {
+          "action": "complete",
+          "element": "workA",
+          "vars": {
+            "a": 1
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "workB"
+        },
+        {
+          "action": "observeJob",
+          "element": "workA"
+        }
+      ],
+      "docs89": "Job workers 8.9: «Type: Describes the work item and is defined in each task in the process. The type is referenced by workers to request the jobs they are able to perform.»",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "workA",
+            "occurrence": 1,
+            "outcome": "jobObserved",
+            "jobType": "f2aTypeA"
+          },
+          {
+            "step": "observeJob",
+            "element": "workB",
+            "occurrence": 1,
+            "outcome": "jobObserved",
+            "jobType": "f2aTypeB",
+            "variables": {
+              "a": 1
+            }
+          },
+          {
+            "step": "observeJob",
+            "element": "workA",
+            "occurrence": 2,
+            "outcome": "noJob"
+          }
+        ],
+        "note": "live-8.5: активация по типу — воркер на тип X получает только задания типа X",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "workA": "COMPLETED",
+            "f2": "COMPLETED",
+            "workB": "CREATED"
+          },
+          "incidents": 0,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    },
+    {
+      "id": "f2a-no-worker",
+      "title": "Воркера нет: задание dispatched, но не взято",
+      "bpmn": "job-protocol/f2a-no-worker.bpmn",
+      "processId": "f2aNoWorker",
+      "vars": {},
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "work",
+          "timeoutMs": 2000
+        },
+        {
+          "action": "wait",
+          "ms": 5000
+        },
+        {
+          "action": "observeJob",
+          "element": "work"
+        },
+        {
+          "action": "watchdog",
+          "oursOnly": true
+        },
+        {
+          "action": "observeIncident",
+          "element": "work"
+        }
+      ],
+      "docs89": "Job workers 8.9 (Job queuing): «Zeebe queues jobs until workers request them... Zeebe queues all jobs during any job worker outages, and progress resumes as soon as workers are available.» (инцидента нет)",
+      "expect": {
+        "observations": [
+          {
+            "step": "observeJob",
+            "element": "work",
+            "occurrence": 1,
+            "outcome": "jobObserved",
+            "retries": 3
+          },
+          {
+            "step": "observeJob",
+            "element": "work",
+            "occurrence": 2,
+            "outcome": "jobObserved",
+            "retries": 3
+          },
+          {
+            "step": "observeIncident",
+            "element": "work",
+            "outcome": "incident",
+            "messageContains": "SERVICE_TASK_DISPATCH_TIMEOUT"
+          }
+        ],
+        "liveReference": [
+          {
+            "step": "observeJob",
+            "element": "work",
+            "occurrence": 1,
+            "outcome": "jobObserved",
+            "retries": 3
+          },
+          {
+            "step": "observeJob",
+            "element": "work",
+            "occurrence": 2,
+            "outcome": "jobObserved",
+            "retries": 3
+          },
+          {
+            "step": "observeIncident",
+            "element": "work",
+            "outcome": "noIncident"
+          }
+        ],
+        "note": "ОСОЗНАННОЕ РАСХОЖДЕНИЕ (корень R3, by design — WO-REL-27): live-8.5 молча ждёт — задание в очереди брокера, через 5 с оно ПРЕДЛАГАЕТСЯ воркеру снова (jobObserved), инцидента НЕТ. У нас задание тоже остаётся dispatched, но по dispatch-timeout (15 мин) поднимается инцидент SERVICE_TASK_DISPATCH_TIMEOUT: воркера нет — это сигнал оператору, а не тишина.",
+        "leak": {
+          "activities": {
+            "start": "COMPLETED",
+            "f1": "COMPLETED",
+            "work": "CREATED"
+          },
+          "incidents": 1,
+          "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+        }
+      }
+    }
+  ]
+}

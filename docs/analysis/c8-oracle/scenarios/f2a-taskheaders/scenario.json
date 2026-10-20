@@ -1,0 +1,41 @@
+{
+  "id": "f2a-taskheaders",
+  "title": "zeebe:taskHeaders: пользовательские заголовки задания",
+  "bpmn": "process.bpmn",
+  "processId": "f2aTaskHeaders",
+  "vars": {},
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "work"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "work",
+        "outcome": "jobObserved",
+        "taskHeaders": {
+          "tenant": "acme",
+          "region": "eu"
+        }
+      }
+    ],
+    "note": "live-8.5: zeebe:taskHeaders доезжают до воркера (customHeaders)",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "CREATED"
+      },
+      "incidents": 0,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Service tasks 8.9: «A service task can define an arbitrary number of taskHeaders; they are static metadata handed to workers along with the job.»",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-taskheaders.bpmn"
+}

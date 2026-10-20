@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 F2a — throwError пойман границей ошибки.
+     Воркер бросает ошибку с кодом E1; граница ошибки на 'work' должна поймать
+     её, отменить work и продолжить поток из 'after' (обычный поток work→dump
+     НЕ берётся). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_f2aThrowBoundary" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:error id="f2aErr" name="f2aErr" errorCode="E1" />
+  <bpmn:process id="f2aThrowBoundary" name="f2aThrowBoundary" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="work" />
+    <bpmn:serviceTask id="work" name="work">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2aWork" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="work" targetRef="dump" />
+    <bpmn:serviceTask id="dump" name="dump">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2aDump" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="dump" targetRef="endWork" />
+    <bpmn:endEvent id="endWork"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+    <bpmn:boundaryEvent id="bnd" name="bnd" attachedToRef="work" cancelActivity="true">
+      <bpmn:outgoing>f4</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ed" errorRef="f2aErr" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="f4" sourceRef="bnd" targetRef="after" />
+    <bpmn:serviceTask id="after" name="after">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2aAfter" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f4</bpmn:incoming>
+      <bpmn:outgoing>f5</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f5" sourceRef="after" targetRef="endAfter" />
+    <bpmn:endEvent id="endAfter"><bpmn:incoming>f5</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

@@ -1,0 +1,77 @@
+{
+  "id": "f2a-fail-variables",
+  "title": "fail с переменными: они создаются только в локальном скоупе задания",
+  "bpmn": "process.bpmn",
+  "processId": "f2aFailVariables",
+  "vars": {
+    "greeting": "camunda"
+  },
+  "steps": [
+    {
+      "action": "fail",
+      "element": "work",
+      "message": "partial",
+      "retries": 2,
+      "vars": {
+        "c": "C"
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "work"
+    },
+    {
+      "action": "complete",
+      "element": "work",
+      "vars": {}
+    },
+    {
+      "action": "observeJob",
+      "element": "dump"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "work",
+        "occurrence": 1,
+        "outcome": "jobObserved",
+        "retries": 2,
+        "variables": {
+          "greeting": "camunda"
+        }
+      }
+    ],
+    "liveReference": [
+      {
+        "step": "observeJob",
+        "element": "work",
+        "occurrence": 1,
+        "outcome": "jobObserved",
+        "retries": 2,
+        "variables": {
+          "c": "C",
+          "greeting": "camunda"
+        }
+      }
+    ],
+    "note": "РАСХОЖДЕНИЕ (корень R2): live-8.5 принимает переменные вместе с отказом (локальный скоуп задания); наш fail-API переменных не принимает",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "COMPLETED",
+        "f2": "COMPLETED",
+        "dump": "CREATED"
+      },
+      "incidents": 0,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Job workers 8.9: «When Failing a job the variables are only created in the local scope of the task.»",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-fail-variables.bpmn"
+}

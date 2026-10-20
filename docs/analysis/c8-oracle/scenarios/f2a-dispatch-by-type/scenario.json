@@ -1,0 +1,72 @@
+{
+  "id": "f2a-dispatch-by-type",
+  "title": "Диспатч по типу: два типа заданий",
+  "bpmn": "process.bpmn",
+  "processId": "f2aDispatchByType",
+  "vars": {},
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "workA"
+    },
+    {
+      "action": "complete",
+      "element": "workA",
+      "vars": {
+        "a": 1
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "workB"
+    },
+    {
+      "action": "observeJob",
+      "element": "workA"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "workA",
+        "occurrence": 1,
+        "outcome": "jobObserved",
+        "jobType": "f2aTypeA"
+      },
+      {
+        "step": "observeJob",
+        "element": "workB",
+        "occurrence": 1,
+        "outcome": "jobObserved",
+        "jobType": "f2aTypeB",
+        "variables": {
+          "a": 1
+        }
+      },
+      {
+        "step": "observeJob",
+        "element": "workA",
+        "occurrence": 2,
+        "outcome": "noJob"
+      }
+    ],
+    "note": "live-8.5: активация по типу — воркер на тип X получает только задания типа X",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "workA": "COMPLETED",
+        "f2": "COMPLETED",
+        "workB": "CREATED"
+      },
+      "incidents": 0,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Job workers 8.9: «Type: Describes the work item and is defined in each task in the process. The type is referenced by workers to request the jobs they are able to perform.»",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-dispatch-by-type.bpmn"
+}
