@@ -243,4 +243,58 @@ public class MiTaskCompletionConditionSiblingsPgIT extends PostgresIT {
         assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
         assertNoLeaks(pi);
     }
+
+    /**
+     * G-P на PostgreSQL: порог 2 из 3 (частичная конвергенция) — после первого
+     * завершения тело ещё живо, после второго третий инстанс терминируется.
+     */
+    @Test
+    void twoOfThree_thresholdAfterSecond_terminated_onPostgres() throws Exception {
+        UUID pi = deployAndStart("test-c857-mi-task-cc-parallel-threshold2.bpmn");
+
+        List<ActivityEntity> instances = liveInstances(pi, "miTask");
+        assertThat(instances).as("3 MI instances at entry").hasSize(3);
+        Map<String, ActivityEntity> byItem = byItem(pi, instances);
+
+        ensureTx();
+        tx.execute(s -> {
+            runtimeService.completeServiceTask(byItem.get("a").getId(), List.of());
+            return null;
+        });
+
+        assertThat(liveInstances(pi, "miTask"))
+            .as("condition not met after the first completion — body still waits").hasSize(2);
+        assertThat(activities(pi, "miTask", ActivityStatus.COMPLETED)).hasSize(1);
+        assertThat(activities(pi, "dump", ActivityStatus.CREATED))
+            .as("downstream not created while the condition is not met").isEmpty();
+
+        ensureTx();
+        tx.execute(s -> {
+            runtimeService.completeServiceTask(byItem.get("b").getId(), List.of());
+            return null;
+        });
+
+        assertThat(liveInstances(pi, "miTask"))
+            .as("LEAK-INVARIANT: third instance terminated by the completionCondition").isEmpty();
+        assertThat(activities(pi, "miTask", ActivityStatus.CANCELLED)).hasSize(1);
+        assertThat(activities(pi, "miTask", ActivityStatus.COMPLETED)).hasSize(2);
+        assertThat(activities(pi, "dump", ActivityStatus.CREATED)).as("MI body closed").hasSize(1);
+
+        List<String> results = resultsOf(pi);
+        assertThat(results).hasSize(3);
+        assertThat(results.get(0)).isEqualTo("a");
+        assertThat(results.get(1)).isEqualTo("b");
+        assertThat(results.get(2)).as("terminated slot stays null").isNull();
+
+        tx.execute(s -> {
+            runtimeService.completeServiceTask(
+                activityRepository.findAll().stream()
+                    .filter(a -> a.getProcessInstanceId().equals(pi))
+                    .filter(a -> "dump".equals(a.getBpmnElementId()))
+                    .findFirst().orElseThrow().getId(), List.of());
+            return null;
+        });
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+        assertNoLeaks(pi);
+    }
 }

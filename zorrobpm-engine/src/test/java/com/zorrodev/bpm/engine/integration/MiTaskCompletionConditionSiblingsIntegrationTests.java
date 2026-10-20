@@ -332,6 +332,150 @@ public class MiTaskCompletionConditionSiblingsIntegrationTests {
 
         runtimeService.completeServiceTask(activities(pi, "dump", ActivityStatus.CREATED).get(0).getId(), List.of());
 
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).as("instance completed").isNotNull();
+        assertNoLeaks(pi);
+    }
+
+    // ──────────────────────────────────────────────────────────────
+    // G-P: матрица комбинаций — cardinality × порог условия × порядок
+    // (не «один удобный порядок»): 1/2/3 элемента, порог 1 и 2,
+    // параллельный и последовательный MI.
+    // ──────────────────────────────────────────────────────────────
+
+    /** cardinality = 1: сиблингов нет — терминировать нечего, тело закрывается штатно. */
+    @Transactional
+    @Test
+    void parallel_singleInstance_noSiblings_bodyClosesWithoutLeaks() throws Exception {
+        UUID pdId = deploy("test-c857-mi-task-cc-parallel-one.bpmn");
+        UUID pi = start(pdId);
+
+        List<ActivityEntity> instances = liveInstances(pi, "miTask");
+        assertThat(instances).as("single MI instance").hasSize(1);
+
+        runtimeService.completeServiceTask(instances.get(0).getId(), List.of());
+
+        assertThat(liveInstances(pi, "miTask")).as("no live instance left").isEmpty();
+        assertThat(activities(pi, "miTask", ActivityStatus.COMPLETED)).hasSize(1);
+        assertThat(activities(pi, "miTask", ActivityStatus.CANCELLED)).hasSize(0);
+        assertThat(activities(pi, "dump", ActivityStatus.CREATED)).as("MI body closed").hasSize(1);
+
+        List<String> results = resultsOf(pi);
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0)).isEqualTo("a");
+
+        runtimeService.completeServiceTask(activities(pi, "dump", ActivityStatus.CREATED).get(0).getId(), List.of());
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+        assertNoLeaks(pi);
+    }
+
+    /** cardinality = 2: первый завершён — второй терминирован (results = ["a", null]). */
+    @Transactional
+    @Test
+    void parallel_twoInstances_conditionAfterFirst_remainingTerminated() throws Exception {
+        UUID pdId = deploy("test-c857-mi-task-cc-parallel-two.bpmn");
+        UUID pi = start(pdId);
+
+        List<ActivityEntity> instances = liveInstances(pi, "miTask");
+        assertThat(instances).as("2 MI instances").hasSize(2);
+        Map<String, ActivityEntity> byItem = byItem(pi, instances);
+
+        runtimeService.completeServiceTask(byItem.get("a").getId(), List.of());
+
+        assertThat(liveInstances(pi, "miTask")).as("remaining instance terminated").isEmpty();
+        assertThat(activities(pi, "miTask", ActivityStatus.CANCELLED)).hasSize(1);
+        assertThat(activities(pi, "miTask", ActivityStatus.COMPLETED)).hasSize(1);
+        assertThat(activities(pi, "dump", ActivityStatus.CREATED)).as("MI body closed").hasSize(1);
+
+        List<String> results = resultsOf(pi);
+        assertThat(results).as("2 slots").hasSize(2);
+        assertThat(results.get(0)).isEqualTo("a");
+        assertThat(results.get(1)).as("terminated slot stays null").isNull();
+
+        runtimeService.completeServiceTask(activities(pi, "dump", ActivityStatus.CREATED).get(0).getId(), List.of());
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+        assertNoLeaks(pi);
+    }
+
+    /**
+     * cardinality = 3, порог = 2 (частичная конвергенция): первый приход условие НЕ
+     * закрывает — тело ждёт; второй приход закрывает, ТРЕТИЙ инстанс терминируется.
+     */
+    @Transactional
+    @Test
+    void parallel_twoOfThree_conditionAfterSecond_remainingTerminated() throws Exception {
+        UUID pdId = deploy("test-c857-mi-task-cc-parallel-threshold2.bpmn");
+        UUID pi = start(pdId);
+
+        List<ActivityEntity> instances = liveInstances(pi, "miTask");
+        assertThat(instances).as("3 MI instances").hasSize(3);
+        Map<String, ActivityEntity> byItem = byItem(pi, instances);
+
+        runtimeService.completeServiceTask(byItem.get("a").getId(), List.of());
+
+        // Порог 2: после ОДНОГО завершения тело ещё живо — остаются два инстанса (b, c).
+        assertThat(liveInstances(pi, "miTask"))
+            .as("condition not met after the first completion — body still waits").hasSize(2);
+        assertThat(activities(pi, "miTask", ActivityStatus.COMPLETED)).hasSize(1);
+        assertThat(activities(pi, "dump", ActivityStatus.CREATED))
+            .as("downstream not created while the condition is not met").isEmpty();
+
+        runtimeService.completeServiceTask(byItem.get("b").getId(), List.of());
+
+        assertThat(liveInstances(pi, "miTask")).as("third instance terminated").isEmpty();
+        assertThat(activities(pi, "miTask", ActivityStatus.CANCELLED)).hasSize(1);
+        assertThat(activities(pi, "miTask", ActivityStatus.COMPLETED)).hasSize(2);
+        assertThat(activities(pi, "dump", ActivityStatus.CREATED)).as("MI body closed").hasSize(1);
+
+        List<String> results = resultsOf(pi);
+        assertThat(results).as("3 slots").hasSize(3);
+        assertThat(results.get(0)).isEqualTo("a");
+        assertThat(results.get(1)).isEqualTo("b");
+        assertThat(results.get(2)).as("terminated slot stays null").isNull();
+
+        runtimeService.completeServiceTask(activities(pi, "dump", ActivityStatus.CREATED).get(0).getId(), List.of());
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+        assertNoLeaks(pi);
+    }
+
+    /**
+     * Последовательный MI с порогом 2: второй инстанс создаётся, а ТРЕТИЙ — нет:
+     * условие закрывает тело на втором завершении (Zeebe: активные инстансы
+     * терминируются, новые не создаются).
+     */
+    @Transactional
+    @Test
+    void sequential_thresholdAfterSecond_thirdInstanceNotCreated() throws Exception {
+        UUID pdId = deploy("test-c857-mi-task-cc-sequential-threshold2.bpmn");
+        UUID pi = start(pdId);
+
+        List<ActivityEntity> first = liveInstances(pi, "miTask");
+        assertThat(first).as("sequential MI — one live instance").hasSize(1);
+        assertThat(byItem(pi, first).keySet()).containsExactly("a");
+
+        runtimeService.completeServiceTask(first.get(0).getId(), List.of());
+
+        // Порог 2: тело ещё живо, следующий инстанс (b) создан.
+        List<ActivityEntity> second = liveInstances(pi, "miTask");
+        assertThat(second).as("second sequential instance spawned").hasSize(1);
+        assertThat(byItem(pi, second).keySet()).containsExactly("b");
+        assertThat(activities(pi, "dump", ActivityStatus.CREATED))
+            .as("downstream not created while the condition is not met").isEmpty();
+
+        runtimeService.completeServiceTask(second.get(0).getId(), List.of());
+
+        assertThat(liveInstances(pi, "miTask")).as("no live instance left").isEmpty();
+        assertThat(activities(pi, "miTask", ActivityStatus.COMPLETED)).hasSize(2);
+        assertThat(activities(pi, "miTask", ActivityStatus.CANCELLED))
+            .as("no instance to cancel — the third was never created").hasSize(0);
+        assertThat(activities(pi, "dump", ActivityStatus.CREATED)).as("MI body closed").hasSize(1);
+
+        List<String> results = resultsOf(pi);
+        assertThat(results).as("3 slots pre-created, 2 filled").hasSize(3);
+        assertThat(results.get(0)).isEqualTo("a");
+        assertThat(results.get(1)).isEqualTo("b");
+        assertThat(results.get(2)).as("third slot stays null").isNull();
+
+        runtimeService.completeServiceTask(activities(pi, "dump", ActivityStatus.CREATED).get(0).getId(), List.of());
         assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
         assertNoLeaks(pi);
     }
