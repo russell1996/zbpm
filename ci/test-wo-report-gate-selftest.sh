@@ -185,7 +185,10 @@ expect_marker_cyr() { # <label> <report> <expected: ok|fail>
     echo "SELFTEST OK      $label (LC_ALL=C: G25 '$want' as expected)"
   else
     echo "SELFTEST FAILURE $label - ci/test-wo-report-gate-selftest.sh:$ln expected a G25 '$want' line under LC_ALL=C"
-    printf '%s\n' "$out" | grep -E 'G25' | head -3
+    # `|| true`: the gate may print no G25 line at all (e.g. against a gate without G25) — under
+    # `set -euo pipefail` a failing grep in this pipeline would abort the whole selftest before
+    # the summary, so the failure count would never be printed.
+    printf '%s\n' "$out" | grep -E 'G25' | head -3 || true
     FAILED=$((FAILED + 1))
   fi
 }
