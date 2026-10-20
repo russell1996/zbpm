@@ -192,7 +192,7 @@ curl -X POST http://localhost:8080/process-instances -H 'Content-Type: applicati
 |---|---|
 | Конфигурация (переменные окружения и свойства) | [docs/reference/operations.md](docs/reference/operations.md) |
 | Мониторинг «из коробки» (Prometheus + Grafana) | [docs/reference/operations.md](docs/reference/operations.md) |
-| Безопасность: вход, роли, API-ключи | [docs/reference/security.md](docs/reference/security.md) |
+| Безопасность: вход, роли, API-ключи, модель доверия канала завершений | [docs/reference/security.md](docs/reference/security.md) |
 | База данных, миграции, ретеншен, бэкапы | [docs/reference/operations.md](docs/reference/operations.md), [docs/guides/retention.md](docs/guides/retention.md) |
 | Деплой, откат, CI/CD | [docs/reference/operations.md](docs/reference/operations.md) |
 | Аварийные процедуры | [docs/runbooks/](docs/runbooks/) |
