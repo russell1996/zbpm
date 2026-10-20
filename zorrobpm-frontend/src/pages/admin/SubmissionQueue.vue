@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useToast } from '@/composables/useToast'
+import { useListState } from '@/composables/useListState'
 import { getPendingSubmissions, approveSubmission, rejectSubmission, getSubmissionBpmn, type ProcessSubmission } from '@/services/submissionService'
 import { translatedError } from '@/shared/lib/utils'
 import BpmnViewer from '@/widgets/bpmn/BpmnViewer.vue'
@@ -22,7 +23,13 @@ const statusOptions = [
   { value: 'REJECTED', label: 'submissionStatusRejected' },
   { value: 'ALL', label: 'submissionStatusAll' },
 ] as const
-const statusFilter = ref<string>('PENDING')
+// WO-UI-39: фильтр статуса живёт в query-параметрах маршрута
+// (?submissions.status=APPROVED) — переживает перезагрузку страницы.
+const { state } = useListState<{
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL'
+}>('submissions', {
+  status: { default: 'PENDING', values: ['PENDING', 'APPROVED', 'REJECTED', 'ALL'] },
+})
 
 const submissions = ref<ProcessSubmission[]>([])
 const loading = ref(false)
@@ -46,7 +53,7 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-  submissions.value = await getPendingSubmissions(statusFilter.value)
+  submissions.value = await getPendingSubmissions(state.status)
   } catch (e) {
     error.value = translatedError(e, t, t('failedToLoadSubmissions'))
   } finally {
@@ -54,14 +61,14 @@ async function load() {
   }
 }
 
-function switchStatus(value: string) {
-  if (statusFilter.value === value) return
-  statusFilter.value = value
+function switchStatus(value: typeof state.status) {
+  if (state.status === value) return
+  state.status = value
   void load()
 }
 
 const emptyStateLabel = computed(() =>
-  statusFilter.value === 'PENDING' ? t('noPendingSubmissions') : t('noSubmissionsInStatus'),
+  state.status === 'PENDING' ? t('noPendingSubmissions') : t('noSubmissionsInStatus'),
 )
 
 async function openView(s: ProcessSubmission) {
@@ -146,9 +153,9 @@ onMounted(load)
         v-for="opt in statusOptions"
         :key="opt.value"
         role="tab"
-        :aria-selected="statusFilter === opt.value"
+        :aria-selected="state.status === opt.value"
         class="px-3 py-1.5 text-sm transition-colors"
-        :class="statusFilter === opt.value ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'"
+        :class="state.status === opt.value ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'"
         @click="switchStatus(opt.value)"
       >
         {{ t(opt.label) }}

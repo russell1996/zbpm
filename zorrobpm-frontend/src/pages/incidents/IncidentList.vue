@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useDateFormat } from '@/composables/useDateFormat'
 import { useIncidentStore } from '@/stores/incident'
-import { usePagination } from '@/composables/usePagination'
+import { useListState } from '@/composables/useListState'
 import { exportToCsv } from '@/shared/lib/export'
 import { debounce } from '@/shared/lib/debounce'
 import { Download, RefreshCw } from 'lucide-vue-next'
@@ -18,16 +18,21 @@ const { t } = useI18n()
 const { formatDateTime } = useDateFormat()
 
 // unchecked -> only open incidents (server-side resolved=false); checked -> all
-const showResolved = ref(false)
-const { page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = usePagination(
-  () => store.incidents?.totalElements,
+// WO-UI-39: состояние списка живёт в query-параметрах маршрута
+// (?incidents.resolved=1, ?incidents.page=2).
+const { state, page, pageSize, nextPage, prevPage, hasNext, hasPrev, resetPage } = useListState<{
+  resolved: boolean
+}>(
+  'incidents',
+  { resolved: false },
+  { getTotalElements: () => store.incidents?.totalElements },
 )
 
 async function load() {
   await store.fetchIncidents({
     pageIndex: page.value,
     pageSize,
-    resolved: showResolved.value ? undefined : false,
+    resolved: state.resolved ? undefined : false,
   })
 }
 
@@ -40,7 +45,7 @@ function viewDetail(id: string) {
 
 onMounted(load)
 // WO-UI-18 часть B: debounce (тот же паттерн, что TaskList).
-watch(showResolved, debounce(() => { resetPage(); load() }))
+watch(() => state.resolved, debounce(() => { resetPage(); load() }))
 
 function exportData() {
   if (!store.incidents?.data) return
@@ -81,7 +86,7 @@ function exportData() {
 
     <div class="flex items-center gap-4">
       <label class="flex items-center gap-2 text-sm">
-        <input v-model="showResolved" type="checkbox" class="rounded" />
+        <input v-model="state.resolved" type="checkbox" class="rounded" />
         {{ t('showCompleted') }}
       </label>
     </div>

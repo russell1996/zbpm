@@ -13,7 +13,7 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils'
 import { createRouter, createMemoryHistory, type Router } from 'vue-router'
 import { useListState } from './useListState'
 
-interface Filters {
+type Filters = {
   key: string
   completed: boolean
   type: 'ALL' | 'HUMAN' | 'SYSTEM'
