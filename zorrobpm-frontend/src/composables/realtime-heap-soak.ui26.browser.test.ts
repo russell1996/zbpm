@@ -27,7 +27,7 @@ import {
   HEAP_GROWTH_LIMIT_MB,
   MIN_HEAP_SAMPLES,
   type HeapSoakSample,
-} from '@/composables/heapSoakMetrics'
+} from '@/test/heapSoakMetrics'
 import ru from '@/locales/ru.json'
 import en from '@/locales/en.json'
 import kz from '@/locales/kz.json'

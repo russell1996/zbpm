@@ -605,8 +605,10 @@ export function useRealtimeEvents() {
       // WO-UI-31: экземпляр за это время отключился (вкладка закрыта,
       // unmount) — цепочка мертва: ни refresh, ни терминальная публикация
       // с мёртвой вкладки (fanout общий — закрытая вкладка не должна
-      // вещать sessionExpired на живые; stacked-таймеры, чей handle
-      // перезаписан, disconnect не чистит — здесь они и гаснут).
+      // вещать sessionExpired на живые). Отменяет таймеры disconnect()
+      // (все handle'ы — см. clearReconnectTimers), а поколение — вторая
+      // линия: протухший таймер, уже снятый с рук, всё равно ничего не
+      // делает.
       if (gen !== connectGeneration) return
       void refreshAndReconnect()
     }, delay)
