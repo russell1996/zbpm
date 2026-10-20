@@ -225,6 +225,9 @@ class EndEventHandlerTest {
         // COMPLETED-строку, а resolve закрывает его без re-execution — инстанс висит
         // навсегда). Поэтому completeActivity в необработанном пути НЕ вызывается.
         verify(dbService, never()).completeActivity(activityId);
+        // и узкий переход «бросивший элемент → COMPLETED» тут тоже не вызывается:
+        // ошибку никто не поймал — элемент паркуется в ERROR, а не доигрывается.
+        verify(dbService, never()).completeActivityAfterHandledError(activityId);
         verify(dbService).errorActivity(activityId);
         verify(dbService).createIncident(eq(activityId), any());
     }
@@ -247,8 +250,15 @@ class EndEventHandlerTest {
 
         verify(dbService).createActivity(piId, tokenId, el);
         verify(activityService).throwError(piId, tokenId, null);
-        // поймали границей — элемент отработал: COMPLETED, без инцидента
-        verify(dbService).completeActivity(activityId);
+        // поймали границей — элемент отработал: COMPLETED, без инцидента.
+        // WO-AUDIT-12 (F-02) ↔ WO-AUDIT-11 (F-09): это УЗКИЙ переход — строка
+        // бросившего элемента к этому моменту уже CANCELLED (её погасило гашение
+        // скоупа, вызванное САМИМ броском), поэтому обычный completeActivity
+        // (источники только CREATED/IN_PROGRESS) отказал бы и оставил элемент в
+        // CANCELLED. Узкий переход применяется ТОЛЬКО к этой строке.
+        verify(dbService).completeActivityAfterHandledError(activityId);
+        // обычное завершение (F-02, защита чужих строк) — НЕ вызывается здесь
+        verify(dbService, never()).completeActivity(activityId);
         verify(dbService, never()).errorActivity(any());
         verify(dbService, never()).createIncident(any(), any());
     }

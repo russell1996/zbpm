@@ -250,14 +250,18 @@ public class EndEventHandler {
             boolean handled = activityService.throwError(ctx.processInstanceId(), ctx.tokenId(), errorCode);
             if (handled) {
                 // Граница (или event-subprocess) поймала ошибку: элемент отработал — его
-                // завершаем (как раньше: COMPLETED). Гашение скоупа уже прошло внутри
-                // throwError и перевело эту строку в CANCELLED (на момент гашения она
-                // была ещё CREATED) — completeActivity переводит её в COMPLETED: элемент,
-                // бросивший ошибку, выполнен (в Zeebe 8.5 элемент error-end в скоупе,
-                // пойманном границей, — completed). Промежуточный CANCELLED наружу не виден:
-                // отмена активити доменных событий не эмитит (в поток уходит одна
-                // activity.completed).
-                dbService.completeActivity(activityId);
+                // завершаем (COMPLETED). Гашение скоупа уже прошло внутри throwError и
+                // перевело эту строку в CANCELLED (на момент гашения она была ещё CREATED):
+                // бросивший элемент — ПРИЧИНА гашения, а не жертва, поэтому здесь УЗКИЙ
+                // переход, разрешающий источник CANCELLED (в Zeebe 8.5 элемент error-end
+                // в скоупе, пойманном границей, — completed; инвариант WO-AUDIT-11 F-09).
+                //
+                // Именно УЗКИЙ, а не обычный completeActivity: тот переход разрешает только
+                // CREATED/IN_PROGRESS (WO-AUDIT-12 F-02 — позднее завершение ребёнка не
+                // переписывает CANCELLED-строку call-activity родителя). Здесь переход
+                // применяется к строке, которую ЭТОТ хендлер сам создал в этом же вызове,
+                // и не трогает ни одну другую строку. ERROR/COMPLETED не переворачиваются.
+                dbService.completeActivityAfterHandledError(activityId);
             } else {
                 // Никто не поймал: элемент паркуется в ERROR, на него — открытый инцидент.
                 // resolve такого инцидента ПЕРЕИСПОЛНЯЕТ элемент (а не закрывает молча).

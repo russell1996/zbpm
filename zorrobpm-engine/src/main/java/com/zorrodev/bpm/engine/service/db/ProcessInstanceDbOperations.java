@@ -43,4 +43,11 @@ public interface ProcessInstanceDbOperations {
      * activity row (completed ones excluded — nothing to cancel there).
      */
     List<UUID> findRunningChildInstanceIds(UUID parentActivityId);
+
+    /**
+     * WO-AUDIT-12 (F-02): ids всех ещё НЕ терминальных дочерних инстансов
+     * (call activity) данного инстанса — рекурсивная каскадная отмена берёт
+     * отсюда следующий уровень дерева.
+     */
+    List<UUID> findRunningChildInstanceIdsByParentInstance(UUID processInstanceId);
 }

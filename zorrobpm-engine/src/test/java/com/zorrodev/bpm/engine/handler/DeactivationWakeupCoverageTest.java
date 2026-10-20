@@ -259,7 +259,12 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("AdHocSubProcessHandler.java#raiseIncident[]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("CompensationThrowHandler.java#runCompensation[} catch (RuntimeException e) {]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("ElementListenerPhaseService.java#failPhaseListener[]|dbService.errorActivity(activityId)", R05);
-        WHITELIST.put("EndEventHandler.java#handle[if (handled) {]|dbService.completeActivity(activityId)", R01);
+        // WO-AUDIT-12 (F-02) ↔ WO-AUDIT-11 (F-09): error-end-хендлер завершает строку
+        // БРОСИВШЕГО элемента УЗКИМ переходом completeActivityAfterHandledError (его
+        // строку погасило гашение скоупа, вызванное САМИМ броском). Это тоже место
+        // деактивации — сканер обязан его видеть (вызов добавлен в DEACTIVATION_CALL),
+        // причина та же R01: собственное продолжение элемента.
+        WHITELIST.put("EndEventHandler.java#handle[if (handled) {]|dbService.completeActivityAfterHandledError(activityId)", R01);
         WHITELIST.put("EndEventHandler.java#handle[} else {]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("IncidentService.java#raiseIncident[]|dbService.errorActivity(activityId)", R05);
         WHITELIST.put("MultiInstanceExecutor.java#raiseCardinalityIncident[]|dbService.errorActivity(activityId)", R05);
@@ -523,8 +528,8 @@ class DeactivationWakeupCoverageTest {
     }
 
     private static final Pattern DEACTIVATION_CALL = Pattern.compile(
-        "dbService\\.(cancelActivity|completeActivity|errorActivity|cancelActiveActivities"
-        + "|cancelActiveActivitiesForToken)\\(");
+        "dbService\\.(cancelActivity|completeActivity|completeActivityAfterHandledError|errorActivity"
+        + "|cancelActiveActivities|cancelActiveActivitiesForToken)\\(");
 
     /**
      * Раунд 6, BLOCKER-5: продолжение потока ПОСЛЕ того, как элемент уже погашен, — второй

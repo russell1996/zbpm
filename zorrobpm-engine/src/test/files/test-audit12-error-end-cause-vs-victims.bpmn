@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_a12cause" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!--
+    WO-AUDIT-12 (F-02) ↔ WO-AUDIT-11 (F-09): error END EVENT внутри подпроцесса,
+    ошибку ловит граница на ЭТОМ подпроцессе.
+
+    Топология (как у AUDIT-11 F-09, вторая ветка): форк внутри подпроцесса, в ПЕРВОЙ
+    ветви — живая задача (сестринская), во ВТОРОЙ — бросающий error end event.
+    Граница гасит ВЕСЬ скоуп: и сестринскую задачу, и контейнер.
+
+    Что здесь проверяется (различие «своя строка» и «чужая»):
+      — строка САМОГО бросившего элемента (errEnd) — ПРИЧИНА гашения, её статус
+        COMPLETED (инвариант WO-AUDIT-11 F-09);
+      — строки ЖЕРТВ гашения (siblingTask, контейнер sub1) остаются CANCELLED —
+        узкий переход не должен «воскрешать» чужие строки (инвариант F-02).
+  -->
+  <bpmn:error id="bizErr" name="Business Error" errorCode="E-1" />
+  <bpmn:process id="test-audit12-error-end-cause-vs-victims" name="test-audit12-error-end-cause-vs-victims" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="sub1" />
+
+    <bpmn:subProcess id="sub1" name="sub1">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+      <bpmn:startEvent id="subStart" name="subStart">
+        <bpmn:outgoing>subFlow1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="subFlow1" name="subFlow1" sourceRef="subStart" targetRef="fork" />
+
+      <bpmn:parallelGateway id="fork" name="fork">
+        <bpmn:incoming>subFlow1</bpmn:incoming>
+        <bpmn:outgoing>forkA</bpmn:outgoing>
+        <bpmn:outgoing>forkB</bpmn:outgoing>
+      </bpmn:parallelGateway>
+
+      <bpmn:sequenceFlow id="forkA" name="forkA" sourceRef="fork" targetRef="siblingTask" />
+      <bpmn:userTask id="siblingTask" name="siblingTask">
+        <bpmn:incoming>forkA</bpmn:incoming>
+        <bpmn:outgoing>forkAEnd</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="forkAEnd" name="forkAEnd" sourceRef="siblingTask" targetRef="subEnd" />
+
+      <bpmn:sequenceFlow id="forkB" name="forkB" sourceRef="fork" targetRef="errEnd" />
+      <bpmn:endEvent id="errEnd" name="errEnd">
+        <bpmn:incoming>forkB</bpmn:incoming>
+        <bpmn:errorEventDefinition id="ed1" errorRef="bizErr" />
+      </bpmn:endEvent>
+
+      <bpmn:endEvent id="subEnd" name="subEnd">
+        <bpmn:incoming>forkAEnd</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+
+    <bpmn:boundaryEvent id="errBoundary" name="errBoundary" attachedToRef="sub1">
+      <bpmn:outgoing>flowB</bpmn:outgoing>
+      <bpmn:errorEventDefinition id="ed2" errorRef="bizErr" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="flowB" name="flowB" sourceRef="errBoundary" targetRef="afterBoundary" />
+    <bpmn:userTask id="afterBoundary" name="afterBoundary">
+      <bpmn:incoming>flowB</bpmn:incoming>
+      <bpmn:outgoing>flow3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flow3" name="flow3" sourceRef="afterBoundary" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flow3</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="sub1" targetRef="endEvent" />
+  </bpmn:process>
+</bpmn:definitions>

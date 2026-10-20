@@ -68,8 +68,53 @@ public class ActivityDbOperationsImpl implements ActivityDbOperations {
 
     @Override
     public void completeActivity(UUID activityId) {
+        // WO-AUDIT-12 (F-02): переход в COMPLETED — УСЛОВНЫЙ, только из
+        // активного состояния (CREATED/IN_PROGRESS), тем же приёмом, что
+        // errorActivity. Безусловный UPDATE переписывал терминальную строку:
+        // завершение дочернего call-activity переворачивало CANCELLED-строку
+        // родительской активности в COMPLETED (история отменённого инстанса
+        // искажалась). Отказ — молчаливый прыжок назад по истории недопустим:
+        // пишем в лог и НЕ эмитим activityCompleted.
+        applyCompletion(activityId, List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS),
+            "completeActivity");
+    }
+
+    @Override
+    public void completeActivityAfterHandledError(UUID activityId) {
+        // WO-AUDIT-12 (F-02) ↔ WO-AUDIT-11 (F-09): УЗКИЙ переход для строки элемента,
+        // который БРОСИЛ ошибку и чью ошибку поймали. К этому моменту строка уже
+        // CANCELLED: гашение скоупа, вызванное САМИМ этим броском, задевает и её
+        // (на момент гашения она была ещё CREATED). Причина гашения — не жертва:
+        // элемент отработал, его строка обязана быть COMPLETED (инвариант AUDIT-11).
+        //
+        // Отличие от обычного completeActivity — РОВНО в наборе допустимых источников:
+        //   + CANCELLED (строка бросившего элемента, пойманная границей);
+        //   − ERROR    (паркованный элемент с открытым инцидентом не «доигрывается»);
+        //   − COMPLETED(повторное завершение — no-op, без дублирующего события).
+        // Всё остальное (F-02) не тронуто: чужие строки по-прежнему защищены
+        // условным переходом completeActivity.
+        applyCompletion(activityId,
+            List.of(ActivityStatus.CREATED, ActivityStatus.IN_PROGRESS, ActivityStatus.CANCELLED),
+            "completeActivityAfterHandledError");
+    }
+
+    /**
+     * Общий хвост завершения activity: условный переход в COMPLETED + закрытие
+     * message-подписок + событие activity.completed. Один хвост на оба входа
+     * (обычное завершение и узкий «бросивший элемент»), чтобы правила не разъехались.
+     *
+     * @param allowedFrom допустимые исходные статусы строки; пусто = отказ
+     * @param opName имя операции в логе отказа
+     */
+    private void applyCompletion(UUID activityId, List<ActivityStatus> allowedFrom, String opName) {
         ActivityEntity activity = activityRepository.findById(activityId).orElseThrow();
-        activityRepository.setStatusAndCompletedAt(activityId, ActivityStatus.COMPLETED, Instant.now());
+        int updated = activityRepository.setStatusAndCompletedAtIfStatusIn(
+            activityId, ActivityStatus.COMPLETED, Instant.now(), allowedFrom);
+        if (updated == 0) {
+            log.warn("{}: row is not in an allowed source status (status={}, allowed={}) — refusing to flip it to COMPLETED",
+                opName, activityId, activity.getStatus(), allowedFrom);
+            return;
+        }
         // WO-C8-37 (C37-3): the host's wait is over — its unconsumed message
         // subscriptions can never be claimed by the dead host again. Consume them
         // here (single UPDATE, consumed=true — history preserved) so a later

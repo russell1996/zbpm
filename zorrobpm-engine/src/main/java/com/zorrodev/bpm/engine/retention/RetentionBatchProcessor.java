@@ -247,6 +247,28 @@ public class RetentionBatchProcessor {
         // WO-ENG-16: история переменных того же инстанса — иначе retention
         // оставлял бы сирот навсегда (у variable_history нет FK сознательно).
         total += jdbc.update("DELETE FROM variable_history WHERE process_instance_id IN (:ids)", params);
+        // WO-AUDIT-12 (F-03): FK process_instances.parent_activity_id → activities.id
+        // объявлен БЕЗ ON DELETE, поэтому activity-строку родителя нельзя
+        // удалить, пока на неё ссылается строка дочернего инстанса. Топологический
+        // порядок «ребёнок раньше родителя» не спасает: дочерний инстанс может
+        // НЕ попасть в батч (лимит батча, другая TTL, ещё живой) — тогда FK
+        // ронял ВСЮ пачку, откатывал её и следующий проход упирался в те же
+        // строки (retention не прогрессировал вообще). Поэтому связь рвётся
+        // ЗДЕСЬ, в коде: parent_activity_id = NULL у всех детей удаляемых
+        // инстансов. Схема не меняется (G-C не требуется).
+        //
+        // Последствие (сознательное): ребёнок, который пережил очистку
+        // родителя, больше не знает своей родительской activity-строки. Это
+        // правильно: родителя больше нет, и его завершение не должно
+        // продолжать удалённый поток (иначе — исключение по отсутствующей
+        // строке).
+        //
+        // Число обновлённых строк НЕ идёт в total: total — это «сколько
+        // строк удалено» (метрика аудита F-11 просит именно «rows deleted»),
+        // а здесь строки не удаляются, а обезвличиваются. Считаем отдельно.
+        int severed = jdbc.update(
+            "UPDATE process_instances SET parent_activity_id = NULL WHERE parent_activity_id IN "
+                + "(SELECT id FROM activities WHERE process_instance_id IN (:ids))", params);
         total += jdbc.update("DELETE FROM activities WHERE process_instance_id IN (:ids)", params);
         if (!tokenIds.isEmpty()) {
             MapSqlParameterSource tokenParams = new MapSqlParameterSource("ids", tokenIds);
@@ -254,7 +276,8 @@ public class RetentionBatchProcessor {
         }
         total += jdbc.update("DELETE FROM process_instances WHERE id IN (:ids)", params);
 
-        log.info("Retention: deleted {} rows for {} instances (incl. {} tokens)", total, instanceIds.size(), tokenIds.size());
+        log.info("Retention: deleted {} rows for {} instances (incl. {} tokens, {} severed parent links)",
+            total, instanceIds.size(), tokenIds.size(), severed);
         return total;
     }
 

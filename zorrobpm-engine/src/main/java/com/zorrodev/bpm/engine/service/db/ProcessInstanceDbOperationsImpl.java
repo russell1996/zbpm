@@ -10,6 +10,7 @@ import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -26,6 +27,7 @@ import java.util.UUID;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperations {
 
     private final ProcessInstanceRepository processInstanceRepository;
@@ -71,6 +73,18 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
         // WO-API-1 (API-7): initiator в том же INSERT — атомарно со стартом.
         entity.setInitiator(claimedInitiator);
         processInstanceRepository.save(entity);
+        // WO-AUDIT-12 (F-02): счётчики и gauge жизненного цикла инстанса живут
+        // ЗДЕСЬ, а не в REST/_runtime-точке старта. Инкремент стоял в
+        // RuntimeServiceImpl.startProcessInstance — то есть УЧИТЫВАЛСЯ только
+        // «старт через runtime-сервис» (корневой инстанс), а декремент в
+        // complete/cancelProcessInstance — ЛЮБОЙ инстанс. Асимметрия: gauge
+        // активных инстансов уходил в минус на каждом дочернем инстансе
+        // call activity (инкремента не было, декремент был) и на каждом
+        // message/timer-старте. Теперь обе стороны живут на одной точке
+        // (создание/терминальный переход) и считают ОДИН И ТОТ ЖЕ набор
+        // инстансов: gauge = «сколько инстансов сейчас живых».
+        bpmMetrics.processStarted();
+        bpmMetrics.incrementActiveInstances();
         List<ProcessVariableEntity> vs = new LinkedList<>();
         for (ProcessVariable variable : Optional.ofNullable(variables).orElse(List.of())) {
             ProcessVariableEntity v = new ProcessVariableEntity();
@@ -112,8 +126,25 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
     }
 
     @Override
+    public List<UUID> findRunningChildInstanceIdsByParentInstance(UUID processInstanceId) {
+        return processInstanceRepository.findRunningChildrenByParentInstanceIdForUpdateSkipLocked(processInstanceId).stream()
+            .map(ProcessInstanceEntity::getId)
+            .toList();
+    }
+
+    @Override
     public void completeProcessInstance(UUID processInstanceId) {
         ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
+        // WO-AUDIT-12 (F-02): терминальный переход — ОДИН раз на инстанс.
+        // Повторный complete (например, гонка «ребёнок завершается» × «каскад
+        // отмены убил ребёнка») не должен ни второй раз эмитить
+        // processCompleted, ни второй раз сдвинуть gauge активных инстансов
+        // (второй декремент = уход gauge в минус).
+        if (pi.getCompletedAt() != null || pi.isCancelled()) {
+            log.warn("completeProcessInstance({}): instance is already terminal (cancelled={}, completedAt={}) — "
+                + "second completion ignored", processInstanceId, pi.isCancelled(), pi.getCompletedAt());
+            return;
+        }
         // WO-C8-48: завершённый инстанс не оставляет bookkeeping-строк join'ов
         // (arrival + marker). Именно здесь, а не в kill-хуке
         // finalizeFinishedInstance: нормальное завершение ad-hoc/MI-скоупов
@@ -131,6 +162,15 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
 
     @Override
     public void cancelProcessInstance(UUID processInstanceId) {
+        ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
+        // WO-AUDIT-12 (F-02): отмена — тоже терминальный переход, ровно один.
+        // Повторная отмена (каскад × внешний вызов) не должна ни второй раз
+        // эмитить processInstanceCancelled, ни второй раз сдвинуть gauge.
+        if (pi.getCompletedAt() != null || pi.isCancelled()) {
+            log.warn("cancelProcessInstance({}): instance is already terminal (cancelled={}, completedAt={}) — "
+                + "second cancel ignored", processInstanceId, pi.isCancelled(), pi.getCompletedAt());
+            return;
+        }
         // WO-C8-46: скоуп-переменные ДО пометки cancelled — та же транзакция,
         // та же зачистка, что хвосты завершения (item/loopCounter MI-инстансов,
         // предсозданный outputCollection, batch-маркеры входа).
@@ -139,7 +179,6 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
         // транзакции, единым с complete-путём механизмом (любой будущий резюм после
         // отмены в этой транзакции ещё увидит строки; наружу инстанс уходит без них).
         clearInstanceBookkeepingAtCommit(processInstanceId);
-        ProcessInstanceEntity pi = processInstanceRepository.findById(processInstanceId).orElseThrow();
         processInstanceRepository.setCancelled(processInstanceId, true);
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
         domainEventEmitter.emitProcessInstanceCancelled(processInstanceId, pi.getProcessDefinitionId());

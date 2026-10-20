@@ -19,6 +19,29 @@ public interface ActivityDbOperations {
 
     void completeActivity(UUID executionId);
 
+    /**
+     * WO-AUDIT-12 (F-02 ↔ WO-AUDIT-11): УЗКИЙ переход «бросивший элемент → COMPLETED».
+     *
+     * <p>Отличие от {@link #completeActivity}: разрешён источник CANCELLED. Нужен ровно
+     * для error END EVENT, который БРОСАЕТ ошибку, а потом завершается: граница, поймавшая
+     * ошибку, гасит скоуп — и гашение задевает строку САМОГО бросающего элемента (на момент
+     * гашения она ещё CREATED). Бросивший элемент — ПРИЧИНА гашения, а не жертва: его строка
+     * обязана закончиться COMPLETED (инвариант WO-AUDIT-11, F-09).
+     *
+     * <p>Узкость (почему это не «возврат безусловного UPDATE»):
+     * <ul>
+     *   <li>вызывает ТОЛЬКО error-end-хендлер и ТОЛЬКО для строки, которую он сам создал
+     *       в этом же вызове ({@code createActivity} выше по стеку);</li>
+     *   <li>строка ERROR не переворачивается (паркованный элемент с открытым инцидентом
+     *       не «доигрывается»);</li>
+     *   <li>строка COMPLETED не переворачивается (повторное завершение — no-op, без
+     *       дублирующего activity.completed).</li>
+     * </ul>
+     * Все прочие строки по-прежнему защищены условным переходом {@link #completeActivity}
+     * (F-02: позднее завершение ребёнка не переписывает CANCELLED-строку родителя).
+     */
+    void completeActivityAfterHandledError(UUID activityId);
+
     void errorActivity(UUID activityId);
 
     void cancelActivity(UUID activityId);

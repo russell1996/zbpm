@@ -49,6 +49,8 @@ public class EventTrigger {
     private final FlowNavigator flowNavigator;
     private final ElementSupport elementSupport;
     private final TimerJobRepository timerJobRepository;
+    /** WO-AUDIT-12 (F-20): root-токен инстанса (родитель branch-токена ESP). */
+    private final com.zorrodev.bpm.engine.repository.TokenRepository tokenRepository;
     private final CancelingPhaseService cancelingPhaseService;
     private final InclusiveGatewayHandler inclusiveGatewayHandler;
     private final ScopeContainment scopeContainment;
@@ -447,12 +449,37 @@ public class EventTrigger {
             executor.execute(processInstanceId, token.getId(), ext.getStartEventId());
             return true;
         }
-        Token branchToken = dbService.createToken(null);
+        Token branchToken = dbService.createToken(rootTokenIdOf(processInstanceId));
         UUID containerActivityId = dbService.createActivity(processInstanceId, branchToken.getId(), eventSubProcess);
         Token scopeToken = dbService.createToken(branchToken.getId(), containerActivityId);
         log.info("{}/{}: Non-interrupting event sub-process {} starting at {} (scope {})", processInstanceId, scopeToken.getId(), eventSubprocessId, ext.getStartEventId(), containerActivityId);
         executor.execute(processInstanceId, scopeToken.getId(), ext.getStartEventId());
         return false;
+    }
+
+    /**
+     * WO-AUDIT-12 (F-20): корневой токен инстанса — родитель branch-токена
+     * non-interrupting event sub-process.
+     *
+     * <p>Раньше branch-токен создавался как {@code createToken(null)} — то есть
+     * НОВЫЙ КОРЕНЬ инстанса. Он живёт рядом с настоящим корневым токеном и
+     * выглядит как токен, управляющий жизненным циклом инстанса (на
+     * {@code parentId == null} опирается guard {@code isChildLinearBranch},
+     * отличающий ветку-сайд от управляющего токена). Комментарий WO-ENG-6 прямо
+     * предполагал, что такой токен — child корневого.
+     *
+     * <p>Если корневой токен найти не удалось (инстанс без activity-строк) —
+     * остаётся прежнее поведение (корень), но с предупреждением: молча
+     * менять топологию токенов опаснее, чем оставить как есть.
+     */
+    private UUID rootTokenIdOf(UUID processInstanceId) {
+        List<UUID> roots = tokenRepository.findRootTokenIdsByProcessInstanceId(processInstanceId);
+        if (roots.isEmpty()) {
+            log.warn("{}: no root token found for the non-interrupting event sub-process — "
+                + "the branch token stays a root token (WO-AUDIT-12 F-20)", processInstanceId);
+            return null;
+        }
+        return roots.get(0);
     }
 
     /**

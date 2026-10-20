@@ -31,6 +31,22 @@ public interface DBService {
 
     void completeActivity(UUID executionId);
 
+    /**
+     * WO-AUDIT-12 (F-02) ↔ WO-AUDIT-11 (F-09): УЗКИЙ переход в COMPLETED для строки
+     * элемента, который БРОСИЛ ошибку и чью ошибку поймали граница/event-subprocess.
+     *
+     * <p>Единственное отличие от {@link #completeActivity} — допустимый источник
+     * CANCELLED: гашение скоупа, вызванное САМИМ броском, задевает и строку
+     * бросившего элемента, а он — причина, не жертва (его строка обязана быть
+     * COMPLETED — инвариант AUDIT-11). Вызывает только error-end-хендлер и только
+     * для строки, которую он сам создал; ERROR и COMPLETED не переворачиваются.
+     *
+     * <p>Все прочие строки по-прежнему защищены условным {@link #completeActivity}:
+     * позднее завершение ребёнка не переписывает CANCELLED-строку call-activity
+     * родителя (инвариант F-02).
+     */
+    void completeActivityAfterHandledError(UUID activityId);
+
     void errorActivity(UUID activityId);
 
     void cancelActivity(UUID activityId);

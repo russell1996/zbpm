@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-audit12-callparent" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-AUDIT-12 (F-02): родитель с call activity. После вызова — user task
+       (parentWait): если отменённый родитель продолжит поток (баг F-02),
+       в нём появится ЖИВАЯ activity-строка — нарушение инварианта утечек
+       (G-P) и признак «поток отменённого процесса продолжился». -->
+  <bpmn:process id="audit12-call-parent" name="audit12-call-parent" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flowP1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowP1" sourceRef="startEvent" targetRef="call" />
+    <bpmn:callActivity id="call" name="call">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="audit12-call-child" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowP1</bpmn:incoming>
+      <bpmn:outgoing>flowP2</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="flowP2" sourceRef="call" targetRef="parentWait" />
+    <bpmn:userTask id="parentWait" name="parentWait">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowP2</bpmn:incoming>
+      <bpmn:outgoing>flowP3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flowP3" sourceRef="parentWait" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flowP3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

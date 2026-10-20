@@ -779,14 +779,27 @@ public class FlowNavigator {
             // a call activity finished: continuation mutates the *parent* instance, so lock it
             // (consistent child→parent ordering keeps this deadlock-free) before advancing it
             Activity parentActivity = dbService.getActivity(parentActivityId);
-            dbService.lockProcessInstance(parentActivity.getProcessInstanceId());
+            UUID parentProcessInstanceId = parentActivity.getProcessInstanceId();
+            dbService.lockProcessInstance(parentProcessInstanceId);
+            // WO-AUDIT-12 (F-02): родитель мог быть отменён или завершён, пока
+            // ребёнок жил (операторская отмена родителя не каскадировала на
+            // дочерние инстансы call activity). Продолжение отменённого потока
+            // ЗАПРЕЩЕНО: оно переписывало историю (CANCELLED→COMPLETED) и
+            // создавало живые activity-строки в уже завершённом инстансе.
+            // Проверка — ПОД instance-lock'ом родителя (его берёт и путь отмены:
+            // ProcessInstanceRuntimeOperationsImpl#cancelProcessInstance), то
+            // есть решение принимается атомарно с отменой.
+            ProcessInstance parentProcessInstance = dbService.getProcessInstance(parentProcessInstanceId);
+            if (parentProcessInstance.isCancelled() || parentProcessInstance.getCompletedAt() != null) {
+                log.info("{}/{}: parent instance {} is {} — the child's continuation is dropped "
+                    + "(WO-AUDIT-12 F-02)", processInstanceId, parentActivityId, parentProcessInstanceId,
+                    parentProcessInstance.isCancelled() ? "CANCELLED" : "COMPLETED");
+                return;
+            }
             dbService.completeActivity(parentActivityId);
 
-            UUID parentProcessInstanceId = parentActivity.getProcessInstanceId();
-            ProcessInstance parentProcessInstance = dbService.getProcessInstance(parentActivity.getProcessInstanceId());
-            UUID parentProcessDefinitionId = parentProcessInstance.getProcessDefinitionId();
             UUID parentToken = parentActivity.getToken();
-            BpmnProcessDefinitionModel parentBpmn = bpmnService.getProcessDefinitionModelById(parentProcessDefinitionId);
+            BpmnProcessDefinitionModel parentBpmn = bpmnService.getProcessDefinitionModelById(parentProcessInstance.getProcessDefinitionId());
             BpmnElementModel parentBpmnElement = parentBpmn.getElement(parentActivity.getBpmnElementId());
             if (parentBpmnElement == null) {
                 throw new IllegalStateException("Call activity element '" + parentActivity.getBpmnElementId() + "' not found in the parent process definition");
