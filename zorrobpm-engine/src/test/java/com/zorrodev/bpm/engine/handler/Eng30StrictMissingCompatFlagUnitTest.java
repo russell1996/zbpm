@@ -24,27 +24,38 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 /**
- * WO-ENG-30: compat flag {@code zorrobpm.engine.io-mapping.strict-missing} for the
- * WO-ENG-29 strict behaviour — both branches on the REAL prod path (real
- * {@code FeelEngineApi}, real {@code FeelBudgetImpl}, real
- * {@code ElementSupport#evaluateMapping}; reuses the Eng29 fixtures' shapes, no
- * new BPMN needed at this level — the IT below reuses the Eng29 BPMN files themselves).
+ * WO-ENG-30 (flag OBSOLETE since WO-C8-54) — the compat flag
+ * {@code zorrobpm.engine.io-mapping.strict-missing} and the two null profiles of
+ * the io-mapping evaluation, on the REAL prod path (real {@code FeelEngineApi},
+ * real {@code FeelBudgetImpl}, real {@code ElementSupport#evaluateMapping}).
  *
+ * <p><b>WO-C8-54 (2026-10-19): both profiles now behave IDENTICALLY and follow
+ * live Zeebe 8.5.</b> The flag existed to roll out WO-ENG-29's incident behaviour
+ * safely — and that behaviour rested on an UNMEASURED assumption about Zeebe
+ * ("a missing variable in an io-mapping raises an incident"). The live 8.5
+ * measurement of the F1 campaign disproves it: Zeebe evaluates such a source to
+ * a NULL VALUE, creates the job with a JSON null and continues — no incident
+ * ({@code docs/analysis/c8-oracle/feel-iomapping.js}, case {@code missing-bare}:
+ * {@code completed  work={"r":null}}).</p>
+ *
+ * <p>So the flag no longer changes anything. This class pins THAT:</p>
  * <ul>
- *   <li>{@code strict=false} (default): missing variable → legacy silent {@code ""}
- *       STRING, no exception, plus a WARN carrying source/target;</li>
- *   <li>{@code strict=true}: WO-ENG-29 behaviour byte-identical (incident);</li>
- *   <li>hard FEEL error (syntax): incident in BOTH modes — the flag never covers it.</li>
+ *   <li>the missing variable → a null VALUE (JSON null) in BOTH profiles, with a
+ *       WARN carrying source/target (the log-based inventory the lenient mode
+ *       always had);</li>
+ *   <li>the hard FEEL error (syntax) → an exception in BOTH profiles — the flag
+ *       never covered it and never will.</li>
  * </ul>
  *
- * <p>POF-мутации (каждая валится ровно своим тестом):
+ * <p>POF-мутации (каждая валится ровно своим тестом):</p>
  * <ul>
- *   <li>флаг игнорируется, всегда throw (как до WO-ENG-30) —
- *       {@code lenient_*} КРАСНЫЕ;</li>
- *   <li>флаг игнорируется, никогда не throw (полный откат WO-ENG-29) —
- *       {@code strict_*} КРАСНЫЙ;</li>
- *   <li>hard-failure ветка под флагом (единое {@code failed} без разделения) —
- *       {@code hardError_*} КРАСНЫЙ ровно в lenient-моде.</li>
+ *   <li>вернуть инцидент на отсутствующую переменную (прежнее поведение
+ *       strict) — {@code strict_missingVariable_isANullValueToo} КРАСНЫЙ;</li>
+ *   <li>вернуть тихую пустую строку (прежнее поведение lenient) —
+ *       {@code lenient_missingVariable_isANullValueToo} КРАСНЫЙ;</li>
+ *   <li>снять разделение hard-failure (единое {@code failed} без разделения) —
+ *       {@code hardError_syntaxError_throwsInBothModes} КРАСНЫЙ ровно в
+ *       lenient-моде.</li>
  * </ul>
  */
 class Eng30StrictMissingCompatFlagUnitTest {
@@ -79,10 +90,16 @@ class Eng30StrictMissingCompatFlagUnitTest {
         return m;
     }
 
-    // ─── Критерий 1: lenient — тихий "" + WARN, без исключения ──────────────
+    /** WO-C8-54: a null VALUE is a JSON null (the representation live 8.5 delivers). */
+    private static void assertJsonNull(ProcessVariable variable, String what) {
+        assertThat(variable.getType()).as("type of %s", what).isEqualTo(ProcessVariableType.JSON);
+        assertThat(variable.getValue()).as("value of %s", what).isEqualTo("null");
+    }
+
+    // ─── Критерий 1: lenient — null VALUE + WARN, без исключения ──────────────
 
     @Test
-    void lenient_missingVariable_returnsLegacyEmptyStringWithoutThrowing() {
+    void lenient_missingVariable_isANullValueToo() {
         ch.qos.logback.classic.Logger logger =
             (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(ElementSupport.class);
         ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
@@ -93,12 +110,9 @@ class Eng30StrictMissingCompatFlagUnitTest {
             ProcessVariable variable = lenient.evaluateMapping(
                 mapping("=routeStageUuid", "routeStageUuid"), List.of());
 
-            assertThat(variable.getType()).isEqualTo(ProcessVariableType.STRING);
-            assertThat(variable.getValue())
-                .as("lenient mode keeps the pre-ENG-29 silent '' behaviour, no incident")
-                .isEqualTo("");
+            assertJsonNull(variable, "a missing variable in the lenient profile");
             assertThat(appender.list)
-                .as("lenient mode must log a WARN carrying source/target for log-based inventory")
+                .as("the null path must log a WARN carrying source/target for log-based inventory")
                 .anySatisfy(e -> {
                     assertThat(e.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
                     assertThat(e.getFormattedMessage()).contains("routeStageUuid");
@@ -108,15 +122,14 @@ class Eng30StrictMissingCompatFlagUnitTest {
         }
     }
 
-    // ─── Критерий 2: strict — поведение WO-ENG-29 как есть ──────────────────
+    // ─── Критерий 2: strict — то же самое (флагobsolete) ─────────────────────
 
     @Test
-    void strict_missingVariable_throwsFeelEvaluationException() {
-        assertThatThrownBy(() -> strict.evaluateMapping(
-                mapping("=routeStageUuid", "routeStageUuid"), List.of()))
-            .as("strict mode keeps the WO-ENG-29 incident behaviour byte-identical")
-            .isInstanceOf(FeelEvaluationException.class)
-            .hasMessageContaining("routeStageUuid");
+    void strict_missingVariable_isANullValueToo() {
+        ProcessVariable variable = strict.evaluateMapping(
+            mapping("=routeStageUuid", "routeStageUuid"), List.of());
+
+        assertJsonNull(variable, "a missing variable in the strict profile");
     }
 
     // ─── Критерий 3: жёсткая ошибка — инцидент ВСЕГДА, независимо от флага ──
@@ -133,17 +146,14 @@ class Eng30StrictMissingCompatFlagUnitTest {
             .isInstanceOf(FeelEvaluationException.class);
     }
 
-    // ─── Регресс: честный null — тихо в ОБОИХ режимах ───────────────────────
+    // ─── Регресс: честный null — значение в ОБОИХ режимах ────────────────────
 
     @Test
-    void honestNull_explicitLiteral_staysSilentInBothModes() {
+    void honestNull_explicitLiteral_isANullValueInBothModes() {
         for (ElementSupport support : List.of(lenient, strict)) {
             ProcessVariable variable = support.evaluateMapping(
                 mapping("=null", "nullEcho"), List.of());
-            assertThat(variable.getType()).isEqualTo(ProcessVariableType.STRING);
-            assertThat(variable.getValue())
-                .as("explicit =null is honest null, not a failure — silent in both modes")
-                .isEqualTo("");
+            assertJsonNull(variable, "an explicit =null literal");
         }
     }
 }

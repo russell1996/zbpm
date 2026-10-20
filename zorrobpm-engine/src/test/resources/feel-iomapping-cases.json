@@ -88,7 +88,13 @@
           "source": "=round(2.5)",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": null
+        }
+      }
     },
     {
       "id": "str-double",
@@ -176,7 +182,13 @@
           "source": "=string(null)",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": null
+        }
+      }
     },
     {
       "id": "str-json-text",
@@ -217,7 +229,13 @@
           "source": "=null",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": null
+        }
+      }
     },
     {
       "id": "missing-bare",
@@ -228,7 +246,13 @@
           "source": "=nope",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": null
+        }
+      }
     },
     {
       "id": "present-null",
@@ -242,7 +266,14 @@
           "source": "=explicitNull",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": null,
+          "explicitNull": null
+        }
+      }
     },
     {
       "id": "missing-default",
@@ -253,7 +284,13 @@
           "source": "=default(nope, \"d\")",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": null
+        }
+      }
     },
     {
       "id": "missing-coalesce",
@@ -325,7 +362,16 @@
           "source": "=a.nope",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": null,
+          "a": {
+            "b": "B"
+          }
+        }
+      }
     },
     {
       "id": "path-index",
@@ -361,7 +407,18 @@
           "source": "=list[0]",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": null,
+          "list": [
+            "x",
+            "y",
+            "z"
+          ]
+        }
+      }
     },
     {
       "id": "path-oob",
@@ -379,7 +436,18 @@
           "source": "=list[9]",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": null,
+          "list": [
+            "x",
+            "y",
+            "z"
+          ]
+        }
+      }
     },
     {
       "id": "filter-list",
@@ -624,7 +692,13 @@
           "source": "=\"1\" = 1",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": null
+        }
+      }
     },
     {
       "id": "mixed-lt",
@@ -635,7 +709,13 @@
           "source": "=1 < \"2\"",
           "target": "r"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "r": null
+        }
+      }
     },
     {
       "id": "null-eq",
@@ -1025,6 +1105,114 @@
           ]
         }
       }
+    },
+    {
+      "id": "cond-missing-var-default",
+      "title": "gateway condition: bare missing variable (default flow present)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "nope",
+      "defaultFlow": true,
+      "vars": {}
+    },
+    {
+      "id": "cond-missing-var-no-default",
+      "title": "gateway condition: bare missing variable (no default flow, second flow is a never-taken '=false' condition)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "nope",
+      "defaultFlow": false,
+      "vars": {}
+    },
+    {
+      "id": "cond-missing-compare-default",
+      "title": "gateway condition: comparison with a missing variable (default flow present)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "nope = \"x\"",
+      "defaultFlow": true,
+      "vars": {}
+    },
+    {
+      "id": "cond-missing-compare-no-default",
+      "title": "gateway condition: comparison with a missing variable (no default flow, second flow is a never-taken '=false' condition)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "nope = \"x\"",
+      "defaultFlow": false,
+      "vars": {}
+    },
+    {
+      "id": "cond-not-comparable-default",
+      "title": "gateway condition: incomparable types (default flow present)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "1 < \"2\"",
+      "defaultFlow": true,
+      "vars": {}
+    },
+    {
+      "id": "cond-not-comparable-no-default",
+      "title": "gateway condition: incomparable types (no default flow, second flow is a never-taken '=false' condition)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "1 < \"2\"",
+      "defaultFlow": false,
+      "vars": {}
+    },
+    {
+      "id": "cond-unknown-function-default",
+      "title": "gateway condition: unknown function (default flow present)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "round(2.5)",
+      "defaultFlow": true,
+      "vars": {}
+    },
+    {
+      "id": "cond-unknown-function-no-default",
+      "title": "gateway condition: unknown function (no default flow, second flow is a never-taken '=false' condition)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "round(2.5)",
+      "defaultFlow": false,
+      "vars": {}
+    },
+    {
+      "id": "cond-explicit-null-default",
+      "title": "gateway condition: explicit null literal (default flow present)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "null",
+      "defaultFlow": true,
+      "vars": {}
+    },
+    {
+      "id": "cond-explicit-null-no-default",
+      "title": "gateway condition: explicit null literal (no default flow, second flow is a never-taken '=false' condition)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "null",
+      "defaultFlow": false,
+      "vars": {}
+    },
+    {
+      "id": "cond-true-default",
+      "title": "gateway condition: true (control, default flow present)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "true",
+      "defaultFlow": true,
+      "vars": {}
+    },
+    {
+      "id": "cond-true-no-default",
+      "title": "gateway condition: true (control, no default flow)",
+      "docs": "8.9 conditions: a condition that does not evaluate to true is not taken; the gateway takes its default flow (or raises an incident when there is none) \u2014 measured on live Zeebe 8.5. The diagram always has TWO outgoing flows: flowA carries the case condition, flowB is the default flow (defaultFlow=true) or a never-taken conditioned flow '=false' (defaultFlow=false)",
+      "wrap": "gateway",
+      "condition": "true",
+      "defaultFlow": false,
+      "vars": {}
     }
   ]
 }

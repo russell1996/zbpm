@@ -31,19 +31,26 @@ import java.util.stream.Collectors;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * WO-ENG-30 критерий 1 на реальном прод-пути: lenient-режим
+ * WO-ENG-30 критерий 1 на реальном прод-пути: ПРОД-дефолтный профиль
  * ({@code zorrobpm.engine.io-mapping.strict-missing=false}) — output-маппинг на
- * отсутствующую переменную НЕ поднимает инцидент, процесс идёт дальше со
- * старым тихим {@code ""}, как до WO-ENG-29.
+ * отсутствующую переменную НЕ поднимает инцидент.
+ *
+ * <p><b>WO-C8-54 (2026-10-19) изменил и значение, и смысл профиля.</b> Живой
+ * Zeebe 8.5 (F1-кампания, {@code docs/analysis/c8-oracle/feel-iomapping.js},
+ * кейс {@code missing-bare}: {@code completed  work={"r":null}}) отдаёт NULL
+ * ЗНАЧЕНИЕ — задание создаётся, переменная — JSON null, процесс идёт дальше.
+ * Премиса WO-ENG-29 («Zeebe поднимает инцидент») оказалась неверной, поэтому
+ * теперь оба профиля (strict и lenient) ведут себя одинаково, а значение —
+ * JSON null, а не тихая пустая строка. Флаг
+ * {@code strict-missing} стал OBSOLETE (см. {@code ElementSupport}).
  *
  * <p>Та же BPMN-фикстура и тот же сценарий, что criterion1 в
- * {@code Eng29FeelNullIoMappingIncidentIT} (там strict=true через тестовый
- * профиль → инцидент; здесь properties-override false → тишина) — дельта
- * поведения доказывается парой тестов на одном прод-пути.
+ * {@code Eng29FeelNullIoMappingIncidentIT} — дельта поведения доказывается
+ * парой тестов на одном прод-пути.
  *
- * <p>POF: убрать флаг-ветку из {@code ElementSupport.evaluateMapping} (всегда
- * throw, как до WO-ENG-30) → этот тест КРАСНЫЙ (инцидент вместо завершения);
- * вернуть → GREEN. Дословные выводы — в отчёте.
+ * <p>POF: вернуть прежнее поведение (тихая пустая строка в lenient) или
+ * прежний инцидент (в strict) → этот тест КРАСНЫЙ; вернуть null-семантику →
+ * GREEN. Дословные выводы — в отчёте.
  */
 @SpringBootTest(classes = TestMain.class,
     properties = "zorrobpm.engine.io-mapping.strict-missing=false")
@@ -111,7 +118,7 @@ public class Eng30LenientModeNoIncidentIT {
 
     @Transactional
     @Test
-    void lenient_outputMappingOnMissingJobVariable_completesWithLegacyEmptyString() {
+    void lenient_outputMappingOnMissingJobVariable_completesWithAJsonNull() {
         UUID pi;
         try {
             pi = start("test-eng29-stage-activity.bpmn", List.of());
@@ -120,16 +127,24 @@ public class Eng30LenientModeNoIncidentIT {
         }
 
         // Тот же шаг, что в Eng29-criterion1: воркер НЕ вернул routeStageUuid.
-        // Lenient: инцидента нет, output-маппинг тихо пишет legacy "".
+        // Lenient (и strict — с WO-C8-54 оба профиля одинаковы): инцидента нет,
+        // output-маппинг пишет NULL-ЗНАЧЕНИЕ (live 8.5: {"r":null}).
         UUID stage = activeServiceTask(pi, "srvStageCreate").getId();
         runtimeService.completeServiceTask(stage, List.of());
 
         assertThat(incidentsOf(pi))
-            .as("lenient mode must NOT raise an incident on a missing job variable")
+            .as("the production profile must NOT raise an incident on a missing job variable")
             .isEmpty();
-        assertThat(rootVars(pi).get("routeStageUuid"))
-            .as("lenient mode keeps the pre-ENG-29 silent '' STRING behaviour")
-            .isEqualTo("");
+        ProcessVariableEntity written = variableRepository
+            .findByProcessInstanceIdAndScopeIdIsNull(pi).stream()
+            .filter(e -> "routeStageUuid".equals(e.getName()))
+            .findFirst()
+            .orElse(null);
+        assertThat(written).as("the output mapping still writes the variable").isNotNull();
+        assertThat(written.getType())
+            .as("a null is carried as a JSON null (live 8.5 parity)")
+            .isEqualTo(ProcessVariableType.JSON);
+        assertThat(written.getTextValue()).isEqualTo("null");
 
         // Цепочка идёт дальше и завершается — модель не паркуется.
         UUID activity = activeServiceTask(pi, "srvActivityCreate").getId();

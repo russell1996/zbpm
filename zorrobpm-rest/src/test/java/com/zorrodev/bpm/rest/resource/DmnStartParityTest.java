@@ -206,10 +206,17 @@ class DmnStartParityTest {
 
         UUID piId = start(pdId, "amount", "150", "LONG");
 
-        // no rule matches: NOT an incident (Raxon probe fact) — completes, null tier
-        // stored as "" by the pre-existing toProcessVariable null branch.
+        // no rule matches: NOT an incident (Raxon probe fact) — completes.
+        // WO-C8-54: the null tier is a NULL VALUE (type JSON, text "null") — the
+        // same conversion rule as the io-mapping (Zeebe 8.5 delivers a JSON null);
+        // before C8-54 the shared toProcessVariable null branch stored a STRING "".
         assertThat(instanceCompleted(piId)).isTrue();
-        assertThat(variableValue(piId, "tier")).isEqualTo("");
+        JsonNode tier = variableNode(piId, "tier");
+        assertThat(tier).as("the no-match tier is still stored").isNotNull();
+        assertThat(tier.get("type").asText())
+            .as("a null value is carried as a JSON null (WO-C8-54)")
+            .isEqualTo("JSON");
+        assertThat(tier.get("value").asText()).isEqualTo("null");
     }
 
     @Test
@@ -307,6 +314,12 @@ class DmnStartParityTest {
     }
 
     private String variableValue(UUID piId, String name) throws Exception {
+        JsonNode node = variableNode(piId, name);
+        return node == null ? null : node.get("value").asText();
+    }
+
+    /** The whole variable node (name/type/value) of an instance variable. */
+    private JsonNode variableNode(UUID piId, String name) throws Exception {
         MvcResult vars = mockMvc.perform(get("/variables?processInstanceId=" + piId)
                 .header("Authorization", "Bearer " + adminToken))
             .andExpect(status().isOk())
@@ -314,7 +327,7 @@ class DmnStartParityTest {
         JsonNode data = mapper.readTree(vars.getResponse().getContentAsString()).get("data");
         for (JsonNode v : data) {
             if (name.equals(v.get("name").asText())) {
-                return v.get("value").asText();
+                return v;
             }
         }
         return null;

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_c854_null" targetNamespace="http://bpmn.io/schema/bpmn">
+  <!-- WO-C8-54: io-mapping, чей source не даёт значения (переменной нет /
+       неизвестная функция / несравнимые типы / выход за границы / =null).
+       Живой Zeebe 8.5: результат — NULL-ЗНАЧЕНИЕ (JSON null), задание создаётся,
+       процесс идёт дальше, инцидента нет. -->
+  <bpmn:process id="test-c854-null-io-mapping" name="test-c854-null-io-mapping" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="startEvent" targetRef="svcNull" />
+
+    <bpmn:serviceTask id="svcNull" name="svcNull">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="c854-null" retries="3" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=neverProvidedVar" target="nullIn"/>
+          <zeebe:output source="=neverProvidedVar" target="nullOut"/>
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" name="f2" sourceRef="svcNull" targetRef="endEvent" />
+
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>f2</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

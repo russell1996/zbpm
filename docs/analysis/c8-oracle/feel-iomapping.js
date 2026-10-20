@@ -70,8 +70,50 @@ function subProcess(id, incoming, outgoing, ext, innerXml) {
     + '</bpmn:subProcess>';
 }
 
+function gatewayBpmn(c) {
+  // WO-C8-54: TWO outgoing flows — flowA carries the case condition, flowB is the
+  // default flow (defaultFlow=true) or a never-taken conditioned flow '=false'.
+  // A one-outgoing gateway is a degenerate pass-through in our engine, so a
+  // single-flow diagram would measure a different shape than live 8.5.
+  const withDefault = !!c.defaultFlow;
+  const condition = c.condition || 'true';
+  const defs = '<?xml version="1.0" encoding="UTF-8"?>'
+    + '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" '
+    + 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+    + 'xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" '
+    + `id="Definitions_${c.pid}" targetNamespace="http://bpmn.io/schema/bpmn">`;
+  const body = '<bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>'
+    + `<bpmn:exclusiveGateway id="gw"${withDefault ? ' default="flowB"' : ''}>`
+    + '<bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>flowA</bpmn:outgoing>'
+    + '<bpmn:outgoing>flowB</bpmn:outgoing>'
+    + '</bpmn:exclusiveGateway>'
+    + '<bpmn:serviceTask id="condA" name="condA">'
+    + '<bpmn:extensionElements><zeebe:taskDefinition type="feelCondA"/></bpmn:extensionElements>'
+    + '<bpmn:incoming>flowA</bpmn:incoming><bpmn:outgoing>f3</bpmn:outgoing></bpmn:serviceTask>'
+    + '<bpmn:serviceTask id="condB" name="condB">'
+    + '<bpmn:extensionElements><zeebe:taskDefinition type="feelCondB"/></bpmn:extensionElements>'
+    + '<bpmn:incoming>flowB</bpmn:incoming><bpmn:outgoing>f4</bpmn:outgoing></bpmn:serviceTask>'
+    + '<bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming>'
+    + '<bpmn:incoming>f4</bpmn:incoming></bpmn:endEvent>'
+    + '<bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="gw"/>'
+    + '<bpmn:sequenceFlow id="flowA" sourceRef="gw" targetRef="condA">'
+    + `<bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=${esc(condition)}</bpmn:conditionExpression>`
+    + '</bpmn:sequenceFlow>'
+    + (withDefault
+      ? '<bpmn:sequenceFlow id="flowB" sourceRef="gw" targetRef="condB"/>'
+      : '<bpmn:sequenceFlow id="flowB" sourceRef="gw" targetRef="condB">'
+        + '<bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">=false</bpmn:conditionExpression>'
+        + '</bpmn:sequenceFlow>')
+    + '<bpmn:sequenceFlow id="f3" sourceRef="condA" targetRef="end"/>'
+    + '<bpmn:sequenceFlow id="f4" sourceRef="condB" targetRef="end"/>';
+  return defs + `<bpmn:process id="${c.pid}" name="${c.pid}" isExecutable="true">${body}</bpmn:process></bpmn:definitions>`;
+}
+
 function bpmnXml(c) {
   const pid = 'f1_' + c.id.replace(/[^a-zA-Z0-9]/g, '_');
+  if (c.wrap === 'gateway') {
+    return gatewayBpmn({ ...c, pid });
+  }
   const defs = '<?xml version="1.0" encoding="UTF-8"?>'
     + '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" '
     + 'xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" '
@@ -184,6 +226,25 @@ async function runCase(client, c) {
   }
 
   try {
+    if (c.wrap === 'gateway') {
+      // WO-C8-54: which branch did the gateway take? (G-Q item 3 — a condition
+      // that evaluates to null must not silently change the routing)
+      const a = await pollT(client, 'feelCondA', piKey);
+      const b = await pollT(client, 'feelCondB', piKey);
+      if (a.length) {
+        result.outcome = 'flowA';
+        result.work = { ...raw(a[0]), variables: parseVars(a[0]) };
+        await complete(client, a[0], {});
+      } else if (b.length) {
+        result.outcome = 'flowB';
+        result.work = { ...raw(b[0]), variables: parseVars(b[0]) };
+        await complete(client, b[0], {});
+      } else {
+        result.outcome = 'stuck';
+      }
+      return result;
+    }
+
     if (c.wrap === 'mi') {
       result.miJobs = [];
       let dumpJob = null;

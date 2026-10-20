@@ -116,6 +116,15 @@ public class Diff1IoMappingScopeReproTest {
         return q;
     }
 
+    /** Open incidents of an instance, read through the activity-id path (see singleOpenIncident). */
+    private List<com.zorrodev.bpm.engine.entity.IncidentEntity> openIncidentEntities(UUID pi) {
+        List<UUID> activityIds = activityRepository.findAll().stream()
+            .filter(a -> a.getProcessInstanceId().equals(pi))
+            .map(ActivityEntity::getId)
+            .toList();
+        return incidentRepository.findByActivityIdInAndCompletedAtIsNull(activityIds);
+    }
+
     private com.zorrodev.bpm.contract.dto.Incident singleOpenIncident(UUID pi, String what) {
         // WO-ENG-29: IncidentService.raiseIncident пишет fallback-activity, когда
         // живой activity уже завершён (см. WO-REL-40) — IncidentQuery-фильтр по
@@ -252,29 +261,16 @@ public class Diff1IoMappingScopeReproTest {
         // incident explicitly, then resolve it with the missing variable supplied
         // (operator fixes data and re-runs — the incident-resolve path), after
         // which the flow continues exactly as this test asserted before.
+        // WO-C8-54: the absent 'noSuchVar' is a NULL VALUE (live 8.5), not an
+        // incident — the inner task completes and the flow advances by itself.
         runtimeService.completeServiceTask(openServiceTaskId(processInstanceId, "diff1-s027-inner"),
             List.of(var("innerOut", ProcessVariableType.STRING, "done")));
-        // findIncidents(pageable=null) — см. сервисные тесты: null-pageable допустим.
-        com.zorrodev.bpm.contract.dto.Incident incident =
-            singleOpenIncident(processInstanceId,
-                "ENG-29: output mapping on absent 'noSuchVar' raises an incident, not silent ''");
-        runtimeService.resolveIncident(incident.getId(),
-            List.of(var("noSuchVar", ProcessVariableType.STRING, "nowhere")));
-        runtimeService.completeServiceTask(openServiceTaskId(processInstanceId, "diff1-s027-inner"),
-            List.of(var("innerOut", ProcessVariableType.STRING, "done")));
-        // WO-ENG-29 second-order effect (documented): sub-close cleans the sub scope
-        // (WO-ENG-14 decision), so the after-task's `=subLocal -> lateRead` input now
-        // ALSO fails with NO_VARIABLE_FOUND and parks as an incident (before ENG-29
-        // it silently wrote ""). The incident parks at ENTER time, so the after-task
-        // has no open service-task row yet (openServiceTaskId would find nothing) —
-        // resolve directly, then complete the re-entered job below.
-        com.zorrodev.bpm.contract.dto.Incident afterIncident = singleOpenIncident(processInstanceId,
-            "ENG-29: after-task input on cleaned sub-scope variable also incidents");
-        runtimeService.resolveIncident(afterIncident.getId(),
-            List.of(var("subLocal", ProcessVariableType.STRING, "parent")));
-        // Resolve re-executes the after-task (fresh job) — complete it with the
-        // worker's result; the input mapping now evaluates against the supplied
-        // subLocal and the flow finishes.
+        assertThat(openIncidentEntities(processInstanceId))
+            .as("WO-C8-54: a missing io-mapping variable must not park the instance on an incident")
+            .isEmpty();
+        // The second-order effect is the same now: sub-close cleans the sub scope
+        // (WO-ENG-14 decision), so the after-task's `=subLocal -> lateRead` input
+        // evaluates to a null VALUE too — the task is created, no incident.
         runtimeService.completeServiceTask(openServiceTaskId(processInstanceId, "diff1-s027-after"),
             List.of(var("workResult", ProcessVariableType.STRING, "done")));
 
@@ -294,12 +290,14 @@ public class Diff1IoMappingScopeReproTest {
         // WO-C8-53: innerOut (raw-completion элемента inner с output-маппингами) — элемент-локальна,
         // live-root её не видит; workResult (after без маппингов) — в root как раньше (S0).
         assertThat(rootVars(processInstanceId).keySet())
-            .containsExactlyInAnyOrder("parentVar", "nullOut", "workResult", "subOut",
-                "noSuchVar", "subLocal");
+            .containsExactlyInAnyOrder("parentVar", "nullOut", "workResult", "subOut");
         assertThat(rootVars(processInstanceId)).containsEntry("subOut", "parent");
+        // WO-C8-54: the null values are JSON nulls now (live 8.5 parity) — the
+        // variable is present, its value is the JSON text "null".
+        assertThat(rootVars(processInstanceId)).containsEntry("nullOut", "null");
         // Residual DIFFER (п.3, by decision): dead-scope locals stay out of root —
-        // innerSeen was never re-supplied, so it is still absent (subLocal above is
-        // present only because the operator re-supplied it at resolve time).
+        // innerSeen was never re-supplied, so it is still absent (nothing is
+        // re-supplied at resolve time any more: there is no incident to resolve).
         assertThat(rootVars(processInstanceId).keySet())
             .doesNotContain("innerSeen");
         // The closed sub scope is cleaned like any completed task scope.
