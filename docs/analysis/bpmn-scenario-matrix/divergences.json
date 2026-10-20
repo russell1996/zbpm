@@ -1,0 +1,2004 @@
+{
+  "generatedAt": "2026-10-20T22:09:07.879Z",
+  "oracle": "zeebe-8.5.0-live",
+  "total": 56,
+  "match": 44,
+  "oracleUnsupported": 12,
+  "divergences": 0,
+  "rows": [
+    {
+      "id": "mi_parallel_task-single-n0-",
+      "container": "MI_PARALLEL_TASK",
+      "content": "SINGLE",
+      "cardinality": 0,
+      "order": "",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_task-single-n1-a",
+      "container": "MI_PARALLEL_TASK",
+      "content": "SINGLE",
+      "cardinality": 1,
+      "order": "a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_task-single-n2-ab",
+      "container": "MI_PARALLEL_TASK",
+      "content": "SINGLE",
+      "cardinality": 2,
+      "order": "a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_task-single-n2-ba",
+      "container": "MI_PARALLEL_TASK",
+      "content": "SINGLE",
+      "cardinality": 2,
+      "order": "b,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_task-single-n3-abc",
+      "container": "MI_PARALLEL_TASK",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "a,b,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_task-single-n3-acb",
+      "container": "MI_PARALLEL_TASK",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "a,c,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_task-single-n3-bac",
+      "container": "MI_PARALLEL_TASK",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "b,a,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_task-single-n3-bca",
+      "container": "MI_PARALLEL_TASK",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "b,c,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_task-single-n3-cba",
+      "container": "MI_PARALLEL_TASK",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "c,b,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_task-single-n3-cab",
+      "container": "MI_PARALLEL_TASK",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "c,a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_task-single-n0-",
+      "container": "MI_SEQUENTIAL_TASK",
+      "content": "SINGLE",
+      "cardinality": 0,
+      "order": "",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_task-single-n1-a",
+      "container": "MI_SEQUENTIAL_TASK",
+      "content": "SINGLE",
+      "cardinality": 1,
+      "order": "a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_task-single-n2-ab",
+      "container": "MI_SEQUENTIAL_TASK",
+      "content": "SINGLE",
+      "cardinality": 2,
+      "order": "a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_task-single-n3-abc",
+      "container": "MI_SEQUENTIAL_TASK",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "a,b,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-single-n0-",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 0,
+      "order": "",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-single-n1-a",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 1,
+      "order": "a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-single-n2-ab",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 2,
+      "order": "a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-single-n2-ba",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 2,
+      "order": "b,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-single-n3-abc",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "a,b,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-single-n3-acb",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "a,c,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-single-n3-bac",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "b,a,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-single-n3-bca",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "b,c,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-single-n3-cba",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "c,b,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-single-n3-cab",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "c,a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-chain-n0-",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 0,
+      "order": "",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-chain-n1-a",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 1,
+      "order": "a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-chain-n2-ab",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 2,
+      "order": "a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-chain-n2-ba",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 2,
+      "order": "b,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-chain-n3-abc",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 3,
+      "order": "a,b,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-chain-n3-acb",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 3,
+      "order": "a,c,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-chain-n3-bac",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 3,
+      "order": "b,a,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-chain-n3-bca",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 3,
+      "order": "b,c,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-chain-n3-cba",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 3,
+      "order": "c,b,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-chain-n3-cab",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 3,
+      "order": "c,a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-user-n0-",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 0,
+      "order": "",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_parallel_subprocess-user-n1-a",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 1,
+      "order": "a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    },
+    {
+      "id": "mi_parallel_subprocess-user-n2-ab",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 2,
+      "order": "a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    },
+    {
+      "id": "mi_parallel_subprocess-user-n2-ba",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 2,
+      "order": "b,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    },
+    {
+      "id": "mi_parallel_subprocess-user-n3-abc",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 3,
+      "order": "a,b,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    },
+    {
+      "id": "mi_parallel_subprocess-user-n3-acb",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 3,
+      "order": "a,c,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    },
+    {
+      "id": "mi_parallel_subprocess-user-n3-bac",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 3,
+      "order": "b,a,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    },
+    {
+      "id": "mi_parallel_subprocess-user-n3-bca",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 3,
+      "order": "b,c,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    },
+    {
+      "id": "mi_parallel_subprocess-user-n3-cba",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 3,
+      "order": "c,b,a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    },
+    {
+      "id": "mi_parallel_subprocess-user-n3-cab",
+      "container": "MI_PARALLEL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 3,
+      "order": "c,a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    },
+    {
+      "id": "mi_sequential_subprocess-single-n0-",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 0,
+      "order": "",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_subprocess-single-n1-a",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 1,
+      "order": "a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_subprocess-single-n2-ab",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 2,
+      "order": "a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_subprocess-single-n3-abc",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "SINGLE",
+      "cardinality": 3,
+      "order": "a,b,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_subprocess-chain-n0-",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 0,
+      "order": "",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_subprocess-chain-n1-a",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 1,
+      "order": "a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_subprocess-chain-n2-ab",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 2,
+      "order": "a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_subprocess-chain-n3-abc",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "CHAIN",
+      "cardinality": 3,
+      "order": "a,b,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_subprocess-user-n0-",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 0,
+      "order": "",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [],
+          "results": []
+        },
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "mi_sequential_subprocess-user-n1-a",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 1,
+      "order": "a",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    },
+    {
+      "id": "mi_sequential_subprocess-user-n2-ab",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 2,
+      "order": "a,b",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    },
+    {
+      "id": "mi_sequential_subprocess-user-n3-abc",
+      "container": "MI_SEQUENTIAL_SUBPROCESS",
+      "content": "USER",
+      "cardinality": 3,
+      "order": "a,b,c",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "leaks": [],
+        "incidents": []
+      },
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "error": "dump job never appeared"
+      },
+      "verdict": "oracle-unsupported",
+      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+    }
+  ]
+}
