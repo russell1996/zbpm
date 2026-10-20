@@ -22,6 +22,12 @@ import { defineComponent, h, onMounted } from 'vue'
 import TaskList from '@/pages/tasks/TaskList.vue'
 import ProcessInstanceDetail from '@/pages/processes/ProcessInstanceDetail.vue'
 import { useRealtimeEvents } from '@/composables/useRealtimeEvents'
+import {
+  evaluateHeapGrowth,
+  HEAP_GROWTH_LIMIT_MB,
+  MIN_HEAP_SAMPLES,
+  type HeapSoakSample,
+} from '@/test/heapSoakMetrics'
 import ru from '@/locales/ru.json'
 import en from '@/locales/en.json'
 import kz from '@/locales/kz.json'
@@ -180,7 +186,7 @@ describe.skipIf(!RUN_SOAK)('WO-UI-26 Н-4 heap soak под потоком (Chrom
         return () => h(page === 'list' ? TaskList : ProcessInstanceDetail)
       },
     })
-    const samples: Array<{ cycle: number; heapMb: number | null; dom: number; esOpen: number }> = []
+    const samples: HeapSoakSample[] = []
     const t0 = Date.now()
     const deadline = t0 + SOAK_MINUTES * 60 * 1000
     let cycle = 0
@@ -236,13 +242,19 @@ describe.skipIf(!RUN_SOAK)('WO-UI-26 Н-4 heap soak под потоком (Chrom
     // EventSource не копятся: лидерский ES максимум 1 открытый на контекст.
     const esOpen = FakeEventSource.openCount()
     expect(esOpen).toBeLessThanOrEqual(2)
-    // Heap: рост за весь прогон — в пределах шума GC (щедрый порог 40 МБ,
-    // реальный рост без утечек — единицы МБ; утечка подписок дала бы сотни).
-    const first = samples.find((s) => s.heapMb !== null)
-    const last = [...samples].reverse().find((s) => s.heapMb !== null)
-    if (first?.heapMb != null && last?.heapMb != null && samples.length >= 3) {
-      expect(last.heapMb - first.heapMb).toBeLessThan(40)
-    }
+    // WO-UI-42 п.4: рост кучи — ЯВНЫЙ порог и сравнение «до-после», без
+    // молчаливого пропуска. Раньше проверка стояла под условием
+    // `if (замеры есть && samples.length >= 3)` — без замеров (нет
+    // performance.memory) или при малом числе сэмплов она просто НЕ
+    // выполнялась, и прогон оставался зелёным, ничего не доказывая.
+    // Теперь решение принимается ВСЕГДА; отсутствие замеров — провал.
+    const heapVerdict = evaluateHeapGrowth(samples)
+    expect(
+      heapVerdict.ok,
+      `куча: ${heapVerdict.reason} (замеров=${heapVerdict.measured}, дельта=${heapVerdict.deltaMb} МБ, порог=${HEAP_GROWTH_LIMIT_MB} МБ)`,
+    ).toBe(true)
+    expect(heapVerdict.measured, 'замеров кучи достаточно для сравнения').toBeGreaterThanOrEqual(MIN_HEAP_SAMPLES)
+    expect(heapVerdict.deltaMb, 'рост кучи за прогон').toBeLessThan(HEAP_GROWTH_LIMIT_MB)
     // DOM после размонтирования — без наростов (утечки узлов нет).
     const domFirst = samples[0]?.dom ?? 0
     const domLast = samples[samples.length - 1]?.dom ?? 0

@@ -1,4 +1,4 @@
-import { ref, onUnmounted } from 'vue'
+import { ref, getCurrentScope, onScopeDispose } from 'vue'
 import type { EventEnvelope } from '@/types/api'
 import { useProcessStore } from '@/stores/process'
 import { useTaskStore } from '@/stores/task'
@@ -252,7 +252,8 @@ export function useRealtimeEvents() {
 
   let eventSource: EventSource | null = null
   let reconnectAttempts = 0
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  // WO-UI-42 п.3: ВСЕ handle'ы висящих backoff-таймеров (см. scheduleReconnect).
+  const reconnectTimers = new Set<ReturnType<typeof setTimeout>>()
   // WO-UI-26 Доп.6 п.2/Доп.8: диагностика канала для панели по клику.
   const diagnostics = ref<ChannelDiagnostics>({
     lastError: 'none',
@@ -571,6 +572,12 @@ export function useRealtimeEvents() {
       && source.readyState === (EventSource as unknown as { CLOSED: number }).CLOSED
   }
 
+  /** Гасит ВСЕ висящие backoff-таймеры (WO-UI-42 п.3). */
+  function clearReconnectTimers(): void {
+    for (const t of reconnectTimers) clearTimeout(t)
+    reconnectTimers.clear()
+  }
+
   function scheduleReconnect() {
     if (reconnectAttempts >= SSE_RECONNECT_MAX_ATTEMPTS) {
       // WO-REL-57: refresh жив, а канал не поднялся — это НЕ expired-сессия
@@ -587,16 +594,25 @@ export function useRealtimeEvents() {
     reconnectAttempts += 1
     error.value = 'Realtime connection lost, retrying…'
     const gen = connectGeneration
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null
+    // WO-UI-42 п.3: handle'ы ВСЕХ висящих backoff-таймеров (их бывает
+    // несколько: каждый обрыв вооружает свой). Раньше хранился только
+    // ПОСЛЕДНИЙ — предыдущие теряли handle, и их нельзя было отменить
+    // (ни ручным retry, ни disconnect). Поведение цепочки НЕ меняется:
+    // каждый запланированный reconnect по-прежнему срабатывает (на этом
+    // построен браузерный тест UI31-6), но теперь любой из них отменяем.
+    const timer = setTimeout(() => {
+      reconnectTimers.delete(timer)
       // WO-UI-31: экземпляр за это время отключился (вкладка закрыта,
       // unmount) — цепочка мертва: ни refresh, ни терминальная публикация
       // с мёртвой вкладки (fanout общий — закрытая вкладка не должна
-      // вещать sessionExpired на живые; stacked-таймеры, чей handle
-      // перезаписан, disconnect не чистит — здесь они и гаснут).
+      // вещать sessionExpired на живые). Отменяет таймеры disconnect()
+      // (все handle'ы — см. clearReconnectTimers), а поколение — вторая
+      // линия: протухший таймер, уже снятый с рук, всё равно ничего не
+      // делает.
       if (gen !== connectGeneration) return
       void refreshAndReconnect()
     }, delay)
+    reconnectTimers.add(timer)
   }
 
   async function refreshAndReconnect() {
@@ -656,6 +672,13 @@ export function useRealtimeEvents() {
 
   function retryConnection() {
     reconnectAttempts = 0
+    // WO-UI-42 п.3: ручной retry отменяет УЖЕ ЗАПЛАНИРОВАННЫЕ backoff'ы
+    // (все, а не только последний — handle'ы терялись). Без этого висящий
+    // таймер срабатывал на живом канале: refreshAndReconnect() закрывал
+    // только что открытый источник и открывал новый (лишний /auth/refresh +
+    // рёв EventSource на живом канале — потеря событий в зазоре и лишний
+    // слот SSE на HTTP/1.1).
+    clearReconnectTimers()
     if (!isLeaderTab) {
       // WO-AUDIT-16 (F-13): у follower НЕТ своего EventSource — и retry не
       // обязан создавать его: без гварда `openSource()` открывал ВТОРОЙ
@@ -787,10 +810,9 @@ export function useRealtimeEvents() {
     // onPromoted — их исход после этого игнорируется (лок отпускается).
     connectGeneration++
     leadershipInflight = false
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer)
-      reconnectTimer = null
-    }
+    // WO-UI-42 п.3: гасим ВСЕ висящие backoff-таймеры (раньше отменялся
+    // только последний — handle'ы предыдущих терялись).
+    clearReconnectTimers()
     if (firstByteTimer) {
       clearTimeout(firstByteTimer)
       firstByteTimer = null
@@ -825,9 +847,18 @@ export function useRealtimeEvents() {
     isConnected.value = false
   }
 
-  onUnmounted(() => {
-    disconnect()
-  })
+  // WO-UI-42 п.3: чистим таймеры по ОСТАНОВКЕ SCOPE, а не только по unmount
+  // компонента. В setup() активен scope компонента (instance.scope.on() в
+  // setCurrentInstance), поэтому для компонента поведение то же — disconnect()
+  // и там, и там; но composable вне компонента (effect-scope, тест, стор)
+  // onUnmounted вообще не срабатывал — таймеры оставались висеть.
+  // Guard: без активного scope onScopeDispose() ругается в консоль — тогда
+  // чистить нечего (вызывающий сам зовёт disconnect()).
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      disconnect()
+    })
+  }
 
   return {
     isConnected,
