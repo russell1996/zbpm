@@ -59,6 +59,9 @@ class CompletionTrustMonitorIntegrationTests {
     /** Метрика: completion, не соответствующая выданной воркеру задаче (серия на причину). */
     private static final String METER = "zbpm.completion.unissued";
 
+    /** Метрика: поглощённый движком повтор (WO-AUDIT-8); тег — вид пути приёма. */
+    private static final String REPLAY_METER = "zbpm.completion.replay";
+
     @Autowired private CompletionTrustMonitor monitor;
     @Autowired private ServiceTaskCompletionProcessor completionProcessor;
     @Autowired private ActivityRepository activityRepository;
@@ -69,6 +72,11 @@ class CompletionTrustMonitorIntegrationTests {
 
     private double unissued(String reason) {
         return meterRegistry.find(METER).tag("reason", reason).counter().count();
+    }
+
+    /** Счётчик поглощённых повторов (WO-AUDIT-8): тег — вид ПУТИ ПРИЁМА. */
+    private double replay(String kind) {
+        return meterRegistry.find(REPLAY_METER).tag("kind", kind).counter().count();
     }
 
     private UUID deploy(String fixture) throws Exception {
@@ -180,6 +188,74 @@ class CompletionTrustMonitorIntegrationTests {
             .as("открытая listener-фаза = под этот id выдана listener-джоба")
             .isNull();
         assertThat(unissued(CompletionTrustMonitor.REASON_NO_JOB_ISSUED) - before).isZero();
+    }
+
+    /**
+     * WO-AUDIT-20 (3): повторная доставка completion по УЖЕ завершённой задаче.
+     *
+     * <p>Задача закрыта (человеком через REST — движок закрыл activity в COMPLETED), и
+     * приходит ВТОРАЯ доставка результата по тому же id. Это НЕ «джобу под неё
+     * воркеру не выдавали»: джоба была выдана, задача просто уже закрыта, а движок
+     * такой повтор поглощает guard'ом и считает в
+     * {@code zbpm.completion.replay{kind=…}} (WO-AUDIT-8). Вердикт монитора
+     * {@code no_job_issued} здесь — ложный (он утверждает о СОСТОЯНИИ задачи, которой
+     * как рабочей единицы уже нет) и даёт шум: одна аномалия — много WARN-строк.
+     *
+     * <p>Живая аномалия НЕ теряется: для ЖИВОЙ (не завершённой) user task'и
+     * {@code no_job_issued} по-прежнему считается — см.
+     * {@code completionForUserTask_isCountedAsNoJobIssued}.
+     */
+    @Test
+    void completionForAlreadyFinishedTask_isNotCountedAsNoJobIssued() throws Exception {
+        UUID pi = start(deploy("test-metrics-park.bpmn"));
+        ActivityEntity userTask = activityOf(pi, "taskM");
+
+        // Задача закрыта — после этого приходит повторная доставка результата.
+        runtimeService.completeUserTask(userTask.getId(), List.of());
+        assertThat(activityRepository.findById(userTask.getId()).orElseThrow().getStatus())
+            .as("фикстура должна закрыть задачу — иначе тест проверяет не то")
+            .isEqualTo(ActivityStatus.COMPLETED);
+        double before = unissued(CompletionTrustMonitor.REASON_NO_JOB_ISSUED);
+
+        String reason = monitor.inspect(userTask.getId());
+
+        assertThat(reason)
+            .as("задача уже закрыта — это повтор (replay), а не «джобу под неё не выдавали»")
+            .isNull();
+        assertThat(unissued(CompletionTrustMonitor.REASON_NO_JOB_ISSUED) - before)
+            .as("повтор не должен засчитываться как «джобу не выдавали»")
+            .isZero();
+    }
+
+    /**
+     * WO-AUDIT-20 (3-бис): то же правило — но на ЖИВОМ пути приёма (тот же
+     * {@code ServiceTaskCompletionProcessor}, что поднимает Spring), а не прямым
+     * вызовом монитора. И заодно — доказательство, что сигнал НЕ потерян: повтор
+     * поглощается движком и считается в {@code zbpm.completion.replay} (там, где
+     * он реально поглощён), т.е. «не считать в unissued» — не «выбросить».
+     */
+    @Test
+    void completionForAlreadyFinishedTask_onTheLiveIntakePath_isNotCountedAsNoJobIssued() throws Exception {
+        UUID pi = start(deploy("test-metrics-park.bpmn"));
+        ActivityEntity userTask = activityOf(pi, "taskM");
+        runtimeService.completeUserTask(userTask.getId(), List.of());
+        double unissuedBefore = unissued(CompletionTrustMonitor.REASON_NO_JOB_ISSUED);
+        double replayBefore = replay("service_task");
+
+        ServiceTaskCompleted completion = new ServiceTaskCompleted();
+        completion.setServiceTaskId(userTask.getId());
+        completion.setStatus("SUCCESS");
+        completionProcessor.process(completion);
+
+        assertThat(unissued(CompletionTrustMonitor.REASON_NO_JOB_ISSUED) - unissuedBefore)
+            .as("повтор по закрытой задаче не должен засчитываться как «джобу не выдавали»")
+            .isZero();
+        assertThat(activityRepository.findById(userTask.getId()).orElseThrow().getStatus())
+            .as("повтор не должен двигать состояние закрытой задачи")
+            .isEqualTo(ActivityStatus.COMPLETED);
+        assertThat(replay("service_task") - replayBefore)
+            .as("повтор виден в zbpm.completion.replay — сигнал НЕ потерян, он просто не в unissued")
+            .isGreaterThanOrEqualTo(1.0);
     }
 
     /**

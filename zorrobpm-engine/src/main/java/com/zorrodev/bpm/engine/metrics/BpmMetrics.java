@@ -109,6 +109,13 @@ public class BpmMetrics {
     // (at-least-once дубликаты брокера vs реальные двойные клики).
     private final Map<String, Counter> completionReplayByKind;
 
+    // --- Completion trust monitor failures (WO-AUDIT-20) ---
+    // Наблюдатель доверия канала завершений — НЕ часть приёма: его падение
+    // (сбой чтения, NPE в будущей правке) переживается на стороне вызова
+    // (ServiceTaskCompletionProcessor) и считается здесь. Без счётчика
+    // «наблюдатель молча сломался» неотличимо от «наблюдателя нет».
+    private final Counter completionMonitorErrors;
+
     /** Виды задач для {@code zbpm.completion.replay}. Неизвестные — не считаются. */
     static final List<String> COMPLETION_REPLAY_KINDS = List.of("user_task", "service_task");
 
@@ -305,6 +312,15 @@ public class BpmMetrics {
         }
         this.completionUnissuedByReason = Map.copyOf(unissuedByReason);
 
+        // WO-AUDIT-20: падения наблюдателя доверия канала завершений. Отдельный
+        // meter (не ряд с unissued): это НЕ «completion не по выданной задаче»,
+        // это «наблюдатель не смог посмотреть» — разные вещи для оператора.
+        this.completionMonitorErrors = Counter.builder("zbpm.completion.monitor.errors")
+            .description("Failures of the completion trust monitor (WO-AUDIT-20). The monitor "
+                + "is observability only: its failure must never break completion intake, so "
+                + "every failure is counted here instead of failing the completion itself.")
+            .register(registry);
+
         // WO-AUDIT-8 (A-NEW4-15): повторные complete — наблюдаемые, а не тихие.
         // Та же форма, что activityTransitionIgnoredByReason выше: один meter,
         // серия на kind. Реестр — тот же домен этого класса (Micrometer →
@@ -483,6 +499,20 @@ public class BpmMetrics {
         if (counter != null) {
             counter.increment();
         }
+    }
+
+    /**
+     * WO-AUDIT-20: падение наблюдателя доверия канала завершений.
+     *
+     * <p>Считается на стороне ВЫЗОВА монитора ({@code ServiceTaskCompletionProcessor}),
+     * потому что именно там исключение наблюдателя переживается и приём completion'а
+     * продолжается. Отдельный meter (а не ещё одна причина в
+     * {@code zbpm.completion.unissued}): «completion не по выданной задаче» и
+     * «наблюдатель не смог посмотреть» — разные вещи, и смешивать их в одной серии
+     * значит сделать счётчик бесполезным для алерта.
+     */
+    public void completionMonitorError() {
+        completionMonitorErrors.increment();
     }
 
     // --- SSE bridge (WO-REL-56, part B) ---

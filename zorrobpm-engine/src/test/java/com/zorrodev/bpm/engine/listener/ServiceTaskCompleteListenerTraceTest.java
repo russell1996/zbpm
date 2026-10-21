@@ -63,7 +63,7 @@ class ServiceTaskCompleteListenerTraceTest {
         org.mockito.Mockito.when(scriptService.admitOutsideTx())
             .thenReturn(AdmissionLease.noop());
         listener = new ServiceTaskCompleteListener(tracing, scriptService,
-            new ServiceTaskCompletionProcessor(runtimeService, trustMonitor()));
+            new ServiceTaskCompletionProcessor(runtimeService, trustMonitor(), new BpmMetrics(new SimpleMeterRegistry())));
         MDC.clear();
     }
 
