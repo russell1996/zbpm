@@ -1,0 +1,111 @@
+@startuml external-system-integration
+title Внешняя система: старт процесса + узнавание об изменениях
+
+actor "Внешняя система\n(браузер / BFF)" as Client
+participant "REST API" as REST
+participant "Engine" as Engine
+database "PostgreSQL\n(вкл. outbox-таблицу)" as DB
+queue "zorrobpm.jobs.<type>\n(отдельная очередь НА КАЖДЫЙ\nтип job, point-to-point)" as JobQ
+participant "Внешний воркер" as Worker
+queue "zorrobpm.complete-service-task\n(+ DLX/DLQ, ОДНА общая очередь\nдля всех completion'ов)" as CompleteQ
+queue "zorrobpm.events\n(topic exchange, НЕ очередь —\nfan-out всем подписчикам)" as EventsX
+participant "SseEventStreamService\n(своя exclusive-очередь\nна exchange, per SSE-соединение)" as SseBridge
+
+== Шаг 1. Получить схему формы (опционально) ==
+Client -> REST: GET /process-definitions/{key}/start-form
+REST --> Client: схема формы (form-js) или Variable Schema (JSON Schema)
+note right of Client
+  Если Variable Schema — валидация
+  входных данных на стороне BFF,
+  движок про неё не знает.
+end note
+
+== Шаг 2. Старт процесса — команда, не результат ==
+Client -> REST: POST /process-instances\n{processDefinitionKey, variables}
+REST -> Engine: startProcessInstance()
+Engine -> DB: создать instance,\nтокен на стартовое событие
+Engine --> REST: processInstanceId
+REST --> Client: 201 { id }
+note right of Client
+  Это command-ack, НЕ бизнес-результат.
+  Первый шаг ещё не отработал.
+  processInstanceId — ключ корреляции
+  для всего, что дальше.
+end note
+
+== Шаг 3. Подписка на изменения (realtime) ==
+Client -> REST: GET /events/stream?processInstanceId={id}
+REST -> SseBridge: открыть SSE-соединение
+SseBridge -> EventsX: забиндить свою exclusive-очередь\nна routing key process.{pdKey}.*
+REST --> Client: SSE-соединение открыто\n(EventSource, авто-реконнект)
+note right of Client
+  Работает только same-origin/за reverse-proxy
+  (EventSource не шлёт Authorization-заголовок).
+  Cross-origin без общего домена →
+  используем HTTP-pull ниже вместо SSE.
+end note
+
+== Шаг 4. Движок исполняет шаг (например, Service Task) ==
+activate Engine
+Engine -> Engine: токен дошёл до Service Task
+Engine -> JobQ: publish job
+note right of JobQ
+  Очередь названа по ТИПУ job
+  (zorrobpm.jobs.charge-card и т.п.) —
+  у каждого типа своя очередь,
+  не общая на всех.
+end note
+JobQ -> Worker: доставка job
+activate Worker
+Worker -> Worker: выполняет бизнес-логику
+Worker -> CompleteQ: publish completion\n(status=SUCCESS|FAILED)
+deactivate Worker
+CompleteQ -> Engine: completion event
+Engine -> DB: сохранить результат,\nпродвинуть токен,\nзаписать доменное событие в outbox
+deactivate Engine
+
+== Шаг 5. Доменное событие уходит в exchange, потом в SSE ==
+Engine -> EventsX: publish envelope\nrouting key = process.{pdKey}.{type}[.{elementId}]
+note right of EventsX
+  Публикует отдельный фоновый процесс
+  (outbox-поллер), не сам обработчик шага —
+  разрыв между «эффект случился в БД» и
+  «событие ушло наружу» — так at-least-once
+  доставка не зависит от того, жив ли
+  RabbitMQ в момент самого шага.
+end note
+
+alt Шаг выполнился успешно
+  EventsX -> SseBridge: доставка envelope\n(эта exclusive-очередь подписана)
+  SseBridge --> Client: SSE push: "activity.completed"\n(data: {} — бизнес-данных нет внутри)
+  Client -> REST: GET /process-instances/{id}\nили /variables (перечитать состояние)
+  REST --> Client: актуальные данные
+else Ретраи исчерпаны — инцидент
+  EventsX -> SseBridge: доставка envelope
+  SseBridge --> Client: SSE push: "incident.raised"\n(data: {incidentId, message})
+  note right of Client
+    message уже содержит текст ошибки
+    воркера — можно показать пользователю
+    как есть, без доп. запроса.
+  end note
+else Воркер временно упал, есть ещё попытки
+  note over Engine, Worker
+    Тихий ретрай тому же воркеру
+    через ту же zorrobpm.jobs.<type>.
+    Событие клиенту НЕ отправляется —
+    это ожидаемая тишина, не потеря событий.
+  end note
+end
+
+== Fallback: SSE недоступен или оборвался надолго ==
+Client -> REST: GET /events?since={cursor}&processInstanceId={id}
+REST --> Client: пачка пропущенных событий\n(at-least-once, дедуп по eventId)
+note right of Client
+  Тот же контракт данных, что и в SSE-push —
+  события читаются из той же outbox-истории
+  в БД, не из очереди напрямую.
+  Не опрашивать параллельно с живым SSE —
+  лишняя нагрузка без пользы.
+end note
+
+@enduml

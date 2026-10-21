@@ -292,6 +292,19 @@ public class BpmMetrics {
         }
         this.activityTransitionIgnoredByReason = Map.copyOf(ignoredByReason);
 
+        // WO-AUDIT-18 (F-14): completion, не соответствующая выданной воркеру
+        // задаче (см. CompletionTrustMonitor) — серия на причину, как у соседей.
+        Map<String, Counter> unissuedByReason = new LinkedHashMap<>();
+        for (String reason : COMPLETION_UNISSUED_REASONS) {
+            unissuedByReason.put(reason, Counter.builder("zbpm.completion.unissued")
+                .description("Completions received on the worker channel that match no task "
+                    + "the engine issued to a worker (WO-AUDIT-18 / audit F-14 — the shared "
+                    + "completion channel is monitored, not enforced). One series per reason.")
+                .tag("reason", reason)
+                .register(registry));
+        }
+        this.completionUnissuedByReason = Map.copyOf(unissuedByReason);
+
         // WO-AUDIT-8 (A-NEW4-15): повторные complete — наблюдаемые, а не тихие.
         // Та же форма, что activityTransitionIgnoredByReason выше: один meter,
         // серия на kind. Реестр — тот же домен этого класса (Micrometer →
@@ -440,6 +453,33 @@ public class BpmMetrics {
      */
     public void completionReplayTotal(String kind) {
         Counter counter = completionReplayByKind.get(kind);
+        if (counter != null) {
+            counter.increment();
+        }
+    }
+
+    // --- Completion trust (WO-AUDIT-18, F-14) ---
+    /**
+     * WO-AUDIT-18 (F-14): completion, пришедшая по воркерскому каналу и НЕ
+     * соответствующая ни одной задаче, выданной воркеру. Одна серия на причину —
+     * по той же причине, что и у соседних счётчиков (C8-36 F-5: общий тег делал
+     * разные причины неразличимыми).
+     *
+     * <p>Считаются ПОПЫТКИ приёма, а не уникальные completion'ы: неизвестная
+     * задача роняет приём (движок её не знает) — контейнер переигрывает сообщение,
+     * и каждая попытка честно попадает в счётчик.
+     */
+    private final Map<String, Counter> completionUnissuedByReason;
+
+    /** Причины аномалии «completion не по выданной задаче». Неизвестные — не считаются. */
+    static final List<String> COMPLETION_UNISSUED_REASONS = List.of("unknown_task", "no_job_issued");
+
+    /**
+     * Counts a completion that matches no task the engine ever issued to a worker.
+     * Unknown reasons are not counted (same contract as the neighbours above).
+     */
+    public void completionUnissued(String reason) {
+        Counter counter = completionUnissuedByReason.get(reason);
         if (counter != null) {
             counter.increment();
         }

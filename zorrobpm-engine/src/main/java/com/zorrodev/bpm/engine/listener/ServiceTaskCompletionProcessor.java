@@ -3,6 +3,7 @@ package com.zorrodev.bpm.engine.listener;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import com.zorrodev.bpm.engine.trust.CompletionTrustMonitor;
 import com.zorrodev.bpm.exchange.ServiceTaskCompleted;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,9 +30,23 @@ public class ServiceTaskCompletionProcessor {
 
     private final RuntimeService runtimeService;
 
+    /**
+     * WO-AUDIT-18 (аудит F-14): наблюдатель модели доверия канала завершений.
+     * Стоит на живом пути приёма AMQP-completion'ов (единственный путь, где
+     * приходит результат от воркера) и ДО применения результата — чтобы аномалия
+     * была видна и в случае, когда само завершение затем падает.
+     *
+     * <p>Монитор НЕ меняет исход: ни отклонения, ни подмены — только счётчик и
+     * WARN-лог (наблюдательность модели доверия канала завершений; решение по
+     * модели — за maintainer, {@code docs/internal}, F-14).
+     */
+    private final CompletionTrustMonitor completionTrustMonitor;
+
     @Transactional
     public void process(ServiceTaskCompleted serviceTaskCompleted) {
         UUID serviceTaskId = serviceTaskCompleted.getServiceTaskId();
+
+        completionTrustMonitor.inspect(serviceTaskId);
 
         // a worker reports failure via status="FAILED" -> retries/incident, otherwise it completes the task
         // WO-C8-36 (CR-01): идентификатор вызова — в перегрузки (null = legacy без проверки).

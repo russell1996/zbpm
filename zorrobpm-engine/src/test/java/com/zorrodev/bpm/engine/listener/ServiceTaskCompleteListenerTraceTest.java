@@ -1,10 +1,16 @@
 package com.zorrodev.bpm.engine.listener;
 
+import com.zorrodev.bpm.engine.metrics.BpmMetrics;
+import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.ElementListenerPhaseRepository;
+import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.service.AdmissionLease;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import com.zorrodev.bpm.engine.service.ScriptService;
 import com.zorrodev.bpm.engine.tracing.TracingSupport;
+import com.zorrodev.bpm.engine.trust.CompletionTrustMonitor;
 import com.zorrodev.bpm.exchange.ServiceTaskCompleted;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -17,6 +23,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.MDC;
 
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,10 +58,12 @@ class ServiceTaskCompleteListenerTraceTest {
             .build());
         // WO-ENG-35: гейт admission — мок с no-op лизой (место «есть сразу»);
         // транзакционное тело — настоящий процессор на мок-RuntimeService.
+        // WO-AUDIT-18: монитор доверия — настоящий (на мок-репозиториях): он не
+        // меняет исход, но обязан быть вызван на живом пути приёма completion'ов.
         org.mockito.Mockito.when(scriptService.admitOutsideTx())
             .thenReturn(AdmissionLease.noop());
         listener = new ServiceTaskCompleteListener(tracing, scriptService,
-            new ServiceTaskCompletionProcessor(runtimeService));
+            new ServiceTaskCompletionProcessor(runtimeService, trustMonitor()));
         MDC.clear();
     }
 
@@ -62,6 +71,21 @@ class ServiceTaskCompleteListenerTraceTest {
     void tearDown() {
         MDC.clear();
         exporter.reset();
+    }
+
+    /**
+     * WO-AUDIT-18: настоящий монитор доверия на мок-репозиториях (в этом тесте
+     * интересует трассировка, а не модель доверия — её проверяет
+     * {@code CompletionTrustMonitorIntegrationTests}). Моки Mockito по умолчанию
+     * отдают {@code Optional.empty()} / {@code false} — этого достаточно, чтобы
+     * монитор отработал ветку «id неизвестен» и НЕ менял исход completion'а.
+     */
+    private static CompletionTrustMonitor trustMonitor() {
+        ActivityRepository activities = org.mockito.Mockito.mock(ActivityRepository.class);
+        ServiceTaskRepository serviceTasks = org.mockito.Mockito.mock(ServiceTaskRepository.class);
+        ElementListenerPhaseRepository phases = org.mockito.Mockito.mock(ElementListenerPhaseRepository.class);
+        return new CompletionTrustMonitor(activities, serviceTasks, phases,
+            new BpmMetrics(new SimpleMeterRegistry()));
     }
 
     @Test
