@@ -9,12 +9,14 @@ import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.leak.LeakInvariantChecker;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.TimerJobRepository;
 import com.zorrodev.bpm.engine.scheduler.TimerJobExecutor;
 import com.zorrodev.bpm.engine.service.ActivityService;
 import com.zorrodev.bpm.engine.service.DBService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.QueryService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -24,6 +26,7 @@ import org.springframework.test.context.ActiveProfiles;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -75,7 +78,25 @@ public class CompletedInstanceSubscriptionCleanupIntegrationTests {
     @Autowired private ActivityService activityService;
     @Autowired private DBService dbService;
     @Autowired private TimerJobExecutor timerJobExecutor;
+    @Autowired private TimerJobRepository timerJobRepository;
     @Autowired private JdbcTemplate jdbcTemplate;
+
+    /**
+     * Таймер-джобы, созданные этим тестом: общая H2-БД делится между тестами,
+     * а {@code TimerMessageQueryIntegrationTests.pendingTimerJobIsListed} ждёт
+     * «-fired-таймеров нет» (строка, оставленная моим тестом, ломала бы ЧУЖОЙ
+     * тест — ровно тот класс проблемы, что P-59). Поэтому джобы, которые создал
+     * этот тест, сносятся в {@code @AfterEach} — точечно, по id.
+     */
+    private final List<UUID> timerJobsToClean = new ArrayList<>();
+
+    @AfterEach
+    void cleanOwnTimerJobs() {
+        if (!timerJobsToClean.isEmpty()) {
+            timerJobRepository.deleteAllById(timerJobsToClean);
+            timerJobsToClean.clear();
+        }
+    }
 
     // ── помощники ───────────────────────────────────────────────────────────────────────
 
@@ -267,6 +288,7 @@ public class CompletedInstanceSubscriptionCleanupIntegrationTests {
         assertThat(armed)
             .as("факт: таймер-джоб завершённого инстанса остаётся в БД (чистка — только в kill-пути)")
             .isNotEmpty();
+        armed.forEach(j -> timerJobsToClean.add(j.getId()));
 
         int activitiesBefore = activities(pi).size();
         armed.forEach(timerJobExecutor::fire);

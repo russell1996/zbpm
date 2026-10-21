@@ -40,6 +40,8 @@ class ProcessInstanceDbOperationsImplTest {
     @Mock private com.zorrodev.bpm.engine.metrics.BpmMetrics bpmMetrics;
     @Mock private CancelledScopeStateCleaner cancelledScopeStateCleaner;
     @Mock private ParallelGatewayDbOperations parallelGatewayDbOperations;
+    /** WO-OPS-34: снятие instance-scoped подписок на терминальном переходе. */
+    @Mock private FinishedInstanceSubscriptionCleaner finishedInstanceSubscriptionCleaner;
     @InjectMocks private ProcessInstanceDbOperationsImpl db;
 
     @Test
@@ -200,9 +202,31 @@ class ProcessInstanceDbOperationsImplTest {
         }
     }
 
+    /**
+     * WO-OPS-34: нормальное завершение снимает instance-scoped подписки инстанса
+     * (message/signal) — и делает это ПОСЛЕ терминальной пометки. Порядок не
+     * случайный: доставка, успевшая забрать подписку миллисекундой раньше, гасится
+     * guard'ом «instance already completed» (EventTrigger.triggerEventSubprocess);
+     * обратный порядок оставил бы окно, в котором инстанс ещё «жив», а
+     * non-interrupting event-subprocess (она не consume-ит подписку, а зовёт
+     * триггер напрямую) успела бы запустить handler в умирающем инстансе.
+     */
     @Test
-    void cancelProcessInstance_setsCancelledAndCompletedAndEmits() {
+    void completeProcessInstance_dropsSubscriptionsAfterTerminalMark() {
         UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
+        ProcessInstanceEntity e = new ProcessInstanceEntity(); e.setId(id); e.setProcessDefinitionId(pdId);
+        when(processInstanceRepository.findById(id)).thenReturn(Optional.of(e));
+
+        db.completeProcessInstance(id);
+
+        var inOrder = org.mockito.Mockito.inOrder(
+            processInstanceRepository, finishedInstanceSubscriptionCleaner);
+        inOrder.verify(processInstanceRepository).setCompletedAt(eq(id), any(java.time.Instant.class));
+        inOrder.verify(finishedInstanceSubscriptionCleaner).clear(id);
+    }
+
+    @Test
+    void cancelProcessInstance_setsCancelledAndCompletedAndEmits() {        UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
         ProcessInstanceEntity e = new ProcessInstanceEntity(); e.setId(id); e.setProcessDefinitionId(pdId);
         when(processInstanceRepository.findById(id)).thenReturn(Optional.of(e));
         db.cancelProcessInstance(id);
