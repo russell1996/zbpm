@@ -78,6 +78,11 @@ public class SignalSubscriptionDbOperationsImpl implements SignalSubscriptionDbO
     }
 
     @Override
+    public void deleteSignalSubscriptionsByProcessInstanceId(UUID processInstanceId) {
+        signalSubscriptionRepository.deleteByProcessInstanceId(processInstanceId);
+    }
+
+    @Override
     public List<SignalStartSubscription> findSignalStartSubscriptions(String signalName) {
         return signalStartSubscriptionRepository.findBySignalName(signalName).stream()
             .map(e -> {
