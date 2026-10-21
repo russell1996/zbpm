@@ -105,6 +105,10 @@ class TerminalSubscriptionCleanupOrderGuardTest {
     /**
      * Тело метода по его сигнатуре: от первой фигурной скобки сигнатуры до
      * парной закрывающей (скобки считаются — в теле метода есть и вложенные).
+     *
+     * <p>Комментарии ВЫрезаны: закомментированный вызов — это уже не вызов.
+     * Без вырезки страж принимал бы «удалённую строку» за «вызов на своём месте»
+     * и молчал бы ровно на той мутации, которую он обязан ловить.
      */
     private static String methodBody(String source, String signature) {
         int sig = source.indexOf(signature);
@@ -112,6 +116,7 @@ class TerminalSubscriptionCleanupOrderGuardTest {
         int open = source.indexOf('{', sig + signature.length());
         assertThat(open).as("тело метода открывается: %s", signature).isGreaterThanOrEqualTo(0);
         int depth = 0;
+        StringBuilder body = new StringBuilder();
         for (int i = open; i < source.length(); i++) {
             char c = source.charAt(i);
             if (c == '{') {
@@ -119,11 +124,19 @@ class TerminalSubscriptionCleanupOrderGuardTest {
             } else if (c == '}') {
                 depth--;
                 if (depth == 0) {
-                    return source.substring(open, i + 1);
+                    body.append(c);
+                    break;
                 }
             }
+            body.append(c);
         }
-        throw new AssertionError("тело метода не закрылось: " + signature);
+        return stripComments(body.toString());
+    }
+
+    /** Вырезает строчные и блочные комментарии (в этом коде нет строк с «//»). */
+    private static String stripComments(String text) {
+        return text.replaceAll("(?s)/\\*.*?\\*/", " ")
+            .replaceAll("//[^\\n]*", " ");
     }
 
     /** Корень репозитория — по МАРКЕРАМ (тест гоняется и из каталога модуля, и из корня). */
