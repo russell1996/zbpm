@@ -244,7 +244,9 @@ REST-контур: `UnsupportedConstructDeployRejectionIT.unsupportedConstruct_i
 | 15 | MI на `task`/`scriptTask`/`manualTask`/`businessRuleTask`/`sendTask`/`receiveTask` | `:74-75` | **отказ на деплое** | §1.1 #5 |
 | 16 | Обращения `<messageStartEvent>`/`<terminateEndEvent>` как «исполняемые» | `:132` — только для dangling-проверки | §4-4 | §4-4 |
 | 17 | `<documentation>` (process-level) | биндится (`BpmnProcessDefinitionModel.java:30-32`), но **в модель не переносится** и нигде не читается | **тихо игнорируется** | **не найдено** |
-| 18 | Прочие BPMN-элементы вне `@XmlElement`-биндинга (`textAnnotation`, `group`, `import`, `artifact`, `resourceRole`, `performer`, `correlationProperty`, `interface`, `itemDefinition`) | `BpmnProcessDefinitionModel.java:15-88` / `BpmnDefinitionsModel.java:16-30` — полный перечень биндинга | **тихо игнорируются** (для них нет ни отказа, ни парсинга) | **не найдено** |
+| 18 | `boundaryEvent` с `attachedToRef`, указывающим на **несуществующую** activity | сканер такую ссылку **не проверяет** (в `BpmnSupportScanner.java` — 0 совпадений по `attachedToRef`, в отличие от dangling `sequenceFlow`, §1.1 #9); парсер копирует ref без валидации (`BpmnParseServiceImpl.java:602`); рантайм привязывает границу к хосту **сравнением ref с id хоста** (`BpmnProcessDefinitionModel.getBoundaryEventsAttachedTo:166-178`, `BoundaryScheduler.java:44-46`, `EventTrigger.java:91-92`, `ErrorEscalationThrower.java:263-264,:513-515`) | модель **деплоится без отказа**, но граница не «взводится» никогда: не срабатывает, отмену не вызывает, инцидент не поднимает — поведение «границы нет» | **не найдено** |
+| 19 | `errorEventDefinition` / `signalEventDefinition` / `escalationEventDefinition` с **несуществующим** ref | резолв ref в код/имя с откатом на «сырой ref» (`BpmnParseServiceImpl.java:551-552` error, `:556` signal, `:560` escalation) | деплой проходит; граница/событие никогда не сойдётся с реальным кодом ошибки/сигнала/эскалации | **не найдено** |
+| 20 | Прочие BPMN-элементы вне `@XmlElement`-биндинга (`textAnnotation`, `group`, `import`, `artifact`, `resourceRole`, `performer`, `correlationProperty`, `interface`, `itemDefinition`) | `BpmnProcessDefinitionModel.java:15-88` / `BpmnDefinitionsModel.java:16-30` — полный перечень биндинга | **тихо игнорируются** (для них нет ни отказа, ни парсинга) | **не найдено** |
 
 ---
 
@@ -393,9 +395,10 @@ H2d-прогона дала 1107 token-нарушений, из них 664 в `C
 ## 8. Пустые/односторонние места — сводка (кандидаты ФАЗ 1–5)
 
 **Как читать этот раздел.** Полный и единственный статус по каждому элементу/свойству — колонка G-P в
-§2/§3. Здесь — **сводка кандидатов**: P-1…P-7 — конструкции, которые движок НЕ исполняет или НЕ парсит
-(тут список полный); P-8…P-18 — элементы/свойства, исполняемые, но без собственного ассерта на остаток
-(список полный, P-9); P-11…P-16 — пробелы самого инварианта и прочие находки.
+§2/§3. Здесь — **сводка кандидатов**: P-1…P-7 и P-19…P-20 — конструкции, которые движок НЕ исполняет или
+НЕ парсит (список полный, соответствует §4, 20 позиций); P-8…P-10 и P-17…P-18 — элементы/свойства,
+исполняемые, но без собственного ассерта на остаток (список полный, P-9); P-11…P-16 — пробелы самого
+инварианта и прочие находки.
 
 | # | Место | Что пусто | Кандидат |
 |---|---|---|---|
@@ -416,6 +419,8 @@ H2d-прогона дала 1107 token-нарушений, из них 664 в `C
 | P-15 | §6 | `process0.bpmn` — фикстура без ссылки ни на один тест | ФАЗА 1 |
 | P-16 | §4-8 | `BpmnElementType.EVENT` — мёртвое значение enum'а | мелочь (V7) |
 | P-17 | §2, последняя строка | `boundaryEvent` на MI-контейнере: семантика «на теле MI vs per-instance» (расхождение ENG-3) **не разделена**, свой ассерт на остаток в `MiBoundaryTimerPgIT` отсутствует | ФАЗА 4 |
+| P-19 | §4-18 | `boundaryEvent` с `attachedToRef` на несуществующую activity — **деплоится без отказа и никогда не срабатывает** | ФАЗА 4 |
+| P-20 | §4-19 | `error`/`signal`/`escalation` ref на несуществующее определение — код откатывается на «сырой ref», событие никогда не сойдётся | ФАЗА 4 |
 | P-18 | §2, `intermediateThrowEvent`+`compensate` / `boundaryEvent`+`compensate` | в `CompensationWaitIntegrationTests` / `CompensationScopeIntegrationTests` / `CompensationIntegrationTests` absence-ассертов нет — компенсация проверяется по статусам, а не по остаткам | ФАЗА 4 |
 
 ---
