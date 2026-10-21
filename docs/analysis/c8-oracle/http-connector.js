@@ -44,8 +44,9 @@ const ERR_DUMP_TYPE = 'f2b-errdump';
 const CONNECTOR_TYPE = 'io.camunda:http-json:1';
 
 /** How long we wait for the connector to finish the job before calling it a failure. */
-const AFTER_REQUEST_GRACE_MS = 8000;
-const TOTAL_TIMEOUT_MS = 30000;
+/** Сколько ждать, пока число попыток перестанет расти (покой ретраев). */
+const STABLE_MS = 4000;
+const TOTAL_TIMEOUT_MS = 60000;
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -148,7 +149,7 @@ function buildBpmn(c) {
     <bpmn:sequenceFlow id="toCall" sourceRef="start" targetRef="call" />
     <bpmn:serviceTask id="call" name="http-json">
       <bpmn:extensionElements>
-        <zeebe:taskDefinition type="${xmlEscape(c.job.type || CONNECTOR_TYPE)}" retries="1" />
+        <zeebe:taskDefinition type="${xmlEscape(c.job.type || CONNECTOR_TYPE)}" retries="${c.job.retries || 3}" />
 ${headerXml ? `        <zeebe:taskHeaders>\n${headerXml}\n        </zeebe:taskHeaders>\n` : ''}${ioMapping}
       </bpmn:extensionElements>
       <bpmn:incoming>toCall</bpmn:incoming>
@@ -215,6 +216,8 @@ async function runCase(client, c, mockBase) {
 
   const started = Date.now();
   let requestSeenAt = null;
+  let lastRequestCount = 0;
+  let lastRequestChangeAt = Date.now();
   let observation = null;
 
   for (;;) {
@@ -247,13 +250,22 @@ async function runCase(client, c, mockBase) {
     if (seen.length > 0 && requestSeenAt === null) {
       requestSeenAt = Date.now();
     }
-    if (requestSeenAt !== null && Date.now() - requestSeenAt > AFTER_REQUEST_GRACE_MS) {
-      observation = {
-        outcome: 'failed',
-        requestsSeen: seen.length,
-        request: seen[0],
-      };
-      break;
+    /* Пока число попыток растёт — ждём: иначе «failed» фиксируется на первом попытке и
+     * ЧИСЛО РЕТРАЕВ не измерено (находка reviewer Б-2). Условие покоя: попытки не
+     * добавлялись STABLE_MS подряд. */
+    if (requestSeenAt !== null) {
+      if (seen.length !== lastRequestCount) {
+        lastRequestCount = seen.length;
+        lastRequestChangeAt = Date.now();
+      }
+      if (Date.now() - lastRequestChangeAt > STABLE_MS) {
+        observation = {
+          outcome: 'failed',
+          requestsSeen: seen.length,
+          request: seen[0],
+        };
+        break;
+      }
     }
     if (Date.now() - started > TOTAL_TIMEOUT_MS) {
       observation = {

@@ -9,7 +9,7 @@
     <bpmn:sequenceFlow id="toCall" sourceRef="start" targetRef="call" />
     <bpmn:serviceTask id="call" name="http-json">
       <bpmn:extensionElements>
-        <zeebe:taskDefinition type="io.camunda:http-json:1" retries="1" />
+        <zeebe:taskDefinition type="io.camunda:http-json:1" retries="3" />
       <zeebe:ioMapping>
         <zeebe:input source="= &quot;zorro-f2b-body&quot;" target="body" />
         <zeebe:input source="= { &quot;Content-Type&quot;: &quot;application/json&quot;, &quot;x-f2b-case&quot;: &quot;f2b-post-json-ct-text-body&quot; }" target="headers" />

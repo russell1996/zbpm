@@ -9,7 +9,7 @@
     <bpmn:sequenceFlow id="toCall" sourceRef="start" targetRef="call" />
     <bpmn:serviceTask id="call" name="http-json">
       <bpmn:extensionElements>
-        <zeebe:taskDefinition type="io.camunda:http-json:1" retries="1" />
+        <zeebe:taskDefinition type="io.camunda:http-json:1" retries="3" />
         <zeebe:taskHeaders>
         <zeebe:header key="resultExpression" value="={ probe: response.body.probe }" />
         </zeebe:taskHeaders>

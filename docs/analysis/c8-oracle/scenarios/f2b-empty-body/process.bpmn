@@ -9,7 +9,7 @@
     <bpmn:sequenceFlow id="toCall" sourceRef="start" targetRef="call" />
     <bpmn:serviceTask id="call" name="http-json">
       <bpmn:extensionElements>
-        <zeebe:taskDefinition type="io.camunda:http-json:1" retries="1" />
+        <zeebe:taskDefinition type="io.camunda:http-json:1" retries="3" />
       <zeebe:ioMapping>
         <zeebe:input source="= { &quot;x-f2b-case&quot;: &quot;f2b-empty-body&quot; }" target="headers" />
         <zeebe:input source="= &quot;GET&quot;" target="method" />

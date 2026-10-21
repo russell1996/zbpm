@@ -9,7 +9,7 @@
     <bpmn:sequenceFlow id="toCall" sourceRef="start" targetRef="call" />
     <bpmn:serviceTask id="call" name="http-json">
       <bpmn:extensionElements>
-        <zeebe:taskDefinition type="io.camunda:http-json:1" retries="1" />
+        <zeebe:taskDefinition type="io.camunda:http-json:1" retries="3" />
       <zeebe:ioMapping>
         <zeebe:input source="= &quot;zorro-pass&quot;" target="authentication.password" />
         <zeebe:input source="= &quot;basic&quot;" target="authentication.type" />

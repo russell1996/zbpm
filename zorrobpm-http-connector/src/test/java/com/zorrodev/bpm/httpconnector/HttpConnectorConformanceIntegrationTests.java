@@ -8,7 +8,6 @@ import com.zorrodev.bpm.exchange.ProcessVariable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
@@ -78,6 +77,11 @@ class HttpConnectorConformanceIntegrationTests {
             assertThat(in).as("канонический список кейсов Ф2б должен лежать в ресурсах теста").isNotNull();
             caseList = MAPPER.readTree(in);
         }
+        assertThat(caseList.get("cases")).as("список кейсов Ф2б не должен быть пустым").isNotEmpty();
+        List<String> groups = new ArrayList<>();
+        caseList.get("cases").forEach(c -> groups.add(c.get("group").asText()));
+        assertThat(groups).as("измеренные измерения WO (входы/выходы/классы ответов/таймауты/by design)")
+            .contains("input", "auth", "output", "response-class", "timeout", "by-design");
         String external = System.getProperty("f2b.mock.base");
         if (external != null && !external.isBlank()) {
             mockBase = external.trim();
@@ -182,6 +186,13 @@ class HttpConnectorConformanceIntegrationTests {
 
         /* ── ожидания нашей стороны ─────────────────────────────────────────── */
         JsonNode ours = expect.get("ours");
+        if (ours.path("notApplicable").asBoolean(false)) {
+            /* Измерение неприменимо к нашему слою (например, backoff между попытками —
+             * это протокол job, измеренный в Ф2а, а не семантика воркера). Тогда наша
+             * сторона НЕ даёт исхода: кейс проверяется только на стороне живой. */
+            OBSERVED.put(caseId, observed);
+            return;
+        }
         assertThat(observedOutcome)
             .as("исход кейса %s (детали: %s)", caseId, observedVars)
             .isEqualTo(ours.get("outcome").asText());
@@ -254,15 +265,6 @@ class HttpConnectorConformanceIntegrationTests {
         }
     }
 
-    /** Список кейсов не должен молчать о пропущенных фикстурах (P-59: тест, который не запускается). */
-    @Test
-    void caseList_is_not_empty_and_covers_the_documented_dimensions() {
-        assertThat(caseList.get("cases")).isNotEmpty();
-        List<String> groups = new ArrayList<>();
-        caseList.get("cases").forEach(c -> groups.add(c.get("group").asText()));
-        assertThat(groups).contains("input", "auth", "output", "response-class", "timeout", "by-design");
-    }
-
     /* ── helpers ─────────────────────────────────────────────────────────── */
 
     private record Outcome(boolean transientFailure, String errorMessage, List<ProcessVariable> variables,
@@ -329,7 +331,8 @@ class HttpConnectorConformanceIntegrationTests {
      */
     private HttpConnectorProperties propertiesFor(JsonNode c) {
         HttpConnectorProperties props = new HttpConnectorProperties();
-        props.setEnabled(true);
+        JsonNode oursExpectation = c.get("expect").get("ours");
+        props.setEnabled(oursExpectation.path("connectorEnabled").asBoolean(true));
         props.setAllowedHosts(mockHost);
         JsonNode ours = c.get("expect").get("ours");
         boolean allowPrivate = !ours.has("allowPrivateNetworks")

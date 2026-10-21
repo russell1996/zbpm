@@ -1357,6 +1357,46 @@
       "note": "У нас set-cookie ВЫРЕЗАЕТСЯ из http.headers (безопасность, решение maintainer п.4) — у Camunda ответа нет."
     },
     {
+      "id": "f2b-retry-backoff",
+      "group": "timeout",
+      "title": "Повтор попытки: retries=3 + retryBackoff=PT2S после ответа 500",
+      "docs89": "REST connector 8.9: у коннектора есть taskHeader retryBackoff (ISO-8601) — пауза перед следующей попыткой; число попыток — в zeebe:taskDefinition (retries).",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "retries": 3,
+        "variables": {
+          "url": "{MOCK}/f2b/status/500",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-retry-backoff"
+          }
+        },
+        "taskHeaders": {
+          "retryBackoff": "PT2S"
+        }
+      },
+      "expect": {
+        "live": {
+          "outcome": "failed",
+          "retriesMeasured": true
+        },
+        "ours": {
+          "outcome": "notApplicable",
+          "notApplicable": true,
+          "reason": "backoff между попытками — свойство протокола job, а не семантика воркера: измерено в Ф2а (корень R1 «нет backoff между попытками»)"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/status/500",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-retry-backoff"
+          }
+        }
+      },
+      "note": "Живая сторона: сколько раз коннектор повторил запрос и с каким интервалом — это видно по журналу мока (число запросов и метки времени). Наша сторона на уровне воркера не измеряется: повтор задания — забота движка (Ф2а, R1)."
+    },
+    {
       "id": "f2b-network-error",
       "group": "timeout",
       "title": "Сетевая ошибка: сервер рвёт соединение",
@@ -1426,6 +1466,43 @@
         "requestOurs": false
       },
       "note": "by design: наш SSRF-гейт — единственная точка проверки исходящих URL; приватный адрес без явного разрешения админа отвергается ДО сокета."
+    },
+    {
+      "id": "f2b-connector-disabled",
+      "group": "by-design",
+      "title": "Коннектор выключен (zorrobpm.http-connector.enabled=false)",
+      "docs89": "У Camunda коннектор включён всегда — отдельного «выключателя» у него нет.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-connector-disabled"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_DISABLED",
+          "connectorEnabled": false
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-connector-disabled"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "by design: коннектор у нас выключен по умолчанию и включается админом; выключенный коннектор отвечает детерминированной ошибкой, а не «молчащим успехом». Живая сторона выключателя не имеет — коннектор Camunda всегда включён."
     }
   ]
 }
