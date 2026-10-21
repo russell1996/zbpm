@@ -76,8 +76,21 @@ public final class BpmnScenarioGenerator {
     public static final String WORK2_JOB_TYPE = "work2";
     /** Тип job'а «наблюдательной» задачи (её payload = наблюдаемое состояние). */
     public static final String DUMP_JOB_TYPE = "dump";
-    /** Тип job'а user task в Zeebe 8.5. */
-    public static final String USER_TASK_JOB_TYPE = "io.camunda:user-task";
+    /**
+     * Тип job'а user task в Zeebe 8.5.0.
+     *
+     * <p><b>Измерено живьём, а не взято из памяти</b> (Zeebe 8.5.0, проба
+     * {@code docs/analysis/c8-oracle/user-task-probe.js}): user task в 8.5 —
+     * это job типа {@code io.camunda.zeebe:userTask}. Тип 8.4
+     * ({@code io.camunda:user-task}) в 8.5 НЕ используется: проба перебирает
+     * 7 правдоподобных типов и находит job только у {@code io.camunda.zeebe:userTask}.
+     *
+     * <p>Отдельно измерено: {@code <zeebe:userTask/>} (нативный user task 8.5)
+     * job-worker API НЕ отдаёт вообще (у такого user task'а нет активируемого
+     * job'а) — поэтому оракул для оси user task разворачивается в job-worker
+     * диалекте (см. {@code scenario-matrix.js}, {@code toZeebeDialect}).
+     */
+    public static final String USER_TASK_JOB_TYPE = "io.camunda.zeebe:userTask";
 
     private BpmnScenarioGenerator() {
     }
@@ -183,7 +196,8 @@ public final class BpmnScenarioGenerator {
             return List.of(WORK_JOB_TYPE, WORK2_JOB_TYPE);
         }
         if (content == Content.USER) {
-            // Zeebe 8.5: user task — job типа io.camunda:user-task.
+            // Zeebe 8.5.0: user task — job типа io.camunda.zeebe:userTask
+            // (измерено пробой docs/analysis/c8-oracle/user-task-probe.js).
             return List.of(USER_TASK_JOB_TYPE);
         }
         return List.of(WORK_JOB_TYPE);

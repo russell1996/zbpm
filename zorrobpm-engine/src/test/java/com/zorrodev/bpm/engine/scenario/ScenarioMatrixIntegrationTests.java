@@ -142,9 +142,17 @@ public class ScenarioMatrixIntegrationTests {
             if (!outcome.leaks().isEmpty()) {
                 problems.add(scenario.id() + ": LEAK " + outcome.leaks());
             }
-            if ("UNSUPPORTED-8.5".equals(expected.get("oracle"))) {
-                // Оракул 8.5 этот сценарий не исполнил (user task без job'а):
-                // сверять нечего — фиксируем наше поведение и идём дальше.
+            if (!"SUPPORTED-8.5".equals(expected.get("oracle"))) {
+                // Оракул 8.5 НЕ исполнил сценарий (или факта нет вовсе). Раньше здесь
+                // стояло «UNSUPPORTED-8.5» → сценарий просто ПРОПУСКАЛСЯ, и в
+                // репозитории закреплялся ложный факт об оракуле, который CI
+                // потом enforced (находка независимого верификатора, раунд 3:
+                // «Zeebe 8.5 не исполняет userTask» — неверно, job-worker API в 8.5
+                // отдаёт user task как job типа io.camunda.zeebe:userTask).
+                // Теперь «оракул не исполнил» — это расхождение, а не «не поддерживается».
+                problems.add(scenario.id() + ": прибитый факт оракула " + expected.get("oracle")
+                        + " — оракул не исполнил сценарий, это расхождение; пересними эталон "
+                        + "(docs/analysis/c8-oracle/scenario-matrix-diff.js)");
                 continue;
             }
             compared++;

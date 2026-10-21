@@ -18,6 +18,21 @@
  * По умолчанию:
  *   manifest: ../../zorrobpm-engine/target/scenario-matrix/manifest.json
  *   out:      ../../zorrobpm-engine/target/scenario-matrix/zeebe.json
+ *
+ * ДИАЛЕКТ ДЛЯ ОРАКУЛА (важно, см. toZeebeDialect). Наш генератор печатает user task
+ * в НАТИВНОМ диалекте Zeebe 8.5: `<zeebe:userTask/>` + `<zeebe:assignmentDefinition/>`.
+ * Измерено живьём (docs/analysis/c8-oracle/user-task-probe.js, Zeebe 8.5.0):
+ *   - нативный user task (с `<zeebe:userTask/>`) job-worker API НЕ отдаёт —
+ *     у него нет активируемого job'а, он живёт в User Task API;
+ *   - user task БЕЗ `<zeebe:userTask/>` — обычный job типа
+ *     `io.camunda.zeebe:userTask` (НЕ `io.camunda:user-task` от 8.4), и после
+ *     CompleteJob инстанс идёт дальше.
+ * То есть «Zeebe 8.5 не исполняет user task» — НЕВЕРНО; неверно то, что нативную
+ * форму не доводит job-worker харнесс. Поэтому для оси user task оракул
+ * разворачивается в job-worker диалекте: user task остаётся ТЕМ ЖЕ элементом
+ * (тот же id, тот же порядок в MI, те же переменные), меняется только способ
+ * его завершения. Сравниваются терминальный статус, переменные и «что осталось
+ * активным» — то есть семантика MI-агрегации, а не фичи user task.
  */
 'use strict';
 const fs = require('fs');
@@ -28,6 +43,19 @@ const protoLoader = require('@grpc/proto-loader');
 const ROOT = path.join(__dirname);
 const PROTO = path.join(ROOT, 'node_modules', '@camunda8/sdk', 'dist', 'proto', 'zeebe.proto');
 const GATEWAY_HOST = process.env.C8_ORACLE_GW || 'localhost:36500';
+
+/**
+ * Диалект оракула: убирает нативные маркеры user task 8.5.
+ * Всё остальное (структура, id, MI-характеристики, переменные) — байт в байт.
+ */
+function toZeebeDialect(bpmn) {
+  return bpmn
+    .replace(/\s*<zeebe:userTask\s*\/>/g, '')
+    .replace(/\s*<zeebe:assignmentDefinition[^>]*\/>/g, '')
+    // опустевший контейнер расширений убираем — пустой extensionElements
+    // Zeebe не любит (проверено пробой: деплой с пустым контейнером падает).
+    .replace(/\s*<bpmn:extensionElements>\s*<\/bpmn:extensionElements>/g, '');
+}
 
 /** Окно активации job'ов (ms) — сколько сервер держит открытым поток активации. */
 const ACTIVATE_WINDOW_MS = 1000;
@@ -156,9 +184,8 @@ async function drive(client, pi, scenario) {
         continue;
       }
       // Job'а этого инстанса нет: либо он ещё не создан (последовательный MI
-      // создаёт следующий инстанс асинхронно), либо MI закрылась досрочно, либо
-      // Zeebe не создал job'а вовсе (user task в 8.5 не исполнится). Признак
-      // «делать больше нечего» — появилась наблюдательная задача.
+      // создаёт следующий инстанс асинхронно), либо MI закрылась досрочно.
+      // Признак «делать больше нечего» — появилась наблюдательная задача.
       if (forPi(await activate(client, dumpType), pi).length > 0) return;
       await sleep(200);
     }
@@ -226,7 +253,7 @@ async function leftovers(client, pi, types) {
     };
     let pi = null;
     try {
-      const deployed = await deployContent(client, `${scenario.id}.bpmn`, scenario.bpmn);
+      const deployed = await deployContent(client, `${scenario.id}.bpmn`, toZeebeDialect(scenario.bpmn));
       const vars = JSON.parse(scenario.vars || '{}');
       pi = await start(client, deployed.bpmnProcessId, deployed.version, vars);
       const held = await drive(client, pi, scenario);

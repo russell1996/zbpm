@@ -104,12 +104,22 @@ for (const o of ours) {
     entry.verdict = 'no-oracle-run';
     entry.detail = 'сценарий не прогонялся против оракула';
   } else if (z.status !== 'COMPLETED') {
-    // Оракул 8.5 не исполнил сценарий — сравнивать нечего. Это НЕ дефект нашего
-    // движка: факт поведения 8.5 зафиксирован (docs!=8.5 по G-Q).
-    entry.verdict = 'oracle-unsupported';
-    entry.detail = `Zeebe 8.5.0 не исполнил сценарий (${z.status}${z.error ? ': ' + z.error : ''})`;
+    // Оракул 8.5 НЕ исполнил сценарий. Это НЕ «не поддерживается» и не наш
+    // дефект: раньше здесь стояло «oracle-unsupported» с записью
+    // UNSUPPORTED-8.5 в прибитых фактах, и CI такой сценарий просто пропускал —
+    // то есть в репозитории закреплялся ложный факт об оракуле, и расхождение
+    // с живым Zeebe на этих сценариях не ловилось вообще (находка
+    // независимого верификатора, раунд 3).
+    // Теперь это РАСХОЖДЕНИЕ: сценарий, который оракул не исполнил, обязан быть
+    // разобран, а не тихо вычеркнут из сверки.
+    entry.verdict = 'ours-differs';
+    entry.detail = `Zeebe 8.5.0 не исполнил сценарий (${z.status}${z.error ? ': ' + z.error : ''}) — это расхождение, а не «не поддерживается»`;
     oracleUnsupported++;
-    expectations[o.id] = { oracle: 'UNSUPPORTED-8.5', status: z.status, vars: null, note: entry.detail };
+    divergences.push(entry);
+    expectations[o.id] = {
+      oracle: 'ORACLE-DID-NOT-RUN', status: z.status, vars: null,
+      leftovers: [], oursLeftovers: o.leaks || [], knownDivergence: entry.detail,
+    };
   } else {
     const d = diffKeys(ourVars, normalizeVars(z.rootVars));
     // «Что осталось активным» — ТРЕТЬЕ наблюдаемое из WO (п.3): у нас это нарушения

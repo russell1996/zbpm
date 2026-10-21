@@ -2,7 +2,7 @@
 
 - Оракул: живой Zeebe 8.5.0 (gateway 8.5.0), стенд `zbpm-cmp-zeebe`.
 - Наш движок: тот же набор схем (манифест `zorrobpm-engine/target/scenario-matrix/manifest.json`).
-- Сценариев: 56; совпали: 44; оракул не исполнил (docs≠8.5): 12; расхождений: 0.
+- Сценариев: 56; совпали: 56; оракул не исполнил (docs≠8.5): 0; расхождений: 0.
 
 | # | Сценарий | Zeebe 8.5 live (переменные / что осталось активным) | ours (переменные / что осталось активным) | Вердикт |
 |---|---|---|---|---|
@@ -41,15 +41,15 @@
 | 33 | `mi_parallel_subprocess-chain-n3-cba` | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | match |
 | 34 | `mi_parallel_subprocess-chain-n3-cab` | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | match |
 | 35 | `mi_parallel_subprocess-user-n0-` | COMPLETED {"items":[],"results":[]} / leftovers=[] | COMPLETED {"items":[],"results":[]} / leaks=[] | match |
-| 36 | `mi_parallel_subprocess-user-n1-a` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a"],"results":["a"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
-| 37 | `mi_parallel_subprocess-user-n2-ab` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a","b"],"results":["a","b"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
-| 38 | `mi_parallel_subprocess-user-n2-ba` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a","b"],"results":["a","b"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
-| 39 | `mi_parallel_subprocess-user-n3-abc` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
-| 40 | `mi_parallel_subprocess-user-n3-acb` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
-| 41 | `mi_parallel_subprocess-user-n3-bac` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
-| 42 | `mi_parallel_subprocess-user-n3-bca` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
-| 43 | `mi_parallel_subprocess-user-n3-cba` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
-| 44 | `mi_parallel_subprocess-user-n3-cab` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
+| 36 | `mi_parallel_subprocess-user-n1-a` | COMPLETED {"items":["a"],"results":["a"]} / leftovers=[] | COMPLETED {"items":["a"],"results":["a"]} / leaks=[] | match |
+| 37 | `mi_parallel_subprocess-user-n2-ab` | COMPLETED {"items":["a","b"],"results":["a","b"]} / leftovers=[] | COMPLETED {"items":["a","b"],"results":["a","b"]} / leaks=[] | match |
+| 38 | `mi_parallel_subprocess-user-n2-ba` | COMPLETED {"items":["a","b"],"results":["a","b"]} / leftovers=[] | COMPLETED {"items":["a","b"],"results":["a","b"]} / leaks=[] | match |
+| 39 | `mi_parallel_subprocess-user-n3-abc` | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | match |
+| 40 | `mi_parallel_subprocess-user-n3-acb` | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | match |
+| 41 | `mi_parallel_subprocess-user-n3-bac` | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | match |
+| 42 | `mi_parallel_subprocess-user-n3-bca` | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | match |
+| 43 | `mi_parallel_subprocess-user-n3-cba` | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | match |
+| 44 | `mi_parallel_subprocess-user-n3-cab` | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | match |
 | 45 | `mi_sequential_subprocess-single-n0-` | COMPLETED {"items":[],"results":[]} / leftovers=[] | COMPLETED {"items":[],"results":[]} / leaks=[] | match |
 | 46 | `mi_sequential_subprocess-single-n1-a` | COMPLETED {"items":["a"],"results":["a"]} / leftovers=[] | COMPLETED {"items":["a"],"results":["a"]} / leaks=[] | match |
 | 47 | `mi_sequential_subprocess-single-n2-ab` | COMPLETED {"items":["a","b"],"results":["a","b"]} / leftovers=[] | COMPLETED {"items":["a","b"],"results":["a","b"]} / leaks=[] | match |
@@ -59,9 +59,9 @@
 | 51 | `mi_sequential_subprocess-chain-n2-ab` | COMPLETED {"items":["a","b"],"results":["a","b"]} / leftovers=[] | COMPLETED {"items":["a","b"],"results":["a","b"]} / leaks=[] | match |
 | 52 | `mi_sequential_subprocess-chain-n3-abc` | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | match |
 | 53 | `mi_sequential_subprocess-user-n0-` | COMPLETED {"items":[],"results":[]} / leftovers=[] | COMPLETED {"items":[],"results":[]} / leaks=[] | match |
-| 54 | `mi_sequential_subprocess-user-n1-a` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a"],"results":["a"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
-| 55 | `mi_sequential_subprocess-user-n2-ab` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a","b"],"results":["a","b"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
-| 56 | `mi_sequential_subprocess-user-n3-abc` | NO_DUMP_JOB {} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | oracle-unsupported — Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared) |
+| 54 | `mi_sequential_subprocess-user-n1-a` | COMPLETED {"items":["a"],"results":["a"]} / leftovers=[] | COMPLETED {"items":["a"],"results":["a"]} / leaks=[] | match |
+| 55 | `mi_sequential_subprocess-user-n2-ab` | COMPLETED {"items":["a","b"],"results":["a","b"]} / leftovers=[] | COMPLETED {"items":["a","b"],"results":["a","b"]} / leaks=[] | match |
+| 56 | `mi_sequential_subprocess-user-n3-abc` | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leftovers=[] | COMPLETED {"items":["a","b","c"],"results":["a","b","c"]} / leaks=[] | match |
 
 ## Расхождений нет
 

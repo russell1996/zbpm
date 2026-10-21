@@ -563,58 +563,158 @@
       "oursLeftovers": []
     },
     "mi_parallel_subprocess-user-n1-a": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a"
+        ],
+        "results": [
+          "a"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     },
     "mi_parallel_subprocess-user-n2-ab": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ],
+        "results": [
+          "a",
+          "b"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     },
     "mi_parallel_subprocess-user-n2-ba": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ],
+        "results": [
+          "a",
+          "b"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     },
     "mi_parallel_subprocess-user-n3-abc": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a",
+          "b",
+          "c"
+        ],
+        "results": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     },
     "mi_parallel_subprocess-user-n3-acb": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a",
+          "b",
+          "c"
+        ],
+        "results": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     },
     "mi_parallel_subprocess-user-n3-bac": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a",
+          "b",
+          "c"
+        ],
+        "results": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     },
     "mi_parallel_subprocess-user-n3-bca": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a",
+          "b",
+          "c"
+        ],
+        "results": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     },
     "mi_parallel_subprocess-user-n3-cba": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a",
+          "b",
+          "c"
+        ],
+        "results": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     },
     "mi_parallel_subprocess-user-n3-cab": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a",
+          "b",
+          "c"
+        ],
+        "results": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     },
     "mi_sequential_subprocess-single-n0-": {
       "oracle": "SUPPORTED-8.5",
@@ -743,22 +843,52 @@
       "oursLeftovers": []
     },
     "mi_sequential_subprocess-user-n1-a": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a"
+        ],
+        "results": [
+          "a"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     },
     "mi_sequential_subprocess-user-n2-ab": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a",
+          "b"
+        ],
+        "results": [
+          "a",
+          "b"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     },
     "mi_sequential_subprocess-user-n3-abc": {
-      "oracle": "UNSUPPORTED-8.5",
-      "status": "NO_DUMP_JOB",
-      "vars": null,
-      "note": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "oracle": "SUPPORTED-8.5",
+      "status": "COMPLETED",
+      "vars": {
+        "items": [
+          "a",
+          "b",
+          "c"
+        ],
+        "results": [
+          "a",
+          "b",
+          "c"
+        ]
+      },
+      "leftovers": [],
+      "oursLeftovers": []
     }
   }
 }

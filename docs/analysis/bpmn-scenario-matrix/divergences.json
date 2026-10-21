@@ -1,9 +1,9 @@
 {
-  "generatedAt": "2026-10-20T23:19:23.867Z",
+  "generatedAt": "2026-10-21T01:26:21.852Z",
   "oracle": "zeebe-8.5.0-live",
   "total": 56,
-  "match": 44,
-  "oracleUnsupported": 12,
+  "match": 56,
+  "oracleUnsupported": 0,
   "divergences": 0,
   "rows": [
     {
@@ -1391,13 +1391,20 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "mi_parallel_subprocess-user-n2-ab",
@@ -1421,13 +1428,22 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "mi_parallel_subprocess-user-n2-ba",
@@ -1451,13 +1467,22 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "mi_parallel_subprocess-user-n3-abc",
@@ -1483,13 +1508,24 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "mi_parallel_subprocess-user-n3-acb",
@@ -1515,13 +1551,24 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "mi_parallel_subprocess-user-n3-bac",
@@ -1547,13 +1594,24 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "mi_parallel_subprocess-user-n3-bca",
@@ -1579,13 +1637,24 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "mi_parallel_subprocess-user-n3-cba",
@@ -1611,13 +1680,24 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "mi_parallel_subprocess-user-n3-cab",
@@ -1643,13 +1723,24 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "mi_sequential_subprocess-single-n0-",
@@ -1986,13 +2077,20 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a"
+          ],
+          "results": [
+            "a"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "mi_sequential_subprocess-user-n2-ab",
@@ -2016,13 +2114,22 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "mi_sequential_subprocess-user-n3-abc",
@@ -2048,13 +2155,24 @@
         "incidents": []
       },
       "zeebe": {
-        "status": "NO_DUMP_JOB",
-        "vars": {},
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
         "leftovers": [],
-        "error": "dump job never appeared"
+        "error": ""
       },
-      "verdict": "oracle-unsupported",
-      "detail": "Zeebe 8.5.0 не исполнил сценарий (NO_DUMP_JOB: dump job never appeared)"
+      "verdict": "match",
+      "detail": ""
     }
   ]
 }
