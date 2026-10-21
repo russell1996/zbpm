@@ -24,4 +24,14 @@ public interface SignalSubscriptionRepository extends JpaRepository<SignalSubscr
     @Modifying
     @Query("UPDATE SignalSubscriptionEntity e SET e.consumed = true WHERE e.id = :id AND e.consumed = false")
     int markConsumed(@Param("id") UUID id);
+
+    /**
+     * WO-OPS-34: снос ВСЕХ подписок инстанса (message/signal — по одному и тому же
+     * правилу) в момент его терминального перехода. Инстанс мёртв — доставка ему
+     * не нужна; в Zeebe 8.5 подписка снимается вместе со scope. Тот же приём, что
+     * у message-подписок ({@code MessageSubscriptionRepository.deleteByProcessInstanceId}).
+     */
+    @Modifying
+    @Query("DELETE FROM SignalSubscriptionEntity s WHERE s.processInstanceId = :processInstanceId")
+    void deleteByProcessInstanceId(@Param("processInstanceId") UUID processInstanceId);
 }

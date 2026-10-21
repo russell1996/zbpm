@@ -25,6 +25,14 @@ public interface SignalSubscriptionDbOperations {
      */
     void deleteSignalStartSubscriptionsByKey(String processKey);
 
+    /**
+     * WO-OPS-34: снос всех signal-подписок инстанса — вызывается на его
+     * терминальном переходе (нормальное завершение). Подписка переживала
+     * завершённый инстанс: broadcast сигнала после завершения уходил в мёртвый
+     * инстанс, а инвариант утечек (WO-OPS-26/32) считал это остатком.
+     */
+    void deleteSignalSubscriptionsByProcessInstanceId(UUID processInstanceId);
+
     List<SignalStartSubscription> findSignalStartSubscriptions(String signalName);
 
     List<SignalSubscription> findSignalSubscriptions(String signalName);

@@ -55,6 +55,14 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
      * припаркованных join'ов (см. {@link #clearInstanceBookkeepingAtCommit}).
      */
     private final ParallelGatewayDbOperations parallelGatewayDbOperations;
+    /**
+     * WO-OPS-34: терминальный переход снимает instance-scoped подписки инстанса
+     * (message/signal) — иначе завершённый инстанс продолжал «слушать»
+     * сообщения, а broadcast сигнала после завершения уходил в мёртвый инстанс.
+     * Вызов — ПОСЛЕ терминальной пометки (см. javadoc зачистки: доставка, успевшая
+     * забрать подписку, гасится guard'ом «instance already completed»).
+     */
+    private final FinishedInstanceSubscriptionCleaner finishedInstanceSubscriptionCleaner;
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
@@ -154,6 +162,13 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
         // перепроверок припаркованных join'ов (см. clearInstanceBookkeepingAtCommit).
         clearInstanceBookkeepingAtCommit(processInstanceId);
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
+        // WO-OPS-34: подписки инстанса умирают вместе с ним. Инстанс мёртв —
+        // доставка ему не нужна (Zeebe 8.5 снимает подписку вместе со scope), а
+        // сообщение, пришедшее после завершения, не должно уходить в мёртвый
+        // инстанс. Порядок — ПОСЛЕ терминальной пометки: доставка, успевшая
+        // забрать подписку миллисекундой раньше, гасится guard'ом
+        // «instance already completed» (EventTrigger.triggerEventSubprocess).
+        finishedInstanceSubscriptionCleaner.clear(processInstanceId);
         domainEventEmitter.emitProcessInstanceCompleted(processInstanceId, pi.getProcessDefinitionId());
         // WO-OBS-1: single choke for every completion path (normal end, escalation end).
         bpmMetrics.processCompleted();

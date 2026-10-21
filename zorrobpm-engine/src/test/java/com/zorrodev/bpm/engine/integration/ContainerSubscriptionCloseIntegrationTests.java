@@ -98,6 +98,14 @@ class ContainerSubscriptionCloseIntegrationTests {
         // correlated (direct user-task completion) — no CAS consume ever ran, so
         // consumed=true on the dead host's row can ONLY come from completeActivity.
         // Roll back the fix (stash ActivityDbOperationsImpl) and this goes RED.
+        //
+        // WO-OPS-34: инстанс в этом сценарии ОСТАЁТСЯ ЖИВЫМ (в фикстуре после `work`
+        // идёт задача work2) — иначе терминальный переход удалил бы все подписки
+        // инстанса (подписка мёртвого инстанса не нужна никому), и наблюдать
+        // «строку мёртвого хоста» стало бы нечем: правило C37-3 (подписка закрывается
+        // при завершении ХОСТА) тогда нечем было бы проверять. Наблюдение теста и его
+        // мутационная чувствительность (откат C37-3 → RED) сохранены без изменений —
+        // меняется только то, жив ли инстанс в момент наблюдения.
         UUID pi = start("test-c837-timeout-then-message.bpmn");
         UUID work = rows(pi, "work").stream()
             .filter(a -> a.getStatus() == ActivityStatus.CREATED)
@@ -111,7 +119,9 @@ class ContainerSubscriptionCloseIntegrationTests {
         assertThat(subs(pi).stream().filter(s -> work.equals(s.getActivityId())).toList())
             .hasSize(1)
             .allMatch(MessageSubscriptionEntity::isConsumed);
-        assertThat(instanceDone(pi)).isTrue();
+        assertThat(instanceDone(pi))
+            .as("инстанс ещё жив (work2 ждёт) — иначе WO-OPS-34 удалил бы подписку инстанса")
+            .isFalse();
     }
 
     @Test
