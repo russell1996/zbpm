@@ -230,6 +230,53 @@
       "docs89": "8.9: сообщение с TTL>0 буферизуется на брокере и доставляется, когда откроется подписка с тем же ключом корреляции; при TTL=0 буферизации нет"
     },
     {
+      "id": "f2v-msg-buffered-start-key",
+      "title": "Буфер на пути message start С ключом корреляции: буферизуется ли (контроль к f2v-msg-buffered-catch)",
+      "bpmn": "message/f2v-msg-buffered-start-key.bpmn",
+      "processId": "f2vBufferedStartKey",
+      "start": "message",
+      "publishBeforeDeploy": true,
+      "vars": {},
+      "steps": [
+        {
+          "action": "publish",
+          "name": "f2v-buffered-start-msg",
+          "correlationKey": "ORD-BUF-START",
+          "timeToLive": 60000,
+          "variables": {
+            "payload": "early",
+            "caseTag": "f2v-msg-buffered-start-key"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterStart"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "publish",
+            "outcome": "published"
+          },
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterStart",
+            "outcome": "noJob",
+            "jobType": "f2vAfterBufferedStartKey"
+          }
+        ]
+      },
+      "docs89": "8.9: сообщение с TTL>0 буферизуется на брокере; для message start новая инстанция создаётся, если нет активной инстанса с тем же ключом"
+    },
+    {
       "id": "f2v-msg-throw-catch",
       "title": "Бросок сообщения процессом и приём сообщения",
       "bpmn": "message/f2v-msg-throw-catch.bpmn",

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 Ф2в — буферизация на пути MESSAGE START с ключом корреляции.
+     Отдельная модель от f2v-msg-early (там ключа нет): так проверяется, что
+     различие «буферизуется / не буферизуется» — по ТИПУ события (catch против
+     message start), а не по наличию ключа. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_f2vBufferedStartKey" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_StartKey" name="f2v-buffered-start-msg">
+    <bpmn:extensionElements>
+      <zeebe:subscription correlationKey="=orderId" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:process id="f2vBufferedStartKey" name="f2vBufferedStartKey" isExecutable="true">
+    <bpmn:startEvent id="msgStart" name="msgStart">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="med1" messageRef="Msg_StartKey" />
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="msgStart" targetRef="afterStart" />
+    <bpmn:serviceTask id="afterStart" name="afterStart">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2vAfterBufferedStartKey" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="afterStart" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>
