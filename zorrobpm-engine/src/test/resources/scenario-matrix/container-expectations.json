@@ -120,10 +120,7 @@
       "ours": {
         "status": "NO_DUMP",
         "vars": {},
-        "leaks": [
-          "type=activity element=after live activity, status=CREATED",
-          "type=task element=after open service_task"
-        ],
+        "leaks": [],
         "incidents": [],
         "reachedSteps": [
           "work",
@@ -131,8 +128,8 @@
         ],
         "error": ""
       },
-      "verdict": "ours-leaks",
-      "detail": "у нас остаток в завершённом инстансе: [\"type=activity element=after live activity, status=CREATED\",\"type=task element=after open service_task\"]; у Zeebe остатка нет; LEAK-INVARIANT (G-P): [\"type=activity element=after live activity, status=CREATED\",\"type=task element=after open service_task\"]"
+      "verdict": "match",
+      "detail": ""
     },
     "f3-event-subprocess-non-interrupting": {
       "oracle": "SUPPORTED-8.5",

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-37: сервис-задача бросает BPMN-ошибку, на которую ловится прерывающий
+     event sub-process. Поток после броска ошибки НЕ продолжается: activity "after"
+     (за задачей) создаваться не должна. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  id="Definitions_ops37_err" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:error id="errOps37" name="boom" errorCode="E-1" />
+  <bpmn:process id="test-ops37-esp-error-interrupting" name="test-ops37-esp-error-interrupting" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="work" />
+    <bpmn:serviceTask id="work" name="work">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ops37-work" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="work" targetRef="after" />
+    <bpmn:userTask id="after" name="after">
+      <bpmn:incoming>flow2</bpmn:incoming>
+      <bpmn:outgoing>flow3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flow3" name="flow3" sourceRef="after" targetRef="mainEnd" />
+    <bpmn:endEvent id="mainEnd" name="mainEnd">
+      <bpmn:incoming>flow3</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:subProcess id="esp" name="esp" triggeredByEvent="true">
+      <bpmn:startEvent id="evStart" name="evStart" isInterrupting="true">
+        <bpmn:outgoing>flowE1</bpmn:outgoing>
+        <bpmn:errorEventDefinition id="eed1" errorRef="errOps37" />
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flowE1" name="flowE1" sourceRef="evStart" targetRef="evWork" />
+      <bpmn:userTask id="evWork" name="evWork">
+        <bpmn:incoming>flowE1</bpmn:incoming>
+        <bpmn:outgoing>flowE2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="flowE2" name="flowE2" sourceRef="evWork" targetRef="evEnd" />
+      <bpmn:endEvent id="evEnd" name="evEnd">
+        <bpmn:incoming>flowE2</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>

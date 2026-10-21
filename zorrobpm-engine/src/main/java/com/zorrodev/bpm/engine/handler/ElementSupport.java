@@ -1412,6 +1412,30 @@ public class ElementSupport {
     }
 
     /**
+     * WO-OPS-37: прерван ли поток, создавший {@code activityId}?
+     *
+     * <p>Прерывающий event sub-process гасит activity ПРЕРВАННОГО скоупа — в том числе
+     * activity самого броска сигнала/сообщения, которым этот бросок и был вызван
+     * ({@code EventTrigger.cancelForInterruptingEsp}: верхнеуровневый ESP гасит все
+     * живые activity инстанса, вложенный — activity своего родительского скоупа).
+     * Поэтому activity броска, оставшаяся {@code CANCELLED}, — это признак того, что
+     * поток прерван: продолжать его нельзя (иначе основной поток ушёл бы дальше в
+     * прерванном, а потом и в завершённом инстансе — WO-OPS-28 ФАЗА 3, находка Н-1).
+     *
+     * <p>Вложенный ESP гасит только свой родительский скоуп: бросок ВНЕ этого скоупа
+     * остаётся нетронутым, и его поток продолжается — ровно как в Zeebe 8.5 (там
+     * прерывается скоуп, в котором объявлен event sub-process).
+     *
+     * <p>Тот же признак закрывает и гонку с отменой инстанса: если инстанс отменили
+     * между созданием activity и броском, activity тоже {@code CANCELLED} — и поток
+     * продолжать тем более нельзя.
+     */
+    public boolean isActivityCancelled(UUID activityId) {
+        Activity activity = dbService.getActivity(activityId);
+        return activity != null && activity.getStatus() == ActivityStatus.CANCELLED;
+    }
+
+    /**
      * WO-AUDIT-11 (F-09): жив ли скоуп, в котором идёт разветвление.
      *
      * <p>CANCELLED-контейнер = скоуп ТЕРМИНИРОВАН (error/escalation-граница объемлющего

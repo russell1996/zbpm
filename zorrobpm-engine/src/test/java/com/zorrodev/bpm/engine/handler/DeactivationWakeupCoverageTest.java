@@ -118,7 +118,7 @@ class DeactivationWakeupCoverageTest {
     // токенах, token-wise отмена их не видела). Минус два sites, плюс один = −1.
     // Новый complete-сайт в EndEventHandler (error end в ветке «поймали границей»)
     // и новый ключ для errorActivity — по числу sites ничего не меняют.
-    private static final int EXPECTED_SITE_COUNT = 126;
+    private static final int EXPECTED_SITE_COUNT = 128;
 
     /** site key -> причина, почему перепроверка здесь не нужна. Непустая — проверяется тестом. */
     private static final Map<String, String> WHITELIST = new LinkedHashMap<>();
@@ -195,6 +195,21 @@ class DeactivationWakeupCoverageTest {
         + "листенера). Хост погиб ДО этого continue, поэтому никто больше не перепроверит "
         + "припаркованные join-ы, кроме этого места — без него ветвь теряется, а инстанс "
         + "помечается завершённым (BLOCKER-5) ";
+    /**
+     * WO-OPS-37: activity броска (сигнала/сообщения) закрывается, и поток после броска
+     * НЕ продолжается — прерывающий event sub-process ЗАМЕНИЛ основной поток (Zeebe 8.5).
+     * Строка броска — не жертва: её погасило прерывание, вызванное САМИМ броском, поэтому
+     * узкий переход (источник CANCELLED) возвращает ей COMPLETED — тот же приём, что у
+     * error-end-хендлера (WO-AUDIT-11 F-09). Просыпать припаркованный join здесь нельзя:
+     * это значило бы выполнить хвост прерванного потока (тот же класс, что R10).
+     */
+    private static final String R20 =
+        "WO-OPS-37: activity броска (сигнала/сообщения) закрывается, и поток после броска "
+        + "НЕ продолжается — прерывающий event sub-process заменил основной поток (Zeebe 8.5, "
+        + "WO-OPS-28 ФАЗА 3 Н-1). Строка броска — не жертва: её погасило прерывание, вызванное "
+        + "САМИМ броском, поэтому узкий переход возвращает ей COMPLETED (WO-AUDIT-11 F-09). "
+        + "Просыпать припаркованный join здесь нельзя — это выполнило бы хвост прерванного "
+        + "потока (тот же класс, что R10) ";
     private static final String R13 =
         "событийный шлюз: отменяются ПРОИГРАВШИЕ catch-братья, победитель идёт дальше в том "
         + "же signal(), где перепроверка припаркованных join-ов уже стоит "
@@ -405,6 +420,10 @@ class DeactivationWakeupCoverageTest {
         WHITELIST.put("ProcessInstanceRuntimeOperationsImpl.java#cancelProcessInstance[]|dbService.cancelActiveActivities(id)", R16);
         // ── ad-hoc scope: хвост одного scope, не последний доставщик ЧУЖОГО join ─────────────
         WHITELIST.put("FlowNavigator.java#finishAdHocScope0[]|proceedToOutgoing(processInstanceId, tokenId, bpmn, scopeElement, executor)", R03);
+        // ── WO-OPS-37: бросок сигнала/сообщения, прерванный прерывающим event sub-process:
+        // activity броска закрывается узким переходом, поток после броска НЕ продолжается.
+        WHITELIST.put("SignalThrowHandler.java#handle[if (elementSupport.isActivityCancelled(activityId)) {]|dbService.completeActivityAfterHandledError(activityId)", R20);
+        WHITELIST.put("MessageThrowHandler.java#handle[if (elementSupport.isActivityCancelled(activityId)) {]|dbService.completeActivityAfterHandledError(activityId)", R20);
     }
 
     @Test
