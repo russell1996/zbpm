@@ -976,4 +976,189 @@ public final class BpmnScenarioGenerator {
         return new BpmnScenario(id, FLOW_CONTAINER, flow.name(), 0, List.of(), List.of(), bpmn, varsJson,
                 taskElementIds, "dump", 1, List.of(), jobTypes, FLOW_DUMP_JOB_TYPE, actions);
     }
+
+    // ─── Срез F5 («сквозные», WO-OPS-28 ФАЗА 5) ────────────────────────────
+
+    /**
+     * Ось «сквозные» (ФАЗА 5 кампании): рестарт движка посреди процесса,
+     * параллельные завершения (гонки {@code lockInstanceFirst}), миграция версии
+     * определения для живых инстансов.
+     */
+    public enum Cross {
+        /** Рестарт движка посреди процесса (durable state). */
+        RESTART_MIDPROCESS,
+        /** Параллельные завершения двух ветвей (гонка за instance-lock). */
+        PARALLEL_RACE,
+        /** Миграция версии определения v1→v2 при живом инстансе. */
+        VERSION_MIGRATION
+    }
+
+    /** Префикс оси «сквозные» в id сценария. */
+    public static final String CROSS_CONTAINER = "F5";
+    /** Тип job'а рабочей задачи среза F5 (тот же, что у F1/F2). */
+    public static final String CROSS_JOB_TYPE = WORK_JOB_TYPE;
+    /** Ключ (id процесса) пары версий для оси «миграция версии». */
+    public static final String VERSIONED_PROCESS_KEY = "ops28f5versioned";
+
+    /**
+     * Полный срез F5 (ФАЗА 5 кампании).
+     *
+     * <p>Детерминированный, как срезы F1/F2. Схемы — в том же Zeebe-совместимом
+     * диалекте, чтобы дифференциальный прогон против живого Zeebe 8.5.0
+     * сравнивал ПОВЕДЕНИЕ, а не разные модели.
+     *
+     * <p>Пара версий ({@code f5-version-v1} / {@code f5-version-v2}) — это ОДИН
+     * и тот же ключ процесса ({@link #VERSIONED_PROCESS_KEY}) с РАЗНЫМ
+     * продолжением: v1 идёт в {@code stV1}, v2 — в {@code stV2}. Оба деплоятся
+     * одним ключом, поэтому у инстанса, стартовавшего на v1, после деплоя v2
+     * проверяется, КАКОЙ версией он продолжится (в Zeebe 8.5 — своей: версия
+     * фиксируется на старте).
+     */
+    public static List<BpmnScenario> generateCrossCutting() {
+        return List.of(
+                restartMidProcess(),
+                parallelRace(),
+                versionScenario("f5-version-v1", "stV1"),
+                versionScenario("f5-version-v2", "stV2"));
+    }
+
+    /**
+     * Рестарт движка посреди процесса: старт → задача {@code stMid} (висит) →
+     * задача {@code stAfter} → наблюдательная.
+     *
+     * <p>Именно «висит на середине» — ради этого сценарий и нужен: рестарт
+     * происходит, пока живая задача ждёт воркера. Продолжить процесс должен
+     * ТОЛЬКО движок, поднятый ПОСЛЕ рестарта (второй Spring-контекст на той же
+     * БД) — если бы состояние жило в памяти первого движка, продолжить было бы
+     * нечем.
+     */
+    private static BpmnScenario restartMidProcess() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"ops28f5\" name=\"ops28f5\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"stMid\" />\n");
+        sb.append(serviceTask("stMid", CROSS_JOB_TYPE, "f1", "f2"));
+        sb.append("    <bpmn:sequenceFlow id=\"f2\" sourceRef=\"stMid\" targetRef=\"stAfter\" />\n");
+        sb.append(serviceTask("stAfter", CROSS_JOB_TYPE, "f2", "f3"));
+        sb.append("    <bpmn:sequenceFlow id=\"f3\" sourceRef=\"stAfter\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("f3"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.COMPLETE, "stMid", "{\"phase\":\"mid\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "stAfter", "{\"phase\":\"after\"}"));
+        return crossScenario("f5-restart-midprocess", Cross.RESTART_MIDPROCESS, sb.toString(),
+                "{\"started\":\"yes\"}", List.of("stMid", "stAfter"), List.of(CROSS_JOB_TYPE), actions);
+    }
+
+    /**
+     * Параллельные завершения: форк в ЧЕТЫРЕ ветви, все задачи завершаются
+     * ОДНОВРЕМЕННО (четыре реальных потока), джойн после них — наблюдательная.
+     *
+     * <p>Почему ветвей четыре, а не две: счётчик незавершённых ветвей форка — ОДНА
+     * строка, и все четыре потока спорят за неё. С двумя ветвями окно lost-update
+     * (прочитать счётчик → записать) слишком узкое, чтобы поймать гонку
+     * УБЕДИТЕЛЬНО; с четырьмя конкурентами на одной строке мутация «снять
+     * row-lock» материализуется устойчиво (проверено: см. отчёт фазы, POF).
+     */
+    private static BpmnScenario parallelRace() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"ops28f5\" name=\"ops28f5\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"fork\" />\n");
+        List<String> branchIds = List.of("stA", "stB", "stC", "stD");
+        sb.append("    <bpmn:parallelGateway id=\"fork\">\n");
+        sb.append("      <bpmn:incoming>f1</bpmn:incoming>\n");
+        for (String branch : branchIds) {
+            sb.append("      <bpmn:outgoing>f").append(branch).append("</bpmn:outgoing>\n");
+        }
+        sb.append("    </bpmn:parallelGateway>\n");
+        for (String branch : branchIds) {
+            sb.append("    <bpmn:sequenceFlow id=\"f").append(branch).append("\" sourceRef=\"fork\" targetRef=\"")
+              .append(branch).append("\" />\n");
+            sb.append(serviceTask(branch, CROSS_JOB_TYPE, "f" + branch, "f" + branch + "2"));
+            sb.append("    <bpmn:sequenceFlow id=\"f").append(branch).append("2\" sourceRef=\"").append(branch)
+              .append("\" targetRef=\"join\" />\n");
+        }
+        sb.append("    <bpmn:parallelGateway id=\"join\">\n");
+        for (String branch : branchIds) {
+            sb.append("      <bpmn:incoming>f").append(branch).append("2</bpmn:incoming>\n");
+        }
+        sb.append("      <bpmn:outgoing>fJoinOut</bpmn:outgoing>\n");
+        sb.append("    </bpmn:parallelGateway>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fJoinOut\" sourceRef=\"join\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("fJoinOut"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = new ArrayList<>();
+        for (String branch : branchIds) {
+            actions.add(new ScenarioAction(ScenarioAction.COMPLETE, branch, "{\"" + branch + "\":\"" + branch + "\"}"));
+        }
+        return crossScenario("f5-parallel-race", Cross.PARALLEL_RACE, sb.toString(),
+                "{}", branchIds, List.of(CROSS_JOB_TYPE), actions);
+    }
+
+    /**
+     * Версия определения для оси «миграция версии»: ключ ОДИН И ТОТ ЖЕ
+     * ({@link #VERSIONED_PROCESS_KEY}), продолжение разное ({@code stV1} или
+     * {@code stV2}).
+     */
+    private static BpmnScenario versionScenario(String id, String versionTaskId) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"").append(VERSIONED_PROCESS_KEY).append("\" name=\"")
+          .append(VERSIONED_PROCESS_KEY).append("\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"stA\" />\n");
+        sb.append(serviceTask("stA", CROSS_JOB_TYPE, "f1", "f2"));
+        sb.append("    <bpmn:sequenceFlow id=\"f2\" sourceRef=\"stA\" targetRef=\"").append(versionTaskId).append("\" />\n");
+        sb.append(serviceTask(versionTaskId, CROSS_JOB_TYPE, "f2", "f3"));
+        sb.append("    <bpmn:sequenceFlow id=\"f3\" sourceRef=\"").append(versionTaskId).append("\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("f3"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.COMPLETE, "stA", "{\"phase\":\"a\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, versionTaskId, "{\"phase\":\"" + versionTaskId + "\"}"));
+        return crossScenario(id, Cross.VERSION_MIGRATION, sb.toString(),
+                "{}", List.of("stA", versionTaskId), List.of(CROSS_JOB_TYPE), actions);
+    }
+
+    /** Сборка сценария среза F5. */
+    private static BpmnScenario crossScenario(String id, Cross cross, String bpmn, String varsJson,
+            List<String> taskElementIds, List<String> jobTypes, List<ScenarioAction> actions) {
+        return new BpmnScenario(id, CROSS_CONTAINER, cross.name(), 0, List.of(), List.of(), bpmn, varsJson,
+                taskElementIds, "dump", 1, List.of(), jobTypes, FLOW_DUMP_JOB_TYPE, actions);
+    }
+
+    /**
+     * ПАРНАЯ схема версии для оси «миграция версии» (нужна оракулу: деплой второй
+     * версии ТОГО ЖЕ ключа, пока инстанс версии 1 ещё жив).
+     *
+     * <p>Возвращает {@code null}, если у сценария нет пары (у остальных осей парной
+     * версии нет — там «вторая версия» не имеет смысла).
+     */
+    public static String pairedVersionBpmn(String scenarioId) {
+        if ("f5-version-v1".equals(scenarioId)) {
+            return versionScenario("f5-version-v2", "stV2").bpmn();
+        }
+        if ("f5-version-v2".equals(scenarioId)) {
+            return versionScenario("f5-version-v1", "stV1").bpmn();
+        }
+        return null;
+    }
+
+    /**
+     * Завершать задачи сценария ОДНОВРЕМЕННО (для оракула: параллельные завершения
+     * нескольких job'ов одним залпом — так проверяется, что брокер не «прострелит»
+     * джойн дважды).
+     *
+     * <p>На нашем движке то же самое делают четыре РЕАЛЬНЫХ потока с барьером
+     * (см. {@code CrossCuttingScenarioSupport.parallelRace}).
+     */
+    public static boolean parallelActions(BpmnScenario scenario) {
+        return Cross.PARALLEL_RACE.name().equals(scenario.content());
+    }
 }

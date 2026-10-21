@@ -1,0 +1,183 @@
+{
+  "engine": "zorro",
+  "scenarios": [
+    {
+      "id": "f5-parallel-race",
+      "axis": "PARALLEL_RACE",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "stA": "stA",
+          "stB": "stB",
+          "stC": "stC",
+          "stD": "stD"
+        },
+        "leftovers": 0,
+        "continuedWith": "",
+        "deployedVersions": "2"
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "stC": "stC",
+          "stA": "stA",
+          "stB": "stB",
+          "stD": "stD"
+        },
+        "leaks": 0,
+        "incidents": 0,
+        "extra": {
+          "iterations": 25,
+          "instancesCompleted": 25,
+          "dumpActivityRowsMax": 1,
+          "errors": []
+        }
+      },
+      "pg": {
+        "status": "COMPLETED",
+        "vars": {
+          "stC": "stC",
+          "stD": "stD",
+          "stB": "stB",
+          "stA": "stA"
+        },
+        "leaks": 0,
+        "incidents": 0,
+        "extra": {
+          "iterations": 25,
+          "instancesCompleted": 25,
+          "dumpActivityRowsMax": 1,
+          "errors": []
+        }
+      },
+      "problems": [],
+      "verdict": "match"
+    },
+    {
+      "id": "f5-restart-midprocess",
+      "axis": "RESTART_MIDPROCESS",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "after",
+          "started": "yes"
+        },
+        "leftovers": 0,
+        "continuedWith": "stAfter",
+        "deployedVersions": "1"
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "started": "yes",
+          "phase": "after"
+        },
+        "leaks": 0,
+        "incidents": 0,
+        "extra": {
+          "midTaskCreatedBeforeRestart": true,
+          "engineInstances": 2,
+          "restartedEngineSawTask": true,
+          "continuedAfterRestart": true
+        }
+      },
+      "pg": {
+        "status": "COMPLETED",
+        "vars": {
+          "started": "yes",
+          "phase": "after"
+        },
+        "leaks": 0,
+        "incidents": 0,
+        "extra": {
+          "midTaskCreatedBeforeRestart": true,
+          "engineInstances": 2,
+          "restartedEngineSawTask": true,
+          "continuedAfterRestart": true
+        }
+      },
+      "problems": [],
+      "verdict": "match"
+    },
+    {
+      "id": "f5-version-v1",
+      "axis": "VERSION_MIGRATION",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV1"
+        },
+        "leftovers": 0,
+        "continuedWith": "stV1",
+        "deployedVersions": "1->2"
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV1"
+        },
+        "leaks": 0,
+        "incidents": 0,
+        "extra": {
+          "deployedVersionDelta": 1,
+          "continuedWith": "stV1",
+          "instanceVersionEqualsDeployedV1": true
+        }
+      },
+      "pg": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV1"
+        },
+        "leaks": 0,
+        "incidents": 0,
+        "extra": {
+          "deployedVersionDelta": 1,
+          "continuedWith": "stV1",
+          "instanceVersionEqualsDeployedV1": true
+        }
+      },
+      "problems": [],
+      "verdict": "match"
+    },
+    {
+      "id": "f5-version-v2",
+      "axis": "VERSION_MIGRATION",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV2"
+        },
+        "leftovers": 0,
+        "continuedWith": "stV2",
+        "deployedVersions": "3->4"
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV2"
+        },
+        "leaks": 0,
+        "incidents": 0,
+        "extra": {
+          "instanceVersionEqualsDeployed": true,
+          "continuedWith": "stV2"
+        }
+      },
+      "pg": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV2"
+        },
+        "leaks": 0,
+        "incidents": 0,
+        "extra": {
+          "instanceVersionEqualsDeployed": true,
+          "continuedWith": "stV2"
+        }
+      },
+      "problems": [],
+      "verdict": "match"
+    }
+  ]
+}

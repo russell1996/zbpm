@@ -1,0 +1,183 @@
+{
+  "_comment": "WO-OPS-28 ФАЗА 5 — прибитые факты среза «сквозные» (F5). ours = H2 (движок на H2), pg = тот же срез на PostgreSQL 16, zeebe = ЖИВОЙ Zeebe 8.5.0 (оракул). Часть pg ПЕРВОНАЧАЛЬНО скопирована из ours — это ОЖИДАНИЕ (PG == H2), и PG-тест его проверяет: расхождение роняет сборку. Переприбивается осознанно: изменение поведения роняет сборку, пока факт не пересобран (см. отчёт фазы).",
+  "scenarios": {
+    "f5-restart-midprocess": {
+      "axis": "RESTART_MIDPROCESS",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "after",
+          "started": "yes"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "extra": {
+          "midTaskCreatedBeforeRestart": true,
+          "restartedEngineSawTask": true,
+          "continuedAfterRestart": true,
+          "engineInstances": 2
+        }
+      },
+      "pg": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "after",
+          "started": "yes"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "extra": {
+          "midTaskCreatedBeforeRestart": true,
+          "restartedEngineSawTask": true,
+          "continuedAfterRestart": true,
+          "engineInstances": 2
+        }
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "after",
+          "started": "yes"
+        },
+        "leftovers": 0,
+        "continuedWith": "stAfter",
+        "deployedVersions": "1"
+      },
+      "verdict": "match"
+    },
+    "f5-parallel-race": {
+      "axis": "PARALLEL_RACE",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "stA": "stA",
+          "stB": "stB",
+          "stC": "stC",
+          "stD": "stD"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "extra": {
+          "iterations": 25,
+          "instancesCompleted": 25,
+          "dumpActivityRowsMax": 1,
+          "errors": []
+        }
+      },
+      "pg": {
+        "status": "COMPLETED",
+        "vars": {
+          "stA": "stA",
+          "stB": "stB",
+          "stC": "stC",
+          "stD": "stD"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "extra": {
+          "iterations": 25,
+          "instancesCompleted": 25,
+          "dumpActivityRowsMax": 1,
+          "errors": []
+        }
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "stA": "stA",
+          "stB": "stB",
+          "stC": "stC",
+          "stD": "stD"
+        },
+        "leftovers": 0,
+        "continuedWith": "",
+        "deployedVersions": "2"
+      },
+      "verdict": "match"
+    },
+    "f5-version-v1": {
+      "axis": "VERSION_MIGRATION",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV1"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "extra": {
+          "deployedVersionDelta": 1,
+          "continuedWith": "stV1",
+          "instanceVersionEqualsDeployedV1": true
+        }
+      },
+      "pg": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV1"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "extra": {
+          "deployedVersionDelta": 1,
+          "continuedWith": "stV1",
+          "instanceVersionEqualsDeployedV1": true
+        }
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV1"
+        },
+        "leftovers": 0,
+        "continuedWith": "stV1",
+        "deployedVersions": "1->2"
+      },
+      "verdict": "match"
+    },
+    "f5-version-v2": {
+      "axis": "VERSION_MIGRATION",
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV2"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "extra": {
+          "continuedWith": "stV2",
+          "instanceVersionEqualsDeployed": true
+        }
+      },
+      "pg": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV2"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "extra": {
+          "continuedWith": "stV2",
+          "instanceVersionEqualsDeployed": true
+        }
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "phase": "stV2"
+        },
+        "leftovers": 0,
+        "continuedWith": "stV2",
+        "deployedVersions": "3->4"
+      },
+      "verdict": "match"
+    }
+  }
+}
