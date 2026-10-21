@@ -96,10 +96,17 @@ REST-контур: `UnsupportedConstructDeployRejectionIT.unsupportedConstruct_i
 | 11 | BPMN-файл > 5 МБ | `ProcessDefinitionServiceImpl.java:94-102` | `BPMN_TOO_LARGE` (413) | `BatchDeployValidationIT` |
 | 12 | Нечитаемый/неположительный `camunda:historyTimeToLive` | `:282-304` | `INVALID_HISTORY_TTL` (400) | WO-ENG-17 |
 | 13 | FEEL, который парсер движка не принимает | `:173-194` + `FeelSyntaxValidator.java` | `INVALID_FEEL_EXPRESSION` (400) | §5 |
-| 14 | Нет ни одного start event | `BpmnParseServiceImpl.checkBpmn:1738-1740` | `BpmnParseException` → HTTP 400 `PARSE_ERROR` (`GlobalExceptionHandler.java:151-161`; текст — только в лог) | `BpmnParseServiceImplTest` |
-| 15 | Больше одного «простого» (none) start event | `:1741-1755` | `BpmnParseException` → 400 `PARSE_ERROR` | `BpmnParseServiceImplTest` |
-| 16 | Нет ни одного end event | `:1756-1758` | `BpmnParseException` → 400 `PARSE_ERROR` | `BpmnParseServiceImplTest` |
-| 17 | Ad-hoc subProcess со start event внутри | `BpmnParseServiceImpl.java:1374-1376` | `BpmnParseException` → 400 `PARSE_ERROR` | `BpmnParseServiceImplTest` |
+| 14 | Нет ни одного start event | `BpmnParseServiceImpl.checkBpmn:1738-1740` | `BpmnParseException` → HTTP 400 `PARSE_ERROR` (путь `POST /process-definitions`; текст — только в лог) | `BpmnParseServiceImplTest` |
+| 15 | Больше одного «простого» (none) start event | `:1741-1755` | `BpmnParseException` → 400 `PARSE_ERROR` (путь `POST /process-definitions`) | `BpmnParseServiceImplTest` |
+| 16 | Нет ни одного end event | `:1756-1758` | `BpmnParseException` → 400 `PARSE_ERROR` (путь `POST /process-definitions`) | `BpmnParseServiceImplTest` |
+| 17 | Ad-hoc subProcess со start event внутри | `BpmnParseServiceImpl.java:1374-1376` | `BpmnParseException` → 400 `PARSE_ERROR` (путь `POST /process-definitions`) | `BpmnParseServiceImplTest` |
+| 18 | **Любая** ошибка парсинга (битый XML, невалидная схема, не-XML) — catch-all | `BpmnParseServiceImpl.java:439-440` (`catch (Exception e) → BpmnParseException`) | 400 `PARSE_ERROR` на пути `POST /process-definitions`; на пути новой версии — 400 **без кода** («BPMN could not be parsed», `ProcessDefinitionResource.java:121-126`) | `BpmnParseServiceImplTest`, `ProcessDefinitionResource` IT |
+| 19 | Ключ процесса внутри BPMN не совпадает с ключом целевого определения (путь новой версии) | `ProcessDefinitionResource.java:129-137` | `PROCESS_KEY_MISMATCH` (400) | IT пути новой версии |
+| 20 | Батч-деплой: любой `EngineException` в пачке | `DeploymentResource.java:52-54` | 400 «Deployment failed» (без кода) | IT батч-деплоя |
+
+**Оговорка о коде ответа.** `PARSE_ERROR` — контракт **пути `POST /process-definitions`** (`GlobalExceptionHandler.java:151-161`).
+Путь новой версии (`PUT` версии) ловит тот же `BpmnParseException` сам и отвечает `ResponseStatusException(BAD_REQUEST, …)`
+**без кода** (`ProcessDefinitionResource.java:121-126`) — чтобы не выдавать детали парсера (WO-SEC-33).
 
 ---
 
@@ -160,8 +167,8 @@ REST-контур: `UnsupportedConstructDeployRejectionIT.unsupportedConstruct_i
 | `eventSubProcess` (non-interrupting) | `:655-656` | `EventTrigger:418` | `EventSubProcessInclusiveJoinIntegrationTests`, C8-35-семья | **авто** + **инцидент** (`EventSubProcessInclusiveJoinIntegrationTests:232`) |
 | `adHocSubProcess` | `:375-382`, `toAdHocSubProcessElement:1363-1431` | `AdHocSubProcessHandler` (`:61`) | `AdHocSubProcessIntegrationTests`, `AdHocJobWorkerIntegrationTests`, `AdHocScopeTokenIntegrationTests`, `AdhocScopeArrivalCleanupIntegrationTests`, `AdHocCompleteEndpointIT` | **авто** + **свой** (`AdHocSubProcessIntegrationTests:194`; `AdHocJobWorkerIntegrationTests:134`; `AdHocScopeTokenIntegrationTests:160` — `rows(pi,"afterAdhoc")).isEmpty()`) |
 | `boundaryEvent` + `timer` | `:386`, `:394-396` (тихий дроп прочих), `:607-620` | `BoundaryScheduler.scheduleBoundaryTimers:95`; re-arm `EventTrigger:368` | `ServiceTaskBoundaryTimerIntegrationTests/PgIT`, `ContainerBoundaryTimerIntegrationTests`, `SubprocessBoundaryTimerIntegrationTests`, `ReceiveTaskBoundaryIntegrationTests`, `ForkBoundaryScopeIntegrationTests`, `BoundaryCycleIntegrationTests`, `RepeatingBoundaryTimerPgIT`, `ArmedBoundaryTimerJoinPgIT`, `MiBoundaryTimerPgIT` | **авто** + **свой** (`ArmedBoundaryTimerJoinPgIT:122` — `countOf(pi,"taskNotify",CREATED)).isZero()`; `RepeatingBoundaryTimerPgIT:156` — `pendingAfter).isEmpty()`) |
-| `boundaryEvent` + `error` | `:621-624` | `ErrorEscalationThrower.findErrorBoundary:254-279` | `ErrorBoundaryIntegrationTests` (`:64-68` — положительные ассерты), `MiSubProcessIntegrationTests` | **авто** |
-| `boundaryEvent` + `message` | `:625-627`, def `:400-406` | `BoundaryScheduler.scheduleMessageBoundaries:60` | `MessageBoundaryIntegrationTests` (`:71-73` — положительные), `ContainerSubscriptionCloseIntegrationTests` | **авто** + **свой** (`ContainerSubscriptionCloseIntegrationTests:111`) |
+| `boundaryEvent` + `error` | `:621-624` | `ErrorEscalationThrower.findErrorBoundary:254-279` | `ErrorBoundaryIntegrationTests` (`:64-66` — положительные ассерты; `:68` — absence-ассерт `noneMatch(...)` по элементу `endEvent`), `MiSubProcessIntegrationTests` | **авто** |
+| `boundaryEvent` + `message` | `:625-627`, def `:400-406` | `BoundaryScheduler.scheduleMessageBoundaries:60` | `MessageBoundaryIntegrationTests` (`:71-72` — положительные; `:73` — absence-ассерт `noneMatch(...)` по `endEvent`), `ContainerSubscriptionCloseIntegrationTests` | **авто** + **свой** (`ContainerSubscriptionCloseIntegrationTests:111`) |
 | `boundaryEvent` + `signal` | `:628-630` | `BoundaryScheduler.scheduleSignalBoundaries:31`; broadcast `EventTrigger:711` | `SignalStartBoundaryIntegrationTests`, `SignalFanOutIntegrationTests`, `MiBoundaryTimerPgIT` | **авто** |
 | `boundaryEvent` + `escalation` | `:631-634` | `ErrorEscalationThrower.findEscalationBoundary:505-512` | `EscalationIntegrationTests` | **авто** |
 | `boundaryEvent` + `conditional` | `:635-638`, def `:561-571` | `EventTrigger:84` | `ConditionalEventIntegrationTests` | **авто** |
@@ -187,7 +194,7 @@ REST-контур: `UnsupportedConstructDeployRejectionIT.unsupportedConstruct_i
 | `serviceTask`: executionListeners (start/end) | `:1761-1803` (слушатели `:1780-1802`), общий `:1866-1894` | `ElementSupport` | `Camunda8ParityCharacterizationTests`, `ListenerDuplicateCompletionTests` | **авто** + **свой** (`ListenerDuplicateCompletionTests:107`) |
 | MI: isSequential / loopCardinality / completionCondition | `:2208-2234` (`attachMultiInstance`) | `MultiInstanceExecutor` | `MultiInstanceIntegrationTests`, `MultiInstanceCardinalityValidationIntegrationTests`, `MiCompletionConditionPgIT`, `MiFullScanPgIT`, `MiReenterIntegrationTests`, `MiLoopReentryRacePgIT`, `MiTaskCompletionConditionSiblingsIntegrationTests` | **авто** + **свой** (`MultiInstanceCardinalityValidationIntegrationTests:113` — `miTasks(pi,CREATED)).isEmpty()`; `MiLoopReentryRacePgIT:175` — arrival-строки обнулены; `MiTaskCompletionConditionSiblingsIntegrationTests:190-197` — четыре явных LEAK-INVARIANT-ассерта) + **инцидент** (`MiTaskCompletionConditionSiblingsIntegrationTests:197`) |
 | MI: `zeebe:loopCharacteristics` (inputCollection/inputElement/outputCollection/outputElement) | `:2221-2231` | `MultiInstanceExecutor` | `MultiInstanceOutputIntegrationTests`, `MiOutputCollectionDiffIntegrationTests`, `MiExpressionFieldDeployValidationIntegrationTests` | **авто** + **свой** (`MiOutputCollectionDiffIntegrationTests:184` — `miTasks(pi)).isEmpty()`; `:167` — `doesNotContain("_mi_batch_miTask")`) |
-| MI: `inputCollection`/`outputElement` **без «=»** | — | **отказ на деплое** (§1.1 #13 / D-4) | `MiExpressionFieldDeployValidationIntegrationTests.inputCollectionWithoutEquals_isRejectedAtDeploy` (`:78`), `outputElementWithoutEquals_isRejectedAtDeploy` (`:107`) | н/д |
+| MI: `inputCollection`/`outputElement` **без «=»** | — | **отказ на деплое** (§1.2 #13 / D-4) | `MiExpressionFieldDeployValidationIntegrationTests.inputCollectionWithoutEquals_isRejectedAtDeploy` (`:78`), `outputElementWithoutEquals_isRejectedAtDeploy` (`:107`) | н/д |
 | MI: `inputElement`/`outputCollection` — имена, не выражения | `:2224,:2225` | `MultiInstanceExecutor` | `MiExpressionFieldDeployValidationIntegrationTests.inputElementAndOutputCollection_areNamesAndAreNotRefused` (`:211`) | н/д |
 | timer: timeDate / timeDuration / timeCycle (start/catch/boundary) | start `:157-166`, catch `:2337-2353`, boundary `:607-620` | планировщик таймеров | `TimerStartIntegrationTests`, `ActivityServiceImplTests`, `BoundedTimerIntegrationTest`, `RepeatingBoundaryTimerPgIT`, `RepeatingTimerSemanticsPgIT` | **авто** + **свой** (`RepeatingTimerSemanticsPgIT:147,:197`; `RepeatingBoundaryTimerPgIT:156`) |
 | `sequenceFlow`: conditionExpression | `:1727-1732` (`toFlowModel:1723-1736`) | `FlowNavigator` / `InclusiveGatewayHandler.isFlowActive` | `Diff2ExclusiveGatewayOrderTest`, `Diff10GatewayNoConditionNpeTest`, `FeelDeployValidationIntegrationTests` | **авто** |
@@ -196,9 +203,9 @@ REST-контур: `UnsupportedConstructDeployRejectionIT.unsupportedConstruct_i
 | `callActivity`: calledElement (processId/bindingType/versionTag/propagateAll*) | `:2436-2444` | `CallActivityHandler` | `CallActivityVariablePropagationIntegrationTests`, `PropagateChildVariablesIntegrationTests` | **авто** |
 | `callActivity`: ioMapping | `:2447` (`attachIoMapping`) | `ElementSupport` | `CallActivityVariablePropagationIntegrationTests`, `Diff1IoMappingScopeReproTest` | **авто** |
 | ioMapping input/output (общий) | `:1917-1947` (`attachIoMapping`, `toMappings:1936-1947`), вызовы: `:752` (subProcess), `:1804` (serviceTask), `:2199` (userTask), `:2447` (callActivity) | `ElementSupport` | `IoMappingIntegrationTests`, `Eng29FeelNullIoMappingIncidentIntegrationTests`, `Eng30LenientModeNoIncidentIntegrationTests`, `Eng33NowIoMappingIntegrationTests`, `FeelIoMappingConformanceIntegrationTests`, `IoMappingStaticSourceIntegrationTests` | **авто** |
-| ioMapping **output** source без «=» | — | **отказ на деплое** (D-3) | `IoMappingStaticSourceIntegrationTests` | н/д |
+| ioMapping **output** source без «=» | — | **отказ на деплое** (§1.2 #13 / D-3) | `IoMappingStaticSourceIntegrationTests` | н/д |
 | ioMapping **input** source без «=» | `FeelSyntaxValidator.java:220-232` | статическое значение, копируется дословно | `IoMappingStaticSourceIntegrationTests` | н/д |
-| `<message>`: `zeebe:subscription correlationKey` | `:80-89` (`ExtensionElements::getSubscription` → `messageKeys`) | `:404` (boundary), `:1695` (intermediate catch), `:2062` (receive task), `:2362` (intermediate catch) — `msg.setCorrelationKeyExpression(...)` | `MessageCorrelationKeyIntegrationTests` | **авто** |
+| `<message>`: `zeebe:subscription correlationKey` | `:80-89` (`ExtensionElements::getSubscription` → `messageKeys`) | `:404` (граница верхнего уровня), `:1695` (граница во вложенном скоупе), `:2062` (receive task), `:2362` (intermediate catch) — `msg.setCorrelationKeyExpression(...)` | `MessageCorrelationKeyIntegrationTests` | **авто** |
 | adHoc: activeElementsCollection / outputCollection / outputElement | `toAdHocSubProcessElement:1363-1431` | `AdHocSubProcessHandler` | `AdHocSubProcessIntegrationTests`, `AdHocJobWorkerIntegrationTests` | **авто** + **свой** (см. §2, adHoc) |
 | adHoc: completionCondition | там же | `AdHocSubProcessHandler` | `AdHocSubProcessIntegrationTests` | **авто** |
 | adHoc: cancelRemainingInstances | там же | `AdHocSubProcessHandler` | `AdHocSubProcessIntegrationTests` | **авто** |
@@ -212,6 +219,7 @@ REST-контур: `UnsupportedConstructDeployRejectionIT.unsupportedConstruct_i
 | boundary: attachedToRef / cancelActivity (interrupting, default true) | `:602-604` | `EventTrigger.fireBoundary` | все boundary-IT | **авто** |
 | `<process>`: versionTag / historyTimeToLive / jobPriorityDefinition / userTaskForm list | `:119-136` | артефакты деплоя | `Camunda8ParityCharacterizationTests` | н/д |
 | `<message>`/`<error>`/`<signal>`/`<escalation>` definitions | `BpmnDefinitionsModel.java:19-30` + резолв `:94-113` | реестры событий | `ErrorBoundaryIntegrationTests`, `SignalIntegrationTests`, `EscalationIntegrationTests` | н/д |
+| `<association>` — связь compensation-границы с её handler'ом | `BpmnProcessDefinitionModel.java:86-87`; резолв `:412-422`, `:1705-1710` (вложенный скоуп), `:2414-2424` | `CompensationThrowHandler` | `CompensationIntegrationTests`, `CompensationScopeIntegrationTests` | **авто** |
 
 ---
 
@@ -235,7 +243,8 @@ REST-контур: `UnsupportedConstructDeployRejectionIT.unsupportedConstruct_i
 | 14 | MI на `transaction`/`adHocSubProcess`/`callActivity` | `BpmnSupportScanner.java:61-62` | **отказ на деплое** (не «молча один раз») | §1.1 #4 |
 | 15 | MI на `task`/`scriptTask`/`manualTask`/`businessRuleTask`/`sendTask`/`receiveTask` | `:74-75` | **отказ на деплое** | §1.1 #5 |
 | 16 | Обращения `<messageStartEvent>`/`<terminateEndEvent>` как «исполняемые» | `:132` — только для dangling-проверки | §4-4 | §4-4 |
-| 17 | Прочие BPMN-элементы вне `@XmlElement`-биндинга (`textAnnotation`, `group`, `import`, `artifact`, `resourceRole`, `performer`, `correlationProperty`, `interface`, `itemDefinition`) | `BpmnProcessDefinitionModel.java:15-88` / `BpmnDefinitionsModel.java:16-30` — полный перечень биндинга | **тихо игнорируются** (для них нет ни отказа, ни парсинга) | **не найдено** |
+| 17 | `<documentation>` (process-level) | биндится (`BpmnProcessDefinitionModel.java:30-32`), но **в модель не переносится** и нигде не читается | **тихо игнорируется** | **не найдено** |
+| 18 | Прочие BPMN-элементы вне `@XmlElement`-биндинга (`textAnnotation`, `group`, `import`, `artifact`, `resourceRole`, `performer`, `correlationProperty`, `interface`, `itemDefinition`) | `BpmnProcessDefinitionModel.java:15-88` / `BpmnDefinitionsModel.java:16-30` — полный перечень биндинга | **тихо игнорируются** (для них нет ни отказа, ни парсинга) | **не найдено** |
 
 ---
 
@@ -383,17 +392,22 @@ H2d-прогона дала 1107 token-нарушений, из них 664 в `C
 
 ## 8. Пустые/односторонние места — сводка (кандидаты ФАЗ 1–5)
 
+**Как читать этот раздел.** Полный и единственный статус по каждому элементу/свойству — колонка G-P в
+§2/§3. Здесь — **сводка кандидатов**: P-1…P-7 — конструкции, которые движок НЕ исполняет или НЕ парсит
+(тут список полный); P-8…P-18 — элементы/свойства, исполняемые, но без собственного ассерта на остаток
+(список полный, P-9); P-11…P-16 — пробелы самого инварианта и прочие находки.
+
 | # | Место | Что пусто | Кандидат |
 |---|---|---|---|
 | P-1 | §4-1 | `boundaryEvent` без event-definition — **тихий дроп, стража нет** | ФАЗА 4 (события) |
-| P-2 | §4-3, §4-17 | choreography / textAnnotation / group / import и прочие небиндящиеся элементы — тихо игнорируются, стража нет (для dataObjects — есть) | ФАЗА 3/5 |
+| P-2 | §4-3, §4-18 | choreography / textAnnotation / group / import и прочие небиндящиеся элементы — тихо игнорируются, стража нет (для dataObjects — есть) | ФАЗА 3/5 |
 | P-3 | §4-7 | `endEvent` + `compensate` — **компенсация не исполняется** | ФАЗА 4 |
 | P-4 | §4-10 | executionListeners на boundary — **не парсятся** | ФАЗА 4 |
 | P-5 | §4-11, §4-12 | taskListeners вне userTask и executionListeners на sendTask — **не парсятся** | ФАЗА 1 |
 | P-6 | §4-13 | ioMapping на adHoc — **не парсится** | ФАЗА 3 |
 | P-7 | §1.1 #9 vs §4-4 | Camunda-экспорт теги (`<messageStartEvent>` и т.п.) **молча выпадают** из модели | ФАЗА 4 |
 | P-8 | §2 | `exclusiveGateway` — своего ассерта на остаток нет | ФАЗА 2 |
-| P-9 | §2 | `eventBasedGateway`, `endEvent`+escalation, `callActivity`, `sendTask`, `receiveTask`, `manualTask`, `task`, `scriptTask`, `businessRuleTask`, `userTask`, `parallelGateway`, `subProcess` — своих ассертов на остаток нет | ФАЗА 1/2/3 |
+| P-9 | §2/§3 | **Полный** список строк без своего ассерта на остаток — **71 из 91** (в §2 — 41 из 54, в §3 — 30 из 37). Это ровно те строки §2/§3, где в колонке G-P нет метки «свой»; перечислять их здесь повторно не нужно — полный и единственный статус по каждому элементу/свойству даёт колонка G-P. Кандидаты на ФАЗЫ 1–5 из этого множества — по приоритету: задачи (service/user/script/businessRule/send/receive) и их свойства, exclusiveGateway, eventBasedGateway, callActivity, все варианты intermediateCatch/Throw, adHoc, eventSubProcess, boundaryEvent (error/signal/escalation/conditional/compensate/cancel), transaction и subProcess без своего ассерта, ioMapping/FEEL-свойства (condition, defaultFlow, correlationKey, calledDecision, script, waitForCompletion, conditionalFilter, job-based end/throw, `<process>`-уровневые свойства, definitions). |
 | P-10 | §2 | `boundaryEvent` + error / signal / escalation / conditional — своих ассертов нет | ФАЗА 4 |
 | P-11 | §7.2 L-1 | блок «токены с `pending_branches > 0`» **выключен** | ФАЗА 5 (сквозные) |
 | P-12 | §7.2 L-2 | зависший (не завершённый) инстанс **не виден** инварианту | ФАЗА 5 |
