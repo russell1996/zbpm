@@ -161,7 +161,7 @@ REST-контур: `UnsupportedConstructDeployRejectionIT.unsupportedConstruct_i
 | `subProcess` (embedded) | `:344-359`, `toSubProcessElement:651-744` (плоскость `:668-744`, MI `:355`) | `SubProcessHandler` (`:35`) | `SubProcessIntegrationTests`, `NestedTokenPendingBranchesIntegrationTests`, `Diff1IoMappingScopeReproTest` | **авто** |
 | `subProcess` + MI | `:355` (`attachSubProcessMultiInstance`), `:793-861` | `MultiInstanceExecutor` | `MiSubProcessIntegrationTests`, `MiSubProcessMinimalPgIT`, `MiSubProcessRaceIntegrationTests`, `MiSubProcessApprovalRouteIntegrationTests`, `MiSubProcessOrphanContainerIntegrationTests` | **авто** + **свой** (`MiSubProcessIntegrationTests:202` — `activities(pi,"utProbe",CREATED)).isEmpty()`; `MiSubProcessOrphanContainerIntegrationTests:151` — `liveActivities(pi)).isZero()`) + **инцидент** (`MiSubProcessIntegrationTests:184`) |
 | `subProcess` + MI (Camunda8-parity) | фикстуры `test-c841-parity-*.bpmn` | `MultiInstanceExecutor` | `MiSubProcessCamunda8ParityIntegrationTests` | **авто** + **свой** (`:199` — в родительский scope не утекли `tu`/`item`/`loopCounter`) + **инцидент** (`:162`) |
-| `subProcess` + MI (loop-var/reentry) | фикстуры `test-c842-*.bpmn` | `MultiInstanceExecutor` + scope-chain | `MiSubProcessLoopVarVisibilityIntegrationTests` | **авто** + **свой** (`:291` — `rootRows(pi,lane)).isEmpty()`, т.е. scope-строки не остались) + **инцидент** (`:295`) |
+| `subProcess` + MI (loop-var/reentry) | фикстуры `test-c842-*.bpmn` | `MultiInstanceExecutor` + scope-chain | `MiSubProcessLoopVarVisibilityIntegrationTests` | **авто** + **свой** (`:291` — `rootRows(pi,lane)).isEmpty()`, т.е. lane-/loop-переменных **не осталось в root** (`rootRows` = `scope_id IS NULL`) + **инцидент** (`:295`) |
 | `transaction` | `:363-371` (парсится как `SUB_PROCESS`; cancel-семантика — через cancel-end/cancel-boundary) | `SubProcessHandler` + `CancelEndHandler` | `TransactionCancelIntegrationTests`, `ForkCancelInTransactionIntegrationTests` | **авто** + **инцидент** (`ForkCancelInTransactionIntegrationTests:122`) |
 | `eventSubProcess` (interrupting) | `:655-656` (тип по `triggeredByEvent`), `:668-744` | **отдельного handler'а нет** — `EventTrigger.triggerEventSubprocess:418`; error-триггер `ErrorEscalationThrower:186` | `EventSubProcessIntegrationTests`, `NestedEventSubprocessCancelScopeIntegrationTests`, `EventSubProcessInclusiveJoinIntegrationTests` | **авто** + **свой** (`EventSubProcessInclusiveJoinIntegrationTests:162` — `countOf(pi,"taskNotify",CREATED)).isEqualTo(0L`) + **инцидент** (`NestedEventSubprocessCancelScopeIntegrationTests:100`) |
 | `eventSubProcess` (non-interrupting) | `:655-656` | `EventTrigger:418` | `EventSubProcessInclusiveJoinIntegrationTests`, C8-35-семья | **авто** + **инцидент** (`EventSubProcessInclusiveJoinIntegrationTests:232`) |
@@ -183,7 +183,7 @@ REST-контур: `UnsupportedConstructDeployRejectionIT.unsupportedConstruct_i
 
 | Свойство | Парсинг (file:line) | Runtime-потребитель | Основные тесты | G-P |
 |---|---|---|---|---|
-| `userTask`: assignee / candidateUsers / candidateGroups | `BpmnParseServiceImpl.java:2107-2111` | `UserTaskHandler` + scope-резолв MI | `UserTaskQueryIntegrationTests`, `MiSubProcessLoopVarVisibilityIntegrationTests` | **авто** + **свой** (`MiSubProcessLoopVarVisibilityIntegrationTests:291`) |
+| `userTask`: assignee / candidateUsers / candidateGroups | `BpmnParseServiceImpl.java:2107-2111` | `UserTaskHandler` + scope-резолв MI | `UserTaskQueryIntegrationTests`, `MiSubProcessLoopVarVisibilityIntegrationTests` | **авто** + **свой** (`MiSubProcessLoopVarVisibilityIntegrationTests:291` — lane-/loop-переменных не осталось в root) |
 | `userTask`: dueDate / followUpDate | `:2112-2116` | планировщик задач | `UserTaskQueryIntegrationTests` | **авто** |
 | `userTask`: priorityDefinition | `:2117-2123` | очередь задач | `Camunda8ParityCharacterizationTests` | **авто** |
 | `userTask`: formDefinition (formKey/externalReference/formId/bindingType/versionTag) | `:2124-2147` | форма задачи | `Camunda8ParityCharacterizationTests`, `Camunda8FormsIntegrationTests`, `Api1FormValidatorIT` | н/д (вне runtime) |
@@ -244,7 +244,7 @@ REST-контур: `UnsupportedConstructDeployRejectionIT.unsupportedConstruct_i
 | 15 | MI на `task`/`scriptTask`/`manualTask`/`businessRuleTask`/`sendTask`/`receiveTask` | `:74-75` | **отказ на деплое** | §1.1 #5 |
 | 16 | Обращения `<messageStartEvent>`/`<terminateEndEvent>` как «исполняемые» | `:132` — только для dangling-проверки | §4-4 | §4-4 |
 | 17 | `<documentation>` (process-level) | биндится (`BpmnProcessDefinitionModel.java:30-32`), но **в модель не переносится** и нигде не читается | **тихо игнорируется** | **не найдено** |
-| 18 | `boundaryEvent` с `attachedToRef`, указывающим на **несуществующую** activity | сканер такую ссылку **не проверяет** (в `BpmnSupportScanner.java` — 0 совпадений по `attachedToRef`, в отличие от dangling `sequenceFlow`, §1.1 #9); парсер копирует ref без валидации (`BpmnParseServiceImpl.java:602`); рантайм привязывает границу к хосту **сравнением ref с id хоста** (`BpmnProcessDefinitionModel.getBoundaryEventsAttachedTo:166-178`, `BoundaryScheduler.java:44-46`, `EventTrigger.java:91-92`, `ErrorEscalationThrower.java:263-264,:513-515`) | модель **деплоится без отказа**, но граница не «взводится» никогда: не срабатывает, отмену не вызывает, инцидент не поднимает — поведение «границы нет» | **не найдено** |
+| 18 | `boundaryEvent` с `attachedToRef`, указывающим на **несуществующую** activity | сканер такую ссылку **не проверяет** (в `BpmnSupportScanner.java` — 0 совпадений по `attachedToRef`, в отличие от dangling `sequenceFlow`, §1.1 #9); парсер копирует ref без валидации (`BpmnParseServiceImpl.java:602`); рантайм привязывает границу к хосту **сравнением ref с id хоста** (`BpmnProcessDefinitionModel.getBoundaryEventsAttachedTo:166-176`, `BoundaryScheduler.java:44-46`, `EventTrigger.java:91-92`, `ErrorEscalationThrower.java:263-264,:513-515`) | модель **деплоится без отказа**, но граница не «взводится» никогда: не срабатывает, отмену не вызывает, инцидент не поднимает — поведение «границы нет» | **не найдено** |
 | 19 | `errorEventDefinition` / `signalEventDefinition` / `escalationEventDefinition` с **несуществующим** ref | резолв ref в код/имя с откатом на «сырой ref» (`BpmnParseServiceImpl.java:551-552` error, `:556` signal, `:560` escalation) | деплой проходит; граница/событие никогда не сойдётся с реальным кодом ошибки/сигнала/эскалации | **не найдено** |
 | 20 | Прочие BPMN-элементы вне `@XmlElement`-биндинга (`textAnnotation`, `group`, `import`, `artifact`, `resourceRole`, `performer`, `correlationProperty`, `interface`, `itemDefinition`) | `BpmnProcessDefinitionModel.java:15-88` / `BpmnDefinitionsModel.java:16-30` — полный перечень биндинга | **тихо игнорируются** (для них нет ни отказа, ни парсинга) | **не найдено** |
 
@@ -306,7 +306,7 @@ expression), `FEEL_EXPRESSION_PLAIN` (как есть, без снятия).
 | `scriptTask` | 33 | `standardLoopCharacteristics` | 1 |
 | `intermediateCatchEvent` | 28 | `implicitThrowEvent` | 1 |
 | `intermediateThrowEvent` | 25 | `task` (без типа) | 2 |
-| `callActivity` | 24 | `messageStartEvent`/`timerStartEvent` | 2 / 2 (в одном файле) |
+| `callActivity` | 24 | `messageStartEvent`/`timerStartEvent` | 1 / 1 (только `test-eng34-odd-node-refs.bpmn`; в `test-eng34-standard-loop.bpmn` тег встречается только в комментарии, в `process-with-events.bpmn` — только как id) |
 | `adHocSubProcess` | 20 | `terminateEndEvent` | 1 |
 | `businessRuleTask` | 10 | `transaction` | 8 |
 | `sendTask` / `receiveTask` | 4 / 4 | `manualTask` | 4 |
@@ -403,14 +403,14 @@ H2d-прогона дала 1107 token-нарушений, из них 664 в `C
 | # | Место | Что пусто | Кандидат |
 |---|---|---|---|
 | P-1 | §4-1 | `boundaryEvent` без event-definition — **тихий дроп, стража нет** | ФАЗА 4 (события) |
-| P-2 | §4-3, §4-18 | choreography / textAnnotation / group / import и прочие небиндящиеся элементы — тихо игнорируются, стража нет (для dataObjects — есть) | ФАЗА 3/5 |
+| P-2 | §4-3, §4-20 | choreography / textAnnotation / group / import и прочие небиндящиеся элементы — тихо игнорируются, стража нет (для dataObjects — есть) | ФАЗА 3/5 |
 | P-3 | §4-7 | `endEvent` + `compensate` — **компенсация не исполняется** | ФАЗА 4 |
 | P-4 | §4-10 | executionListeners на boundary — **не парсятся** | ФАЗА 4 |
 | P-5 | §4-11, §4-12 | taskListeners вне userTask и executionListeners на sendTask — **не парсятся** | ФАЗА 1 |
 | P-6 | §4-13 | ioMapping на adHoc — **не парсится** | ФАЗА 3 |
 | P-7 | §1.1 #9 vs §4-4 | Camunda-экспорт теги (`<messageStartEvent>` и т.п.) **молча выпадают** из модели | ФАЗА 4 |
 | P-8 | §2 | `exclusiveGateway` — своего ассерта на остаток нет | ФАЗА 2 |
-| P-9 | §2/§3 | **Полный** список строк без своего ассерта на остаток — **71 из 91** (в §2 — 41 из 54, в §3 — 30 из 37). Это ровно те строки §2/§3, где в колонке G-P нет метки «свой»; перечислять их здесь повторно не нужно — полный и единственный статус по каждому элементу/свойству даёт колонка G-P. Кандидаты на ФАЗЫ 1–5 из этого множества — по приоритету: задачи (service/user/script/businessRule/send/receive) и их свойства, exclusiveGateway, eventBasedGateway, callActivity, все варианты intermediateCatch/Throw, adHoc, eventSubProcess, boundaryEvent (error/signal/escalation/conditional/compensate/cancel), transaction и subProcess без своего ассерта, ioMapping/FEEL-свойства (condition, defaultFlow, correlationKey, calledDecision, script, waitForCompletion, conditionalFilter, job-based end/throw, `<process>`-уровневые свойства, definitions). |
+| P-9 | §2/§3 | **Полный** список строк без своего ассерта на остаток — **71 из 91** (в §2 — 41 из 54, в §3 — 30 из 37). Это ровно те строки §2/§3, где в колонке G-P нет метки «свой»; перечислять их здесь повторно не нужно — полный и единственный статус по каждому элементу/свойству даёт колонка G-P. Кандидаты на ФАЗЫ 1–5 из этого множества — по приоритету: задачи (script/businessRule/send/receive) и их свойства, exclusiveGateway, eventBasedGateway, callActivity, варианты intermediateCatch/Throw без своего ассерта, boundaryEvent (error/signal/escalation/conditional/compensate/cancel), transaction и subProcess, ioMapping/FEEL-свойства (condition, defaultFlow, correlationKey, calledDecision, script, waitForCompletion, conditionalFilter, job-based end/throw, `<process>`-уровневые свойства, definitions). Отдельно: `serviceTask`, `userTask`, `intermediateCatchEvent`+message, `adHocSubProcess` и `eventSubProcess`(interrupting) **свой ассерт имеют** — в кандидаты на добавление ассерта они не попадают, но попадают в кандидаты на ПРОВЕРКУ ПОКРЫТИЯ (ассерт закрывает остаток, а не весь сценарий). |
 | P-10 | §2 | `boundaryEvent` + error / signal / escalation / conditional — своих ассертов нет | ФАЗА 4 |
 | P-11 | §7.2 L-1 | блок «токены с `pending_branches > 0`» **выключен** | ФАЗА 5 (сквозные) |
 | P-12 | §7.2 L-2 | зависший (не завершённый) инстанс **не виден** инварианту | ФАЗА 5 |
@@ -419,9 +419,9 @@ H2d-прогона дала 1107 token-нарушений, из них 664 в `C
 | P-15 | §6 | `process0.bpmn` — фикстура без ссылки ни на один тест | ФАЗА 1 |
 | P-16 | §4-8 | `BpmnElementType.EVENT` — мёртвое значение enum'а | мелочь (V7) |
 | P-17 | §2, последняя строка | `boundaryEvent` на MI-контейнере: семантика «на теле MI vs per-instance» (расхождение ENG-3) **не разделена**, свой ассерт на остаток в `MiBoundaryTimerPgIT` отсутствует | ФАЗА 4 |
+| P-18 | §2, `intermediateThrowEvent`+`compensate` / `boundaryEvent`+`compensate` | в `CompensationWaitIntegrationTests` / `CompensationScopeIntegrationTests` / `CompensationIntegrationTests` absence-ассертов нет — компенсация проверяется по статусам, а не по остаткам | ФАЗА 4 |
 | P-19 | §4-18 | `boundaryEvent` с `attachedToRef` на несуществующую activity — **деплоится без отказа и никогда не срабатывает** | ФАЗА 4 |
 | P-20 | §4-19 | `error`/`signal`/`escalation` ref на несуществующее определение — код откатывается на «сырой ref», событие никогда не сойдётся | ФАЗА 4 |
-| P-18 | §2, `intermediateThrowEvent`+`compensate` / `boundaryEvent`+`compensate` | в `CompensationWaitIntegrationTests` / `CompensationScopeIntegrationTests` / `CompensationIntegrationTests` absence-ассертов нет — компенсация проверяется по статусам, а не по остаткам | ФАЗА 4 |
 
 ---
 
