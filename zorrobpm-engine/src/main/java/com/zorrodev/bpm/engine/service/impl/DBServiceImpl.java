@@ -23,6 +23,7 @@ import com.zorrodev.bpm.engine.service.db.ServiceTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.TokenDbOperations;
 import com.zorrodev.bpm.engine.service.db.UserTaskDbOperations;
 import com.zorrodev.bpm.engine.service.db.VariableDbOperations;
+import com.zorrodev.bpm.engine.service.CompensationHandlerTerminator;
 import com.zorrodev.bpm.engine.service.InstanceCancellationService;
 import lombok.RequiredArgsConstructor;
 import org.jspecify.annotations.NonNull;
@@ -53,6 +54,8 @@ public class DBServiceImpl implements DBService {
     private final TokenDbOperations tokenDbOperations;
     /** WO-AUDIT-12 (F-02): каскадная отмена дочерних инстансов call activity. */
     private final InstanceCancellationService instanceCancellationService;
+    /** WO-OPS-35: гашение живых compensation-handler'ов вместе с инстансом. */
+    private final CompensationHandlerTerminator compensationHandlerTerminator;
 
     @Override
     public UUID createProcessInstance(UUID parentActivityId, UUID processDefinitionId, List<ProcessVariable> variables) {
@@ -553,11 +556,31 @@ public class DBServiceImpl implements DBService {
         // Финализация живёт в kill-путях: cancelProcessInstance, terminate (root),
         // kill дочерних инстансов в EventTrigger и ErrorEscalationThrower
         // (вылет error/escalation из дочернего инстанса через call activity).
+        //
+        // WO-OPS-35: завершение инстанса гасит то, что в нём осталось жить
+        // (Zeebe: завершение scope терминирует оставшиеся activity instances).
+        // Единственное, что при этом гасится — КОМПЕНСАЦИОННЫЙ handler, запущенный
+        // броском без ожидания (waitForCompletion=false): он живёт ПАРАЛЛЕЛЬНО с
+        // потоком (Camunda 8.9: «the compensation throw event remains active until all
+        // invoked compensation handlers are completed» — при waitForCompletion=false
+        // поток идёт дальше, handler работает сам), и без гашения он оставался бы
+        // живой задачей в завершённом инстансе, а его job ушёл бы воркеру по
+        // мёртвому инстансу. ERROR-строки (падший handler) НЕ трогаются — они
+        // видимый результат (см. выше).
+        compensationHandlerTerminator.terminateLiveCompensationHandlers(processInstanceId);
         processInstanceDbOperations.completeProcessInstance(processInstanceId);
     }
 
     @Override
     public void cancelProcessInstance(UUID processInstanceId) {
+        // WO-OPS-35: примитив САМОДОСТАТОЧЕН — он гасит activity самого инстанса.
+        // До правки это делал ВЫЗЫВАЮЩИЙ (REST-путь ProcessInstanceRuntimeOperationsImpl
+        // звал cancelActiveActivities перед cancelProcessInstance), а прямые вызовы из
+        // движка (CompletionService: deferred-tail canceling-фазы) и из тестов — нет:
+        // инстанс помечался отменённым, а его задачи оставались живыми (воркер потом
+        // получал job по мёртвому инстансу). Гашение — тем же путём, что у REST-пути
+        // (cancelActiveActivities: CREATED/IN_PROGRESS → CANCELLED).
+        activityDbOperations.cancelActiveActivities(processInstanceId);
         // WO-C8-49: финализация — часть отмены (операторская + deferred tail
         // canceling-фазы: оба идут через этот метод).
         finalizeFinishedInstance(processInstanceId);

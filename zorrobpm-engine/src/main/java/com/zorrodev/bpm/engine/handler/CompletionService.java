@@ -1522,10 +1522,17 @@ public class CompletionService {
             AdHocJoin.ScopeState state =
                 AdHocJoin.resolve(dbService, objectMapper, processInstanceId, scopeActivityId);
             dbService.completeServiceTask(scopeActivityId);
-            flowNavigator.finishAdHocScope(processInstanceId, scope.getToken(), bpmn, scope,
+            // WO-OPS-35: cancelRemainingInstances=false (флаг воркера) при живом
+            // остатке — скоуп остаётся ОТКРЫТЫМ (Camunda 8.9: «the ad-hoc sub-process
+            // waits for the completion of all active instances before completing»).
+            // Условные события тогда НЕ триггерятся: скоуп ещё не завершён — они
+            // сработают, когда скоуп закроется (следующая выдача job'а воркеру).
+            boolean scopeFinished = flowNavigator.finishAdHocScope(processInstanceId, scope.getToken(), bpmn, scope,
                 state == null ? null : AdHocJoin.joinKey(scopeActivityId, state.batchUuid()), executor,
                 Boolean.TRUE.equals(result.getIsCancelRemainingInstances()));
-            triggerConditionalEvents(processInstanceId, executor);
+            if (scopeFinished) {
+                triggerConditionalEvents(processInstanceId, executor);
+            }
             return;
         }
         if (activate.isEmpty()) {

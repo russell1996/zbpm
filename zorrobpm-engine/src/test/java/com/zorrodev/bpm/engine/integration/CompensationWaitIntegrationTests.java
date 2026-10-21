@@ -133,6 +133,33 @@ public class CompensationWaitIntegrationTests {
     }
 
     /**
+     * WO-OPS-35: with {@code waitForCompletion=false} the compensation handler runs in
+     * PARALLEL with the flow (Camunda 8.9: the throw does not wait for the handler).
+     * When the INSTANCE itself ends, the handler must die with it — Zeebe scope rule
+     * («when a scope completes, the remaining element instances inside it are
+     * terminated»). Before the fix the handler stayed a LIVE task in a COMPLETED
+     * instance: its job went to a worker for a dead instance, and the leak invariant
+     * (WO-OPS-26/32) reported {@code type=activity element=compHandler live activity}.
+     */
+    @Transactional
+    @Test
+    void waitForCompletionFalse_handlerIsTerminatedWithTheInstance() throws Exception {
+        UUID pi = deployAndStart("src/test/files/test-c834-comp-nowait.bpmn");
+
+        ServiceTask work = serviceTask(pi, "comp-wait-job");
+        assertThat(work).as("work job parked").isNotNull();
+        runtimeService.completeServiceTask(work.getId(), List.of());
+
+        ServiceTask handler = serviceTask(pi, "comp-handler-job");
+        assertThat(handler).as("compensation handler job launched").isNotNull();
+
+        // the flow ran to the end → the instance is terminal …
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt()).isNotNull();
+        // … and the still-open handler died with it instead of staying live.
+        assertThat(activityStatus(pi, "compHandler")).isEqualTo(ActivityStatus.CANCELLED);
+    }
+
+    /**
      * WO-C8-34 security review B1 (blocker): the resume side must reason about the targets
      * THIS thrower snapshotted, not about everything completed by resume time.
      *

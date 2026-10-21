@@ -169,11 +169,12 @@ class AdHocScopeTokenIntegrationTests {
     }
 
     /**
-     * WO-C8-37 (раунд 2, БЛОКИРУЮЩАЯ №1, вложенный вариант): внутренний ad-hoc
-     * финиширует досрочно по completionCondition с cancelRemainingInstances=false
-     * (taskI2 остаётся жить), затем финиширует taskB (2/2 arrivals внешнего join).
-     * Внешний скоуп обязан ждать taskI2 — внутренности лежат на внутреннем
-     * scope-токене, невидимом для проверки «тишины» по входящему токену.
+     * WO-C8-37 (раунд 2, БЛОКИРУЮЩАЯ №1, вложенный вариант) + WO-OPS-35: внутренний
+     * ad-hoc имеет {@code cancelRemainingInstances=false} и условие завершения; по
+     * Camunda 8.9 «If set to false, the ad-hoc sub-process waits for the completion of
+     * all active instances before completing» — значит ВНУТРЕННИЙ скоуп остаётся
+     * открытым, пока жив taskI2 (его НЕ отменяем). Внешний join обязан ждать taskI2:
+     * quiescence смотрит поддерево скоупа (chain-walk), а не равенство токенов.
      */
     @Test
     void nestedAdhocSparedInnerTask_outerScopeWaitsForIt() throws Exception {
@@ -183,7 +184,10 @@ class AdHocScopeTokenIntegrationTests {
         assertThat(rows(pi, "taskB")).anyMatch(a -> a.getStatus() == ActivityStatus.CREATED);
 
         runtimeService.completeUserTask(createdTask(pi, "taskI1"), List.of(booleanVar("stopEarly", true)));
-        assertThat(rows(pi, "inner")).anyMatch(a -> a.getStatus() == ActivityStatus.COMPLETED);
+        // WO-OPS-35: внутренний скоуп ЖДЁТ taskI2 (cancelRemainingInstances=false) —
+        // он не закрывается досрочно и taskI2 не отменяется.
+        assertThat(rows(pi, "inner")).anyMatch(a -> a.getStatus() == ActivityStatus.CREATED);
+        assertThat(rows(pi, "inner")).noneMatch(a -> a.getStatus() == ActivityStatus.COMPLETED);
         assertThat(rows(pi, "taskI2")).anyMatch(a -> a.getStatus() == ActivityStatus.CREATED);
         assertThat(rows(pi, "adhoc")).anyMatch(a -> a.getStatus() == ActivityStatus.CREATED);
         assertThat(rows(pi, "afterAdhoc")).isEmpty();
@@ -196,7 +200,10 @@ class AdHocScopeTokenIntegrationTests {
         assertThat(rows(pi, "afterAdhoc")).isEmpty();
         assertThat(instanceDone(pi)).isFalse();
 
+        // последний внутренний элемент закрыт → внутренний скоуп закрывается → его
+        // исходящий поток даёт внешнему скоупу второе прибытие (2/2) → внешний закрывается
         runtimeService.completeUserTask(createdTask(pi, "taskI2"), List.of());
+        assertThat(rows(pi, "inner")).anyMatch(a -> a.getStatus() == ActivityStatus.COMPLETED);
         assertThat(rows(pi, "adhoc")).anyMatch(a -> a.getStatus() == ActivityStatus.COMPLETED);
         assertThat(rows(pi, "afterAdhoc")).anyMatch(a -> a.getStatus() == ActivityStatus.CREATED);
 

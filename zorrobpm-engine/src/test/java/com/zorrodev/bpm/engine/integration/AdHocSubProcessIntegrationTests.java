@@ -171,17 +171,28 @@ public class AdHocSubProcessIntegrationTests {
 
     @Transactional
     @Test
-    void cancelFalse_scopeFinishesImmediatelyAndSecondLivesOn() throws Exception {
-        // Criterion 4: cancelRemainingInstances=false — the scope still finishes as soon as the
-        // condition holds (the flag only spares termination); the second element is NOT cancelled.
+    void cancelFalse_scopeWaitsForRemainingInstancesBeforeCompleting() throws Exception {
+        // Camunda 8.9 (docs.camunda.io, «Ad-hoc sub-processes»): «If set to false, the
+        // ad-hoc sub-process waits for the completion of all active instances before
+        // completing.» Прежнее поведение движка («скоуп закрыт, остаток жив, инстанс
+        // мёртв») несовместимо ни с Camunda, ни с инвариантом утечек (WO-OPS-35): инстанс
+        // завершался, а taskD2 оставалась жить в мёртвом инстансе.
         UUID pi = start("test-adhoc-cancel-false.bpmn");
 
         runtimeService.completeUserTask(tasks(pi, "taskD1", ActivityStatus.CREATED).get(0).getId(),
             List.of(booleanVar("stopEarly", true)));
 
-        assertThat(tasks(pi, "adhoc", ActivityStatus.COMPLETED)).hasSize(1);
+        // the scope did NOT close: it waits for the remaining instance, which is NOT cancelled
+        assertThat(tasks(pi, "adhoc", ActivityStatus.COMPLETED)).isEmpty();
+        assertThat(tasks(pi, "adhoc", ActivityStatus.CREATED)).hasSize(1);
         assertThat(tasks(pi, "taskD2", ActivityStatus.CREATED)).hasSize(1);
         assertThat(tasks(pi, "taskD2", ActivityStatus.CANCELLED)).isEmpty();
+        assertThat(instanceDone(pi)).isFalse();
+
+        // the last remaining instance completes → the scope closes, the flow leaves the scope
+        runtimeService.completeUserTask(tasks(pi, "taskD2", ActivityStatus.CREATED).get(0).getId(), List.of());
+        assertThat(tasks(pi, "adhoc", ActivityStatus.COMPLETED)).hasSize(1);
+        assertThat(instanceDone(pi)).isTrue();
     }
 
     @Transactional
