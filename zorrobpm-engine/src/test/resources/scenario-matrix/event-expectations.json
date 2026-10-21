@@ -310,6 +310,87 @@
       "verdict": "ours differs",
       "detail": "сколько раз инстанцирован элемент: afterB: ours=2 zeebe=1; dump: ours=2 zeebe=1"
     },
+    "f4-bnd-conditional": {
+      "zeebe": {
+        "status": "FAILED",
+        "dumpReached": false,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {}
+      },
+      "ours": {
+        "status": "NOT_COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "liveElements": {
+          "host": "CREATED"
+        },
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": []
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-bnd-conditional.1792578637384.bpmn': - Element: bnd / - ERROR: Boundary events must be one of: timer, message, error, signal, escalation / - Element: ced"
+    },
+    "f4-bnd-without-event-definition": {
+      "zeebe": {
+        "status": "FAILED",
+        "dumpReached": false,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {}
+      },
+      "ours": {
+        "status": "NOT_COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "liveElements": {
+          "host": "CREATED"
+        },
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": []
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-bnd-without-event-definition.1792578637384.bpmn': - Element: bnd / - ERROR: Must have exactly one event definition"
+    },
+    "f4-bnd-dangling-host": {
+      "zeebe": {
+        "status": "FAILED",
+        "dumpReached": false,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {}
+      },
+      "ours": {
+        "status": "NOT_COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "liveElements": {
+          "host": "CREATED"
+        },
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": []
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-bnd-dangling-host.1792578637384.bpmn': Cannot invoke \"io.camunda.zeebe.model.bpmn.instance.Activity.equals(Object)\" because the return value of \"io.camunda.zeebe.model.bpmn.instance.BoundaryEvent.getAttachedTo()\" is null"
+    },
     "f4-cancel-instance": {
       "zeebe": {
         "status": "COMPLETED",
@@ -528,7 +609,34 @@
         "incidents": []
       },
       "verdict": "oracle-deploy-rejected",
-      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-end-cancel-in-transaction.1792577373587.bpmn': - Element: ced / - ERROR: Event definition of this type is not supported / - Element: tx"
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-end-cancel-in-transaction.1792578637384.bpmn': - Element: tx / - ERROR: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/ / - Element: cancelEnd"
+    },
+    "f4-end-compensate": {
+      "zeebe": {
+        "status": "FAILED",
+        "dumpReached": false,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {}
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "work": 1,
+          "f2": 1,
+          "compEnd": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": []
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-end-compensate.1792578637384.bpmn': - Element: ced / - ERROR: The referenced compensation activity 'compHandler' must have either a compensation boundary event or be a subprocess"
     },
     "f4-incident-resolve": {
       "zeebe": {
@@ -887,12 +995,10 @@
     },
     "f4-bnd-cycle-timer": {
       "zeebe": {
-        "status": "LIVE_JOBS",
+        "status": "COMPLETED",
         "dumpReached": true,
         "vars": {},
-        "leftoverJobs": {
-          "afterB": 1
-        },
+        "leftoverJobs": {},
         "jobCounts": {
           "afterB": 3,
           "dump": 1,

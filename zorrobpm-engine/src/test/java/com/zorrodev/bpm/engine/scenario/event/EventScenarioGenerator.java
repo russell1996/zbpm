@@ -76,6 +76,10 @@ public final class EventScenarioGenerator {
         out.add(boundaryDateTimer());
         out.add(incidentResolve());
         out.add(cancelInstance());
+        out.add(endCompensate());
+        out.add(boundaryConditional());
+        out.add(boundaryWithoutEventDefinition());
+        out.add(boundaryDanglingHost());
         return out;
     }
 
@@ -782,6 +786,117 @@ public final class EventScenarioGenerator {
                         EventScenarioAction.complete("dump")),
                 List.of("host", "afterB", DUMP_JOB_TYPE), 8000,
                 "Граница по таймеру-дате в прошлом: срабатывает немедленно.");
+    }
+
+    // ------------------------------------------------------------------
+    // КОНСТРУКЦИИ, КОТОРЫЕ ИНВЕНТАРЬ (ФАЗА 0) ОТМЕТИЛ КАК КАНДИДАТЫ ФАЗЫ 4
+    // ------------------------------------------------------------------
+
+    private static EventScenario endCompensate() {
+        String bpmn = defs("f4EndCompensate", "",
+                start("start", "f1")
+                        + flow("f1", "start", "work")
+                        + svc("work", "work", "f1", "f2")
+                        + flow("f2", "work", "compEnd")
+                        + "<bpmn:endEvent id=\"compEnd\"><bpmn:incoming>f2</bpmn:incoming>"
+                        + "<bpmn:compensateEventDefinition id=\"ced\" activityRef=\"compHandler\" /></bpmn:endEvent>"
+                        + "<bpmn:serviceTask id=\"compHandler\" name=\"compHandler\">"
+                        + "<bpmn:extensionElements><zeebe:taskDefinition type=\"compHandler\" /></bpmn:extensionElements>"
+                        + "</bpmn:serviceTask>");
+        return scenario("f4-end-compensate", "end", "endEvent(compensate)", bpmn,
+                EventScenario.StartMode.PLAIN, null,
+                List.of(EventScenarioAction.complete("work"), EventScenarioAction.waitMs(800),
+                        EventScenarioAction.observe()),
+                List.of("work", "compHandler"), 6000,
+                "End event с компенсацией: инвентарь (ФАЗА 0, §4-7) фиксирует, что на конце "
+                        + "ветки компенсация У НАС НЕ ИСПОЛНЯЕТСЯ (тип элемента остаётся END_EVENT).");
+    }
+
+    private static EventScenario boundaryConditional() {
+        String bpmn = defs("f4BndConditional", "",
+                start("start", "f1")
+                        + flow("f1", "start", "host")
+                        + svc("host", "host", "f1", "f2")
+                        + flow("f2", "host", "endMain")
+                        + end("endMain", "f2")
+                        + "<bpmn:boundaryEvent id=\"bnd\" name=\"bnd\" attachedToRef=\"host\" cancelActivity=\"true\">"
+                        + "<bpmn:outgoing>fB</bpmn:outgoing>"
+                        + "<bpmn:conditionalEventDefinition id=\"ced\"><bpmn:condition xsi:type=\"bpmn:tFormalExpression\">=flag</bpmn:condition></bpmn:conditionalEventDefinition>"
+                        + "</bpmn:boundaryEvent>"
+                        + flow("fB", "bnd", "afterB")
+                        + svc("afterB", "afterB", "fB", "fB2")
+                        + flow("fB2", "afterB", "dump")
+                        + svc("dump", DUMP_JOB_TYPE, "fB2", "f3")
+                        + flow("f3", "dump", "end")
+                        + end("end", "f3"));
+        return scenario("f4-bnd-conditional", "boundary", "boundaryEvent(conditional)", bpmn,
+                EventScenario.StartMode.PLAIN, null,
+                List.of(EventScenarioAction.waitMs(600),
+                        EventScenarioAction.complete("afterB"),
+                        EventScenarioAction.observe(),
+                        EventScenarioAction.complete("dump")),
+                List.of("host", "afterB", DUMP_JOB_TYPE), 6000,
+                "Условная граница: Zeebe 8.5 условные события НЕ ПОДДЕРЖИВАЕТ (отказ на деплое), "
+                        + "у нас поддерживаются — оракула по этому кейсу не существует.");
+    }
+
+    private static EventScenario boundaryWithoutEventDefinition() {
+        String bpmn = defs("f4BndNoEventDef", "",
+                start("start", "f1")
+                        + flow("f1", "start", "host")
+                        + svc("host", "host", "f1", "f2")
+                        + flow("f2", "host", "endMain")
+                        + end("endMain", "f2")
+                        + "<bpmn:boundaryEvent id=\"bnd\" name=\"bnd\" attachedToRef=\"host\" cancelActivity=\"true\">"
+                        + "<bpmn:outgoing>fB</bpmn:outgoing>"
+                        + "</bpmn:boundaryEvent>"
+                        + flow("fB", "bnd", "afterB")
+                        + svc("afterB", "afterB", "fB", "fB2")
+                        + flow("fB2", "afterB", "dump")
+                        + svc("dump", DUMP_JOB_TYPE, "fB2", "f3")
+                        + flow("f3", "dump", "end")
+                        + end("end", "f3"));
+        return scenario("f4-bnd-without-event-definition", "boundary",
+                "boundaryEvent без event-definition (тихий дроп)", bpmn,
+                EventScenario.StartMode.PLAIN, null,
+                List.of(EventScenarioAction.waitMs(600),
+                        EventScenarioAction.complete("afterB"),
+                        EventScenarioAction.observe(),
+                        EventScenarioAction.complete("dump")),
+                List.of("host", "afterB", DUMP_JOB_TYPE), 6000,
+                "Инвентарь (ФАЗА 0, §4-1): граница без исполняемого event-definition У НАС "
+                        + "МОЛЧА ОТБРАСЫВАЕТСЯ (деплой проходит, граница не «взводится» никогда).");
+    }
+
+    private static EventScenario boundaryDanglingHost() {
+        String bpmn = defs("f4BndDanglingHost", "",
+                start("start", "f1")
+                        + flow("f1", "start", "host")
+                        + svc("host", "host", "f1", "f2")
+                        + flow("f2", "host", "endMain")
+                        + end("endMain", "f2")
+                        + "<bpmn:boundaryEvent id=\"bnd\" name=\"bnd\" attachedToRef=\"noSuchHost\" cancelActivity=\"true\">"
+                        + "<bpmn:outgoing>fB</bpmn:outgoing>"
+                        + "<bpmn:timerEventDefinition id=\"ted\"><bpmn:timeDuration xsi:type=\"bpmn:tFormalExpression\">PT1S</bpmn:timeDuration></bpmn:timerEventDefinition>"
+                        + "</bpmn:boundaryEvent>"
+                        + flow("fB", "bnd", "afterB")
+                        + svc("afterB", "afterB", "fB", "fB2")
+                        + flow("fB2", "afterB", "dump")
+                        + svc("dump", DUMP_JOB_TYPE, "fB2", "f3")
+                        + flow("f3", "dump", "end")
+                        + end("end", "f3"));
+        return scenario("f4-bnd-dangling-host", "boundary",
+                "boundaryEvent с attachedToRef на несуществующую activity", bpmn,
+                EventScenario.StartMode.PLAIN, null,
+                List.of(EventScenarioAction.waitMs(1500),
+                        EventScenarioAction.fireTimers(),
+                        EventScenarioAction.waitMs(600),
+                        EventScenarioAction.complete("afterB"),
+                        EventScenarioAction.observe(),
+                        EventScenarioAction.complete("dump")),
+                List.of("host", "afterB", DUMP_JOB_TYPE), 8000,
+                "Инвентарь (ФАЗА 0, §4-18): граница, привязанная к НЕСУЩЕСТВУЮЩЕЙ activity, "
+                        + "у нас деплоится без отказа и никогда не срабатывает.");
     }
 
     // ------------------------------------------------------------------
