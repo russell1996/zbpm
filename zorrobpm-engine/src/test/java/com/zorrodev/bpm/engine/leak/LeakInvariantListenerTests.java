@@ -329,6 +329,10 @@ public class LeakInvariantListenerTests {
         jdbc.update("INSERT INTO parallel_gateways (id, process_instance_id,"
             + " gateway_element_id, entered_flow_id, created_at) VALUES (?,?,?,?,?)",
             UUID.randomUUID(), pi, "joinX", "flowA", Instant.now());
+        // И живая activity: её чистка НЕ в фазе коммита → в @Transactional-тесте
+        // она обязана принуждаться. Мутация «commit-phase расширен на activity»
+        // обязана ронять этот тест.
+        insertLiveActivity(pi, tokenOf(pi));
 
         // Чужой (не allowlisted) test-id: иначеallowlist этого класса забрал бы
         // нарушение в «allowed» и политика не проверялась бы.
@@ -348,8 +352,12 @@ public class LeakInvariantListenerTests {
             .as("этот класс НЕ транзакционный — фаза коммита проходит").isFalse();
         LeakInvariantTestListener.Evaluation transactional =
             LeakInvariantTestListener.evaluate(jdbc, before, testId, true);
-        assertThat(transactional.hard()).extracting(Violation::type).doesNotContain("arrival");
-        assertThat(transactional.commitPhase()).extracting(Violation::type).contains("arrival");
+        assertThat(transactional.hard())
+            .as("живая activity чистится не в фазе коммита → принуждается")
+            .extracting(Violation::type).contains("activity").doesNotContain("arrival");
+        assertThat(transactional.commitPhase())
+            .as("в «commit-phase» попадает ТОЛЬКО arrival")
+            .extracting(Violation::type).contains("arrival").doesNotContain("activity");
 
         LeakInvariantTestListener.Evaluation committed =
             LeakInvariantTestListener.evaluate(jdbc, before, testId, false);
