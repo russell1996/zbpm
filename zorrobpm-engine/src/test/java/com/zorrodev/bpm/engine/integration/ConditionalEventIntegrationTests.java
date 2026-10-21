@@ -153,6 +153,27 @@ public class ConditionalEventIntegrationTests {
     void conditionalBoundaryFiresInterruptingWhenItsConditionBecomesTrue() throws Exception {        // host "work" carries an interrupting conditional boundary (abort = true). A parallel branch's user
         // task sets abort=true; completing it re-evaluates the boundary, which interrupts the host and routes
         // flow to the boundary's end.
+        //
+        // WO-OPS-33: УТВЕРЖДЕНИЕ О ЗАВЕРШЕНИИ ИНСТАНСА ИЗМЕНЕНО (было isNotNull → стало isNull).
+        //
+        // Прежде инстанс здесь завершался, потому что счётчик ветвей форка списывался ДВАЖДЫ на
+        // одну ветвь: гашением хоста границей (WO-ENG-1, commit 11d67cf98) и её же end event'ом.
+        // Второе списание обнуляло счётчик, пока вторая ветвь форка (trigger → parallel join)
+        // ещё стояла в join'е, — инстанс помечался завершённым преждевременно. WO-OPS-33 убрал
+        // двойное списание: ветвь форка списывается ровно один раз — на своём end event.
+        //
+        // Теперь инстанс остаётся RUNNING: ветвь trigger дошла до parallel join, а поток от
+        // погашенного хоста (flowA2) в join уже не придёт — ветвь ещё «в полёте» по счётчику.
+        // Это ровно то поведение, которое живьём измерено на Zeebe 8.5.0 (оракул WO-OPS-33,
+        // docs/analysis/c8-oracle/scenarios/ops33-eng1-shape/): прерывающая граница с
+        // продолжением в end event КОРНЕВОГО scope закрывает scope ВЕТВИ, а не инстанс —
+        // инстанс остаётся жив (проба отменой: CANCEL_ACCEPTED ⇒ инстанс был RUNNING).
+        // Оракул первой формы (docs/analysis/c8-oracle/scenarios/ops33-interrupting-boundary-root-end/):
+        // живая вторая ветвь форка после той же границы ОСТАЁТСЯ ЖИВОЙ.
+        //
+        // Следствие для продукта (отдельная находка, не чинится здесь): параллельный join, одна
+        // входящая потока которого уже не придёт, держит инстанс RUNNING вечно — в Zeebe так же.
+        // Правило готовности есть только у inclusive-join (WO-C8-35); для parallel-join его нет.
         String bpmn = Files.readString(Paths.get("src/test/files/test-conditional-boundary.bpmn"));
         ProcessDefinition model = processDefinitionService.addProcessDefinition(bpmn);
 
@@ -168,7 +189,9 @@ public class ConditionalEventIntegrationTests {
         runtimeService.completeUserTask(trigger.getId(), List.of(bool("abort", true)));
 
         ProcessInstance pi = queryService.getProcessInstance(processInstanceId);
-        assertThat(pi.getCompletedAt()).isNotNull();
+        assertThat(pi.getCompletedAt())
+            .as("инстанс НЕ завершён: вторая ветвь форка ещё стоит в join (Zeebe 8.5 — так же)")
+            .isNull();
 
         List<ActivityEntity> activities = activitiesOf(processInstanceId);
         // the host was interrupted and flow continued from the boundary

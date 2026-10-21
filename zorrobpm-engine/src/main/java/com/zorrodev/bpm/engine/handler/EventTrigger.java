@@ -235,16 +235,32 @@ public class EventTrigger {
             if (cancelingPhaseService.openForActivities(cancelCandidates, boundaryElementId)) {
                 return true;
             }
-            // WO-ENG-1: An interrupting boundary replaces the host's branch path.  The original branch
-            // (e.g. host → join → endEvent) is cancelled; the boundary's continuation (boundary →
-            // boundary-end) takes its place.  Decrement the token's pending_branches counter so that
-            // the single end-event reachable from the boundary correctly completes the instance when
-            // the counter reaches 0.  Without this, a parallel-sibling branch stuck at a join that
-            // the host was meant to arrive at would keep the counter > 0 forever.
-            Token hostToken = dbService.getToken(tokenId);
-            if (hostToken.getPendingBranches() != null && hostToken.getPendingBranches() > 0) {
-                dbService.decrementPendingBranches(tokenId);
-            }
+            // WO-OPS-33: счётчик ветвей форка (tokens.pending_branches) ЗДЕСЬ НЕ списывается.
+            //
+            // Что означает счётчик: сколько ветвей форка ещё «в полёте» на этом токене.
+            // Ветвь заканчивается ровно один раз — на своём end event (FlowNavigator.finishBranch
+            // уменьшает счётчик). Прерывающая граница ветвь НЕ ЗАКАНЧИВАЕТ, а ПЕРЕАДРЕСУЕТ:
+            // активность хоста погашена, но продолжение границы (boundary → … → end event) идёт
+            // дальше по той же ветви и заканчивается ТАМ — на своём end event. Значит ветвь
+            // списывается ровно один раз, и этот раз — на end event продолжения.
+            //
+            // Что было (WO-ENG-1, commit 11d67cf98): здесь счётчик списывался, и end event
+            // продолжения списывал его ВТОРОЙ раз — одна и та же ветвь тратилась дважды. Из-за
+            // этого счётчик обнулялся, пока вторая ветвь форка была ещё жива:
+            //   «All branches consumed, completing instance» → инстанс помечался завершённым,
+            //   а движок затем резюмил припаркованный join и создавал taskAfter В УЖЕ
+            //   ЗАВЕРШЁННОМ инстансе (WO-OPS-33, 217 нарушений инварианта утечек).
+            //
+            // Чем заменено: для inclusive-join случай «ветвь форка застряла на join, которого
+            // она не достигнет» закрывает правило готовности C8-35 (nobody can deliver a branch
+            // any more → join стреляет). Для PARALLEL-join такой готовности нет — там инстанс
+            // остаётся RUNNING с живой ветвью (это отдельный дефект «join ждёт поток, который
+            // не придёт»; раньше он маскировался преждевременным завершением + утечкой —
+            // фикстурой фикса, а не жизнью). Оракул Zeebe 8.5 (WO-OPS-33, docs/analysis/c8-oracle/
+            // scenarios/ops33-interrupting-boundary-root-end): прерывающая граница с продолжением
+            // в end event корневого scope НЕ завершает инстанс — живая вторая ветвь форка
+            // остаётся живой (Zeebe закрывает scope ветви, а не инстанс). Наше поведение после
+            // правки совпадает с оракулом.
             log.info("{}/{}: Boundary {} interrupting host {}", processInstanceId, tokenId, boundaryElementId, host.getBpmnElementId());
             flowNavigator.proceedToOutgoing(processInstanceId, tokenId, bpmn, boundary, executor);
             // WO-C8-35 (CR-09, ШАГ 3/B2): the interrupted host was just DEACTIVATED and may have

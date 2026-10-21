@@ -1,5 +1,6 @@
 package com.zorrodev.bpm.engine.handler;
 
+import com.zorrodev.bpm.contract.model.ProcessInstance;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.engine.bpmn.model.*;
 import com.zorrodev.bpm.engine.dto.Token;
@@ -250,7 +251,20 @@ public class InclusiveGatewayHandler implements ElementHandler, TypedElementHand
         Token resumeToken = tokenId == null ? null : dbService.findToken(tokenId).orElse(null);
         if (resumeToken == null) {
             log.warn("{}/{}: inclusive-join resume skipped — no usable continuation token (requested {})",
-                    processInstanceId, tokenId, tokenId);
+                processInstanceId, tokenId, tokenId);
+            return;
+        }
+        // WO-OPS-33 (п.2 «Что сделать»): терминальный инстанс не получает новых элементов.
+        // Перепроверка припаркованных join'ов идёт и после completeProcessInstance (например,
+        // когда ветвь форка была погашена границей, а счётчик ветвей обнулился) — и тогда
+        // резюм создавал activity/taskAfter В УЖЕ ЗАВЕРШЁННОМ инстансе. Инстанс, у которого
+        // completedAt != null (завершён/отменён), терминален: резюм в нём ничего не создаёт.
+        // Основной фикс — счётчик ветвей не тратится дважды (EventTrigger/CompletionService),
+        // а этот guard — страховка от любого другого пути, который дойдёт до резюма позже.
+        ProcessInstance instance = dbService.getProcessInstance(processInstanceId);
+        if (instance != null && instance.getCompletedAt() != null) {
+            log.warn("{}/{}: inclusive-join resume skipped — instance is already terminal (completedAt={})",
+                processInstanceId, tokenId, instance.getCompletedAt());
             return;
         }
         Set<String> firedInPass = new HashSet<>();

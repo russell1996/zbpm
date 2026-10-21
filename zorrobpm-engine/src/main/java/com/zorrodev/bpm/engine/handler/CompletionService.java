@@ -1194,10 +1194,13 @@ public class CompletionService {
         if (deferredBoundary != null) {
             if (!dbService.hasOpenCancelingListenerPhaseOnToken(resumeToken)) {
                 BpmnElementModel boundaryElement = bpmn.getElement(deferredBoundary);
-                Token resumeHostToken = dbService.getToken(resumeToken);
-                if (resumeHostToken.getPendingBranches() != null && resumeHostToken.getPendingBranches() > 0) {
-                    dbService.decrementPendingBranches(resumeToken);
-                }
+                // WO-OPS-33: счётчик ветвей форка здесь НЕ списывается — ровно как и в
+                // EventTrigger.fireBoundary (недеферерентный хвост той же границы). Ветвь,
+                // погашенная границей, не закончена: её продолжение идёт дальше и заканчивается
+                // на СВОЁМ end event, который и списывает счётчик (FlowNavigator.finishBranch).
+                // Списание здесь + списание на end event = одна ветвь потрачена дважды ⇒ счётчик
+                // обнулялся при живой второй ветви форка ⇒ инстанс завершался преждевременно, а
+                // движок затем создавал activity в уже завершённом инстансе (WO-OPS-33).
                 flowNavigator.proceedToOutgoing(resumePi, resumeToken, bpmn, boundaryElement, executor);
                 // WO-C8-35 (CR-09) раунд 6 (BLOCKER-5): хост этой границы погиб ЕЩЁ В
                 // EventTrigger.fireBoundary, а хвост границы отложен canceling-фазой до последнего

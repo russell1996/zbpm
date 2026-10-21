@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-33 (вторая проба оракула): ТОЧНАЯ форма ENG-1 — прерывающая граница на хосте,
+     вторая ветвь форка УЖЕ завершена и стоит в PARALLEL-join, который никогда не сработает
+     (поток от погашенного хоста не придёт). Что делает Zeebe 8.5: завершает инстанс или
+     оставляет его RUNNING (ветвь форка «мёртвая», но её ждёт join)?
+
+     Отличие от первой пробы (ops33-interrupting-boundary-root-end): там вторая ветвь была ЖИВА
+     (задача), здесь она завершена и висит в join. Именно эта форма закреплена существующим
+     тестом ConditionalEventIntegrationTests#conditionalBoundaryFiresInterruptingWhenItsConditionBecomesTrue
+     (WO-ENG-1), который требует, чтобы инстанс ЗАВЕРШИЛСЯ.
+
+     Наблюдение: после срабатывания границы состояние инстанса проверяется вызовом
+     CancelProcessInstance — на ЗАВЕРШЁННОМ инстансе Zeebe отвечает ошибкой, на RUNNING — нет. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_ops33b" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="ops33Eng1" name="ops33Eng1" isExecutable="true">
+    <bpmn:startEvent id="start" name="start">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="pfork" />
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fB</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fA" sourceRef="pfork" targetRef="hostTask" />
+    <bpmn:serviceTask id="hostTask" name="hostTask">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ops33bHost" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:outgoing>fA2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="fA2" sourceRef="hostTask" targetRef="join" />
+    <bpmn:boundaryEvent id="ops33bBnd" name="ops33bBnd" attachedToRef="hostTask" cancelActivity="true">
+      <bpmn:outgoing>fBnd</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="ops33bBndDef">
+        <bpmn:timeDuration>PT1S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fBnd" sourceRef="ops33bBnd" targetRef="boundaryEnd" />
+    <bpmn:endEvent id="boundaryEnd" name="boundaryEnd">
+      <bpmn:incoming>fBnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="fB" sourceRef="pfork" targetRef="triggerTask" />
+    <bpmn:serviceTask id="triggerTask" name="triggerTask">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ops33bTrigger" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fB</bpmn:incoming>
+      <bpmn:outgoing>fB2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="fB2" sourceRef="triggerTask" targetRef="join" />
+    <bpmn:parallelGateway id="join" name="join">
+      <bpmn:incoming>fA2</bpmn:incoming>
+      <bpmn:incoming>fB2</bpmn:incoming>
+      <bpmn:outgoing>fOut</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fOut" sourceRef="join" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fOut</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

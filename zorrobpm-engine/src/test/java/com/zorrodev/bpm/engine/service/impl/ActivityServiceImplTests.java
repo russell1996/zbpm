@@ -868,11 +868,8 @@ public class ActivityServiceImplTests {
         when(bpmnService.getProcessDefinitionModelById(processDefinitionId)).thenReturn(bpmn);
         when(dbService.createActivity(processInstanceId, token, bpmn.getElement("escalationEnd"))).thenReturn(UUID.randomUUID());
         when(dbService.createActivity(processInstanceId, token, bpmn.getFlow("flowB"))).thenReturn(UUID.randomUUID());
-        // EventTrigger.fireBoundary now calls dbService.getToken (WO-ENG-1): linear path => pendingBranches = null
-        Token hostTokenDto = new Token();
-        hostTokenDto.setId(token);
-        hostTokenDto.setPendingBranches(null);
-        when(dbService.getToken(token)).thenReturn(hostTokenDto);
+        // WO-OPS-33: fireBoundary больше НЕ читает токен хоста — счётчик ветвей форка на
+        // прерывающей границе не списывается (его списывает end event продолжения границы).
 
         activityService.fireBoundaryTimer(hostActivityId, "boundary1");
 
