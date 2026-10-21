@@ -1,0 +1,660 @@
+{
+  "campaign": "WO-OPS-28 ФАЗА 1 — «Задачи и данные»: service/user/script/business-rule/send/receive, ioMapping, FEEL, переменные скоупа, correlation message",
+  "oracle": "Zeebe 8.5.0 (живой оракул, docs/analysis/c8-oracle/ops28-phase1-oracle.js)",
+  "generatedBy": "docs/analysis/c8-oracle/ops28-phase1-gen.js",
+  "cases": [
+    {
+      "id": "svc-completion-vars",
+      "element": "serviceTask",
+      "title": "переменные завершения service task попадают в scope процесса",
+      "docs": "8.9 variables: variables completed with a job are merged into the containing scope (the process scope at root level)",
+      "processId": "p1_svc_completion_vars",
+      "bpmn": "ops28-phase1/svc-completion-vars.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "work",
+          "kind": "service",
+          "jobType": "p1_svc_completion_vars_work",
+          "vars": {
+            "c": "C"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_svc_completion_vars_dump",
+      "observeWork": false
+    },
+    {
+      "id": "svc-no-completion-vars",
+      "element": "serviceTask",
+      "title": "service task без переменных завершения не добавляет переменных",
+      "docs": "8.9 variables: completing a job without variables leaves the scope unchanged",
+      "processId": "p1_svc_no_completion_vars",
+      "bpmn": "ops28-phase1/svc-no-completion-vars.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "work",
+          "kind": "service",
+          "jobType": "p1_svc_no_completion_vars_work",
+          "vars": {}
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_svc_no_completion_vars_dump",
+      "observeWork": false
+    },
+    {
+      "id": "svc-job-vars-scope",
+      "element": "serviceTask",
+      "title": "payload задания service task = переменные видимого scope",
+      "docs": "8.9 jobs: an activated job carries the variables of the element scope (all visible variables)",
+      "processId": "p1_svc_job_vars_scope",
+      "bpmn": "ops28-phase1/svc-job-vars-scope.bpmn",
+      "vars": {
+        "a": 1,
+        "s": "text"
+      },
+      "drive": [
+        {
+          "element": "work",
+          "kind": "service",
+          "jobType": "p1_svc_job_vars_scope_work",
+          "vars": {}
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_svc_job_vars_scope_dump",
+      "observeWork": true
+    },
+    {
+      "id": "svc-io-input-local",
+      "element": "serviceTask",
+      "title": "ioMapping input создаёт ЛОКАЛЬНУЮ переменную элемента (в root не попадает)",
+      "docs": "8.9 variables: input mappings create variables in the element scope; they are not propagated to the parent scope",
+      "processId": "p1_svc_io_input_local",
+      "bpmn": "ops28-phase1/svc-io-input-local.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "work",
+          "kind": "service",
+          "jobType": "p1_svc_io_input_local_work",
+          "vars": {}
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_svc_io_input_local_dump",
+      "observeWork": true
+    },
+    {
+      "id": "svc-io-output-root",
+      "element": "serviceTask",
+      "title": "ioMapping output продвигает переменную в родительский scope; сырые переменные завершения — нет",
+      "docs": "8.9 variables: output mappings write to the parent scope; raw completion variables of a task with output mappings stay element-local",
+      "processId": "p1_svc_io_output_root",
+      "bpmn": "ops28-phase1/svc-io-output-root.bpmn",
+      "vars": {},
+      "drive": [
+        {
+          "element": "work",
+          "kind": "service",
+          "jobType": "p1_svc_io_output_root_work",
+          "vars": {
+            "c": "C"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_svc_io_output_root_dump",
+      "observeWork": false
+    },
+    {
+      "id": "usr-completion-vars",
+      "element": "userTask",
+      "title": "переменные завершения user task попадают в scope процесса",
+      "docs": "8.9 user task: variables completed with the task are merged into the process scope",
+      "processId": "p1_usr_completion_vars",
+      "bpmn": "ops28-phase1/usr-completion-vars.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "ut",
+          "kind": "user",
+          "jobType": "io.camunda.zeebe:userTask",
+          "vars": {
+            "d": "D"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_usr_completion_vars_dump",
+      "observeWork": false
+    },
+    {
+      "id": "usr-job-vars-scope",
+      "element": "userTask",
+      "title": "payload задания user task = переменные видимого scope",
+      "docs": "8.9 user task: the user task job carries the variables of the element scope",
+      "processId": "p1_usr_job_vars_scope",
+      "bpmn": "ops28-phase1/usr-job-vars-scope.bpmn",
+      "vars": {
+        "a": 1,
+        "s": "text"
+      },
+      "drive": [
+        {
+          "element": "ut",
+          "kind": "user",
+          "jobType": "io.camunda.zeebe:userTask",
+          "vars": {}
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_usr_job_vars_scope_dump",
+      "observeWork": true
+    },
+    {
+      "id": "usr-io-mapping-local",
+      "element": "userTask",
+      "title": "ioMapping input на user task: локальная переменная элемента не выходит в root",
+      "docs": "8.9 variables: input mappings create variables in the element scope; a user task scope is destroyed on completion",
+      "processId": "p1_usr_io_mapping_local",
+      "bpmn": "ops28-phase1/usr-io-mapping-local.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "ut",
+          "kind": "user",
+          "jobType": "io.camunda.zeebe:userTask",
+          "vars": {}
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_usr_io_mapping_local_dump",
+      "observeWork": false
+    },
+    {
+      "id": "scr-feel-expression",
+      "element": "scriptTask",
+      "title": "zeebe:script (FEEL) пишет resultVariable в scope процесса",
+      "docs": "8.9 script task: a script task evaluates a FEEL expression and stores the result in the result variable",
+      "processId": "p1_scr_feel_expression",
+      "bpmn": "ops28-phase1/scr-feel-expression.bpmn",
+      "vars": {
+        "a": 2,
+        "b": 3
+      },
+      "drive": [
+        {
+          "element": "scr",
+          "kind": "auto"
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_scr_feel_expression_dump",
+      "observeWork": false
+    },
+    {
+      "id": "scr-inline-script",
+      "element": "scriptTask",
+      "title": "инлайн-<script> (scriptFormat) — поддержка неодинакова",
+      "docs": "8.9 script task: the script task is defined by zeebe:script with a FEEL expression; inline <script> bodies are not part of the Camunda 8 model",
+      "processId": "p1_scr_inline_script",
+      "bpmn": "ops28-phase1/scr-inline-script.bpmn",
+      "vars": {
+        "a": 2,
+        "b": 3
+      },
+      "drive": [
+        {
+          "element": "scr",
+          "kind": "auto"
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_scr_inline_script_dump",
+      "observeWork": false
+    },
+    {
+      "id": "scr-runtime-error",
+      "element": "scriptTask",
+      "title": "ошибка FEEL-выражения в script task: инцидент и парковка инстанса",
+      "docs": "8.9 incidents: a failing job raises an incident and the process instance waits there",
+      "processId": "p1_scr_runtime_error",
+      "bpmn": "ops28-phase1/scr-runtime-error.bpmn",
+      "vars": {},
+      "drive": [
+        {
+          "element": "scr",
+          "kind": "auto"
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_scr_runtime_error_dump",
+      "observeWork": false
+    },
+    {
+      "id": "scr-runtime-error-type",
+      "element": "scriptTask",
+      "title": "ошибка типа в FEEL-выражении script task: инцидент и парковка инстанса",
+      "docs": "8.9 incidents: a failing job raises an incident and the process instance waits there",
+      "processId": "p1_scr_runtime_error_type",
+      "bpmn": "ops28-phase1/scr-runtime-error-type.bpmn",
+      "vars": {},
+      "drive": [
+        {
+          "element": "scr",
+          "kind": "auto"
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_scr_runtime_error_type_dump",
+      "observeWork": false
+    },
+    {
+      "id": "brt-dmn",
+      "element": "businessRuleTask",
+      "title": "zeebe:calledDecision (DMN) пишет resultVariable в scope процесса",
+      "docs": "8.9 business rule task: the decision result is stored in the result variable",
+      "processId": "p1_brt_dmn",
+      "bpmn": "ops28-phase1/brt-dmn.bpmn",
+      "vars": {
+        "category": "gold"
+      },
+      "drive": [
+        {
+          "element": "brt",
+          "kind": "auto"
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_brt_dmn_dump",
+      "observeWork": false,
+      "dmn": "ops28-phase1/discount.dmn"
+    },
+    {
+      "id": "brt-feel-expression",
+      "element": "businessRuleTask",
+      "title": "business rule task с FEEL-выражением (zeebe:script) — поддержка неодинакова",
+      "docs": "8.9 business rule task: the task is bound to a DMN decision (zeebe:calledDecision); a bare FEEL expression (zeebe:script) is not part of the Camunda 8 model",
+      "processId": "p1_brt_feel_expression",
+      "bpmn": "ops28-phase1/brt-feel-expression.bpmn",
+      "vars": {
+        "a": 2
+      },
+      "drive": [
+        {
+          "element": "brt",
+          "kind": "auto"
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_brt_feel_expression_dump",
+      "observeWork": false
+    },
+    {
+      "id": "brt-missing-decision",
+      "element": "businessRuleTask",
+      "title": "ссылка на несуществующее DMN-решение: инцидент, инстанс паркуется",
+      "docs": "8.9 incidents: a failing business rule task raises an incident",
+      "processId": "p1_brt_missing_decision",
+      "bpmn": "ops28-phase1/brt-missing-decision.bpmn",
+      "vars": {},
+      "drive": [
+        {
+          "element": "brt",
+          "kind": "auto"
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_brt_missing_decision_dump",
+      "observeWork": false
+    },
+    {
+      "id": "snd-message-throw",
+      "element": "sendTask",
+      "title": "send task в форме BPMN messageRef бросает сообщение живому получателю",
+      "docs": "8.9 send task: a send task throws a message; the message variables are merged into the receiving scope. Camunda 8.5 expresses this with zeebe:publishMessage, not with the BPMN messageRef attribute",
+      "processId": "p1_snd_message_throw",
+      "bpmn": "ops28-phase1/snd-message-throw.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "snd",
+          "kind": "auto"
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_snd_message_throw_dump",
+      "observeWork": false
+    },
+    {
+      "id": "snd-publish-message",
+      "element": "sendTask",
+      "title": "send task в форме Camunda 8.5 (zeebe:publishMessage) бросает сообщение живому получателю",
+      "docs": "8.9 send task: zeebe:publishMessage publishes a message (correlationKey — имя переменной); the message variables are merged into the receiving scope",
+      "processId": "p1_snd_publish_message",
+      "bpmn": "ops28-phase1/snd-publish-message.bpmn",
+      "vars": {
+        "a": 1,
+        "k": "k1"
+      },
+      "drive": [
+        {
+          "element": "snd",
+          "kind": "auto"
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_snd_publish_message_dump",
+      "observeWork": false
+    },
+    {
+      "id": "snd-job-worker",
+      "element": "sendTask",
+      "title": "send task с zeebe:taskDefinition — это job-задача воркеру",
+      "docs": "8.9 send task: a send task with a task definition is a job worker; without it the task throws a message",
+      "processId": "p1_snd_job_worker",
+      "bpmn": "ops28-phase1/snd-job-worker.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "snd",
+          "kind": "service",
+          "jobType": "p1_snd_job_worker_snd",
+          "vars": {
+            "s": "S"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_snd_job_worker_dump",
+      "observeWork": false
+    },
+    {
+      "id": "rcv-message-catch",
+      "element": "receiveTask",
+      "title": "receive task ждёт сообщение; опубликованные переменные попадают в scope",
+      "docs": "8.9 receive task: a receive task waits for a message; the message variables are merged into the scope",
+      "processId": "p1_rcv_message_catch",
+      "bpmn": "ops28-phase1/rcv-message-catch.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "rcv",
+          "kind": "message",
+          "message": "note",
+          "key": "k1",
+          "vars": {
+            "m": "M"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_rcv_message_catch_dump",
+      "observeWork": false
+    },
+    {
+      "id": "rcv-correlation-key-match",
+      "element": "receiveTask",
+      "title": "correlationKey подписки совпал — сообщение коррелирует",
+      "docs": "8.9 messages: a subscription with a correlation key only receives a message whose correlation key matches",
+      "processId": "p1_rcv_correlation_key_match",
+      "bpmn": "ops28-phase1/rcv-correlation-key-match.bpmn",
+      "vars": {
+        "orderId": "A"
+      },
+      "drive": [
+        {
+          "element": "rcv",
+          "kind": "message",
+          "message": "orderUpdate",
+          "key": "A",
+          "vars": {
+            "m": "M"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_rcv_correlation_key_match_dump",
+      "observeWork": false
+    },
+    {
+      "id": "rcv-correlation-key-miss",
+      "element": "receiveTask",
+      "title": "correlationKey подписки не совпал — сообщение не коррелирует, инстанс ждёт",
+      "docs": "8.9 messages: a message with a non-matching correlation key is not correlated with the subscription",
+      "processId": "p1_rcv_correlation_key_miss",
+      "bpmn": "ops28-phase1/rcv-correlation-key-miss.bpmn",
+      "vars": {
+        "orderId": "A"
+      },
+      "drive": [
+        {
+          "element": "rcv",
+          "kind": "message",
+          "message": "orderUpdate",
+          "key": "B",
+          "vars": {
+            "m": "M"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_rcv_correlation_key_miss_dump",
+      "observeWork": false
+    },
+    {
+      "id": "rcv-message-no-key",
+      "element": "receiveTask",
+      "title": "сообщение без correlation key не коррелирует с подпиской, у которой ключ задан",
+      "docs": "8.9 messages: a message is correlated by its correlation key; a message published without a key does not match a keyed subscription",
+      "processId": "p1_rcv_message_no_key",
+      "bpmn": "ops28-phase1/rcv-message-no-key.bpmn",
+      "vars": {
+        "orderId": "A"
+      },
+      "drive": [
+        {
+          "element": "rcv",
+          "kind": "message",
+          "message": "orderUpdate",
+          "key": null,
+          "vars": {
+            "m": "M"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_rcv_message_no_key_dump",
+      "observeWork": false
+    },
+    {
+      "id": "snd-intermediate-throw",
+      "element": "intermediateThrowEvent",
+      "title": "бросок сообщения через intermediate throw event — форма, рабочая в Camunda 8.5",
+      "docs": "8.9 message events: an intermediate message throw event publishes a message; the message variables are merged into the receiving scope",
+      "processId": "p1_snd_intermediate_throw",
+      "bpmn": "ops28-phase1/snd-intermediate-throw.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "thr",
+          "kind": "auto"
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_snd_intermediate_throw_dump",
+      "observeWork": false
+    },
+    {
+      "id": "scope-callactivity-propagate",
+      "element": "callActivity",
+      "title": "call activity: переменные дочернего инстанса пропагаются в родителя (по умолчанию)",
+      "docs": "8.9 call activity: by default all variables of the called process are propagated back to the caller",
+      "processId": "p1_scope_callactivity_propagate",
+      "bpmn": "ops28-phase1/scope-callactivity-propagate.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "call",
+          "kind": "auto"
+        },
+        {
+          "element": "cWork",
+          "kind": "service",
+          "anyPi": true,
+          "jobType": "p1_child_propagate_work",
+          "vars": {
+            "c": "C"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_scope_callactivity_propagate_dump",
+      "observeWork": false,
+      "child": {
+        "id": "p1_child_propagate",
+        "bpmn": "ops28-phase1/p1_child_propagate.bpmn"
+      }
+    },
+    {
+      "id": "scope-callactivity-nopropagate",
+      "element": "callActivity",
+      "title": "call activity: propagateAllChildVariables=false — переменные дочернего инстанса не пропагают",
+      "docs": "8.9 call activity: propagateAllChildVariables=false disables the propagation of the child variables",
+      "processId": "p1_scope_callactivity_nopropagate",
+      "bpmn": "ops28-phase1/scope-callactivity-nopropagate.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "call",
+          "kind": "auto"
+        },
+        {
+          "element": "cWork",
+          "kind": "service",
+          "anyPi": true,
+          "jobType": "p1_child_nopropagate_work",
+          "vars": {
+            "c": "C"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_scope_callactivity_nopropagate_dump",
+      "observeWork": false,
+      "child": {
+        "id": "p1_child_nopropagate",
+        "bpmn": "ops28-phase1/p1_child_nopropagate.bpmn"
+      }
+    },
+    {
+      "id": "scope-callactivity-input-mapping",
+      "element": "callActivity",
+      "title": "call activity: propagateAllParentVariables=false + ioMapping input — ребёнок видит только смэпленное",
+      "docs": "8.9 call activity: with propagateAllParentVariables=false only the input-mapped variables are passed to the called process",
+      "processId": "p1_scope_callactivity_input_mapping",
+      "bpmn": "ops28-phase1/scope-callactivity-input-mapping.bpmn",
+      "vars": {
+        "a": 1,
+        "b": 2
+      },
+      "drive": [
+        {
+          "element": "call",
+          "kind": "auto"
+        },
+        {
+          "element": "cWork",
+          "kind": "service",
+          "anyPi": true,
+          "jobType": "p1_child_inputmap_work",
+          "vars": {}
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_scope_callactivity_input_mapping_dump",
+      "observeWork": true,
+      "observeElement": "cWork",
+      "child": {
+        "id": "p1_child_inputmap",
+        "bpmn": "ops28-phase1/p1_child_inputmap.bpmn"
+      }
+    },
+    {
+      "id": "scope-subprocess-local",
+      "element": "subProcess",
+      "title": "подпроцесс: переменная, созданная внутри, не выходит в родительский scope",
+      "docs": "8.9 subprocess: the subprocess has its own scope; variables created inside are removed when it ends unless mapped out",
+      "processId": "p1_scope_subprocess_local",
+      "bpmn": "ops28-phase1/scope-subprocess-local.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "sp",
+          "kind": "auto"
+        },
+        {
+          "element": "spWork",
+          "kind": "service",
+          "jobType": "p1_scope_subprocess_local_work",
+          "vars": {
+            "inner": "I"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_scope_subprocess_local_dump",
+      "observeWork": false
+    },
+    {
+      "id": "svc-task-headers",
+      "element": "serviceTask",
+      "title": "zeebe:taskHeaders — заголовки задания (поддержка зависит от версии)",
+      "docs": "8.9 jobs: custom task headers are carried by the job (Camunda 8.6+ feature; 8.5 support measured)",
+      "processId": "p1_svc_task_headers",
+      "bpmn": "ops28-phase1/svc-task-headers.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "work",
+          "kind": "service",
+          "jobType": "p1_svc_task_headers_work",
+          "vars": {}
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_svc_task_headers_dump",
+      "observeWork": true
+    }
+  ]
+}
