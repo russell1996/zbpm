@@ -24,7 +24,7 @@ JS-объект `variables` теряет точность int64 (см. `num-larg
 | 2 | <code>num-double</code> | FEEL number supports decimals | <code>completed: work {"r":1.5} \| dump {}</code> | <code>completed: work {r=DOUBLE:1.5} \| dump {}</code> | <code>completed: work {r=DOUBLE:1.5} \| dump {}</code> | **match** |
 | 3 | <code>num-trailing-zero</code> | number 1.0 — Camunda keeps it a number; JSON representation is measured | <code>completed: work {"r":1} \| dump {}</code> | <code>completed: work {r=LONG:1} \| dump {}</code> | <code>completed: work {r=LONG:1} \| dump {}</code> | **match** |
 | 4 | <code>num-large-long</code> | 8.9 data types: FEEL numbers are BigDecimal with 34 digits (not IEEE double); no precision loss | <code>completed: work {"r":9007199254740993} \| dump {}</code> | <code>completed: work {r=LONG:9007199254740993} \| dump {}</code> | <code>completed: work {r=LONG:9007199254740993} \| dump {}</code> | **match** — raw int64 exact (`variablesRaw`); JS `variables` loses precision |
-| 5 | <code>num-above-long</code> | 8.9 data types: FEEL numbers are BigDecimal with 34 digits; no documented Long limit | <code>completed: work {"r":-9223372036854775808} \| dump {}</code> | <code>startError: ArithmeticException: Overflow</code> | <code>startError: ArithmeticException: Overflow</code> | **ours differs** — live wraps to Long.MIN; ours `startError: ArithmeticException: Overflow` (no incident) |
+| 5 | <code>num-above-long</code> | 8.9 data types: FEEL numbers are BigDecimal with 34 digits; no documented Long limit | <code>completed: work {"r":-9223372036854775808} \| dump {}</code> | <code>startError: ArithmeticException: Overflow</code> | <code>startError: ArithmeticException: Overflow</code> | **ours differs** — **by design** (решение maintainer 2026-10-21): live 8.5 тихо заворачивает в Long.MIN, ours — `startError: ArithmeticException: Overflow` (инцидент, без тихого wrap) |
 | 6 | <code>num-div</code> | 8.9 data types: FEEL numbers are BigDecimal; division returns a number (wire representation measured) | <code>completed: work {"r":0.3333333333333333} \| dump {}</code> | <code>completed: work {r=DOUBLE:0.3333333333333333333333333333333333} \| dump {}</code> | <code>completed: work {r=DOUBLE:0.3333333333333333333333333333333333} \| dump {}</code> | **match** — same IEEE-754 wire value; canonical Decimal differs (ours 34 digits vs live 16) |
 | 7 | <code>num-decimal-sum</code> | FEEL decimal arithmetic (not binary floating point) | <code>completed: work {"r":0.3} \| dump {}</code> | <code>completed: work {r=DOUBLE:0.3} \| dump {}</code> | <code>completed: work {r=DOUBLE:0.3} \| dump {}</code> | **match** |
 | 8 | <code>num-round</code> | 8.9 numeric built-ins list: no round() function (unknown-function policy is measured) | <code>completed: work {"r":null} \| dump {}</code> | <code>completed: work {r=JSON:null}</code> | <code>completed: work {r=JSON:null}</code> | **match** (WO-C8-54) — unknown function → null VALUE (job created, no incident) — both profiles follow live 8.5 |
@@ -227,7 +227,7 @@ expression must start with '=' (e.g. '=hello')»).
 - `num-large-long` — сравнение только по `variablesRaw`; JS `variables.r` равен `9007199254740992` из-за `JSON.parse`, это дефект измерения, а не поведение Zeebe.
 - `empty-source` — 8.9 говорит «optional source → null», живой 8.5 отвергает деплой; наше поведение (runtime-reject) ближе к 8.5 по факту отказа, но не по фазе. Это цель дизайна/решение владельца, не баг-фикс Ф1.
 - `eq-only` — 8.9 требует выражение после `=`, живой 8.5 считает `=` статической строкой (completes с `r="="`); наше поведение следует 8.9 (отказ) — после WO-C8-56 (2026-10-19) отказ на деплое (400 INVALID_FEEL_EXPRESSION), раньше был в runtime.
-- Все `ours differs` — кандидаты в отдельные баг-WO; в Ф1 ядро не правилось (V7/план кампании).
+- Все `ours differs` — кандидаты в отдельные баг-WO; в Ф1 ядро не правилось (V7/план кампании). Исключение, снятое решением владельца: `num-above-long` — **by design, ours differs** (решение maintainer 2026-10-21, WO-AUDIT-17 п.3; тихое переполнение Zeebe 8.5 воспроизводить нельзя — см. примечание ниже).
 - **Условия гейтвеев (WO-C8-54) — отдельный корень, НЕ починен в этом WO.** Наш путь условий
   (`FlowNavigator.processFlow:489` → `scriptService.evaluateScript`) оценивает условие FEEL-**unary-test**
   движком (`ScriptEngineConfiguration.feelScriptEngine` = `FeelUnaryTestsScriptEngineFactory`), а не полным
@@ -244,13 +244,15 @@ expression must start with '=' (e.g. '=hello')»).
   (в Zeebe — берёт). Это ПРЕ-существующий дефект маршрутизации (не следствие фикса C8-54: путь условий
   фикс не трогает) — V7, в этот WO не входит; требует отдельного WO (правка меняет маршрутизацию
   развёрнутых определений — эскалация владельцу). Строки 73–84 матрицы — его доказательства.
-- **`num-above-long` (корень 7 Ф1) — открытый вопрос, не починен (WO-C8-54, п. «делай последним и только
-  если без хаков»).** Live 8.5: `9223372036854775808` → `-9223372036854775808` (усечение long, как
+- **`num-above-long` (корень 7 Ф1) — РЕШЕНО 2026-10-21 (maintainer): «by design, ours differs» (WO-AUDIT-17 п.3).**
+  Live 8.5: `9223372036854775808` → `-9223372036854775808` (усечение long, как
   `longValue()`), 8.9 docs — BigDecimal без предела. Наш движок: `ArithmeticException: Overflow` →
-  `EngineException` (явный отказ, WO-ENG-21 N10 — тихое усечение запрещено осознанно). Воспроизвести
-  live-значение = вернуть именно то усечение, которое WO-ENG-21 запретил; альтернатива — хранить
-  длинные целые как JSON-число (BigDecimal) — это отдельное решение по модели переменных. Решение — за
-  владельцем (в отчёте WO-C8-54 §7).
+  `EngineException` (явный отказ, WO-ENG-21 N10 — тихое усечение запрещено осознанно).
+  **Основание решения:** тихое целочисленное переполнение — дефект Zeebe 8.5 (8.9-документация обещает
+  BigDecimal, т.е. 8.5 ведёт себя вопреки собственной спецификации); воспроизводить его значило бы
+  сознательно вносить порчу данных. Альтернатива «хранить длинные целые как JSON-число (BigDecimal)» —
+  отдельное решение по модели переменных, в этот WO не входит. Строка матрицы №5 помечена «by design»
+  (вердикт `ours differs` остаётся: расхождение с живым 8.5 зафиксировано, но оно НЕ дефект).
 
 ## Воспроизведение
 

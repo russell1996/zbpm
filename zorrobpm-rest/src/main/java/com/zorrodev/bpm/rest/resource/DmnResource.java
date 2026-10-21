@@ -8,6 +8,7 @@ import com.zorrodev.bpm.contract.model.DmnDecision;
 import com.zorrodev.bpm.engine.security.Principal;
 import com.zorrodev.bpm.engine.service.AuditLogService;
 import com.zorrodev.bpm.engine.service.DmnService;
+import io.swagger.v3.oas.annotations.Operation;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -55,6 +56,12 @@ public class DmnResource implements DmnContract {
      * WO-SEC-40: throws 404 if the current principal cannot access the decision's owning
      * process definition. 404 (not 403) keeps decision existence hidden from unauthorized
      * principals (same pattern as ProcessDefinitionResource.requirePdAccess).
+     *
+     * <p>WO-AUDIT-17 (аудит F-21): это ДВЕ ПОЛИТИКИ, и их нельзя смешивать.
+     * Определения (в том числе DMN-решения) видны по ADR-8 §1 —
+     * {@code visibleDefinitionIds}; runtime-данные инстансов — по
+     * {@code readableRuntimePdIds}. Этот гейт спрашивает про ОПРЕДЕЛЕНИЕ,
+     * поэтому он и спрашивает {@code visibleDefinitionIds}.
      */
     private void requireDecisionAccess(String decisionId) {
         Collection<UUID> allowed = resolveAllowedPdIds();
@@ -157,6 +164,57 @@ public class DmnResource implements DmnContract {
         }
     }
 
+    /**
+     * DMN evaluate — <b>ЧТЕНИЕ ОПРЕДЕЛЕНИЯ</b> (политика зафиксирована решением maintainer
+     * 2026-10-21, аудит F-21; оформлена и закреплена тестом в WO-AUDIT-17).
+     *
+     * <p><b>Что делает.</b> evaluate — ЧИСТАЯ ФУНКЦИЯ над переданными переменными:
+     * читает опубликованное ОПРЕДЕЛЕНИЕ решения (строку {@code dmn_definitions}) и считает
+     * таблицу решений в FEEL. Побочных эффектов нет: данные инстансов evaluate НЕ читает
+     * и НЕ пишет. Это видно и по поверхности эндпоинта (во входе нет ссылки на инстанс),
+     * и по коду: {@code DmnService.evaluate(decisionId, variables)} ходит только в
+     * {@code dmn_definitions} (см. {@code DmnServiceImpl.evaluateEntity}).
+     *
+     * <p><b>Кто может вызвать.</b> Видимость ОПРЕДЕЛЕНИЙ — ADR-8 §1
+     * ({@link EventAuthzResolver#visibleDefinitionIds}):
+     * <ul>
+     *   <li>{@code UserPrincipal} — обычный аутентифицированный пользователь, в том числе
+     *       НЕ участник процесса: видит ВСЕ определения (ADR-8 §1: «видит все процессы» =
+     *       только определения; runtime-данные чужих процессов не видны) → 200 + результат;</li>
+     *   <li>{@code ServicePrincipal} (API-ключ) — видимость остаётся grant-scoped: тот же
+     *       резолвер, что {@code readableRuntimePdIds} (для сервисного ключа обе ветки
+     *       ADR-8 дают одно и то же множество — гранты владельца ключа). Нет гранта на
+     *       процесс-владелец решения → 404 (существование решения скрыто);</li>
+     *   <li>{@code SUPER_ADMIN} — видит всё;</li>
+     *   <li>без аутентификации — 401.</li>
+     * </ul>
+     *
+     * <p><b>Почему так.</b> DMN-решение — исполняемая логика ВЛАДЕЛЬЦА модели, а не данные
+     * его процессов: подстановка чужих переменных не раскрывает чужих данных — данных
+     * инстансов evaluate не видит вообще. Переход на runtime-семантику
+     * ({@code readableRuntimePdIds}) ломал бы консьюмерские вызовы без выигрыша по
+     * безопасности — решение maintainer 2026-10-21 (F-21). Расход CPU на вычисление закрыт
+     * rate-limit'ом ({@code /dmn} — DATA-бакет, WO-AUDIT-13) и лимитом размера запроса
+     * (5 МБ, {@code DeployDmnDTO.MAX_DMN_LENGTH}).
+     *
+     * <p>Политика продублирована в {@code docs/reference/security.md}; закреплена тестом
+     * {@code DmnEvaluatePolicyIntegrationTests} (WO-AUDIT-17).
+     */
+    @Operation(summary = "Evaluate a DMN decision (reading a definition)",
+        description = """
+            Evaluates a deployed DMN decision as a PURE FUNCTION over the variables passed in \
+            the request: the decision DEFINITION is read, process-instance data is neither read \
+            nor written.
+
+            Authorization follows ADR-8 §1 (definition visibility, \
+            EventAuthzResolver.visibleDefinitionIds): any authenticated UserPrincipal may read \
+            every definition, including a decision of a process it is not a member of (200 + \
+            result). A ServicePrincipal (API key) stays grant-scoped — the same resolution as \
+            readableRuntimePdIds: no grant on the process owning the decision → 404 (existence \
+            hidden). SUPER_ADMIN sees all; an unauthenticated call → 401.
+
+            Policy: decision maintainer 2026-10-21 (audit F-21), documented in \
+            docs/reference/security.md, pinned by DmnEvaluatePolicyIntegrationTests.""")
     @Override
     public Object evaluateDecision(@PathVariable String decisionId, @Valid @RequestBody EvaluateDecisionDTO dto) {
         requireDecisionAccess(decisionId);
