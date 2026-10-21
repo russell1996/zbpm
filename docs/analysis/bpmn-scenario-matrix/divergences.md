@@ -1,6 +1,6 @@
 # WO-OPS-27 — матрица сценариев: наш движок vs Zeebe 8.5.0 (живой оракул)
 
-- Оракул: живой Zeebe 8.5.0 (gateway 8.5.0), стенд `zbpm-cmp-zeebe`.
+- Оракул: живой Zeebe 8.5.0 (gateway 8.5.0), контейнер, поднятый прогоном `scenario-matrix.js` (gateway из C8_ORACLE_GW).
 - Наш движок: тот же набор схем (манифест `zorrobpm-engine/target/scenario-matrix/manifest.json`).
 - Сценариев: 56; совпали: 56; оракул не исполнил (docs≠8.5): 0; расхождений: 0.
 
