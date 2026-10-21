@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WO-OPS-38: дочерний процесс call activity, у которого есть СВОИ signal-подписки
+  (signal-boundary на childTask + signal-started event sub-process).
+
+  Именно этот инстанс убивает каскад отмены родителя (InstanceCancellationService.kill):
+  kill-путь снимал ТОЛЬКО message-подписки, поэтому signal-подписки ребёнка
+  переживали его смерть (broadcast сигнала уходил в мёртвый ребёнок).
+
+  Основной поток: start → childTask → childEnd. Ребёнок ПАРКУЕТСЯ на childTask —
+  пока он жив, родительский инстанс висит на своей call-activity строке.
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="defs-ops38-callchild" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:signal id="sigOps38Child" name="ops38ChildSig" />
+  <bpmn:process id="ops38-call-child" name="ops38-call-child" isExecutable="true">
+    <bpmn:startEvent id="childStart" name="childStart">
+      <bpmn:outgoing>flowC1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowC1" name="flowC1" sourceRef="childStart" targetRef="childTask" />
+    <bpmn:userTask id="childTask" name="childTask">
+      <bpmn:incoming>flowC1</bpmn:incoming>
+      <bpmn:outgoing>flowC2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:boundaryEvent id="childSigBnd" name="childSigBnd" attachedToRef="childTask">
+      <bpmn:signalEventDefinition id="childSedBnd" signalRef="sigOps38Child" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="flowC2" name="flowC2" sourceRef="childTask" targetRef="childEnd" />
+    <bpmn:endEvent id="childEnd" name="childEnd">
+      <bpmn:incoming>flowC2</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:subProcess id="childSigHandler" name="childSigHandler" triggeredByEvent="true">
+      <bpmn:startEvent id="childEvStart" name="childEvStart" isInterrupting="false">
+        <bpmn:outgoing>flowCE1</bpmn:outgoing>
+        <bpmn:signalEventDefinition id="childSedEv" signalRef="sigOps38Child" />
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flowCE1" name="flowCE1" sourceRef="childEvStart" targetRef="childEvEnd" />
+      <bpmn:endEvent id="childEvEnd" name="childEvEnd">
+        <bpmn:incoming>flowCE1</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>

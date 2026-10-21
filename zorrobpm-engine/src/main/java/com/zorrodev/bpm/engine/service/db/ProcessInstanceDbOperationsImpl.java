@@ -61,6 +61,7 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
      * сообщения, а broadcast сигнала после завершения уходил в мёртвый инстанс.
      * Вызов — ПОСЛЕ терминальной пометки (см. javadoc зачистки: доставка, успевшая
      * забрать подписку, гасится guard'ом «instance already completed»).
+     * WO-OPS-38: тем же правилом закрыт и терминальный переход ОТМЕНЫ.
      */
     private final FinishedInstanceSubscriptionCleaner finishedInstanceSubscriptionCleaner;
 
@@ -196,6 +197,24 @@ public class ProcessInstanceDbOperationsImpl implements ProcessInstanceDbOperati
         clearInstanceBookkeepingAtCommit(processInstanceId);
         processInstanceRepository.setCancelled(processInstanceId, true);
         processInstanceRepository.setCompletedAt(processInstanceId, Instant.now());
+        // WO-OPS-38: подписки умирают вместе с инстансом — НА ТОМ ЖЕ правиле,
+        // что и при нормальном завершении (см. completeProcessInstance выше).
+        // Раньше отмена снимала ТОЛЬКО message-подписки (кил-путь и операторская
+        // отмена — по отдельности), а signal-подписки переживали смерть инстанса:
+        // broadcast сигнала уходил в мёртвый инстанс, а инвариант утечек (G-P)
+        // видел остаток типа «subscription».
+        //
+        // Почему ЗДЕСЬ, а не в каждом пути отмены: этот метод — единственная точка,
+        // где инстанс становится терминальным ПОСЛЕ отмены. Через неё проходят
+        // и kill-путь (InstanceCancellationService.kill → processInstanceDbOperations
+        // .cancelProcessInstance), и операторская отмена (DBServiceImpl
+        // .cancelProcessInstance), и отложенный хвост canceling-фазы
+        // (CompletionService). Одно правило вместо трёх копий.
+        //
+        // Порядок — ПОСЛЕ терминальной пометки (как в completeProcessInstance):
+        // доставка, успевшая забрать подписку миллисекундой раньше, гасится
+        // guard'ом «instance already completed» (EventTrigger.triggerEventSubprocess).
+        finishedInstanceSubscriptionCleaner.clear(processInstanceId);
         domainEventEmitter.emitProcessInstanceCancelled(processInstanceId, pi.getProcessDefinitionId());
         // WO-OBS-1: cancel ends the instance too (gauge must not leak); not a failure.
         bpmMetrics.decrementActiveInstances();
