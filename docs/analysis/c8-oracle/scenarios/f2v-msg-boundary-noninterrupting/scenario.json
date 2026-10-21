@@ -1,0 +1,45 @@
+{
+  "id": "f2v-msg-boundary-noninterrupting",
+  "title": "Граница по сообщению (не прерывающая): ветка спавнится, хост жив",
+  "bpmn": "process.bpmn",
+  "processId": "f2vBoundaryNonInt",
+  "vars": {
+    "orderId": "ORD-3"
+  },
+  "start": "none",
+  "publishBeforeDeploy": false,
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "host"
+    },
+    {
+      "action": "publish",
+      "name": "f2v-boundary-ni-msg",
+      "correlationKey": "ORD-3",
+      "variables": {
+        "payload": "spawn",
+        "caseTag": "f2v-msg-boundary-noninterrupting"
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "afterBoundary"
+    },
+    {
+      "action": "observeJob",
+      "element": "host"
+    },
+    {
+      "action": "observeState"
+    }
+  ],
+  "expected": {
+    "observations": []
+  },
+  "matrix": {
+    "docs89": "8.9: boundary message event (cancelActivity=false) создаёт параллельную ветку, хост продолжает работу",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/message/f2v-msg-boundary-noninterrupting.bpmn"
+}

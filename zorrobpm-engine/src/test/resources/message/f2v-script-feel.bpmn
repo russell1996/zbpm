@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 Ф2в — script task: FEEL-выражение с результатом в переменную.
+     Один и тот же XML: в Camunda 8.5 модель принимается (нужен zeebe:script),
+     у нас скрипт исполняется движком синхронно (SyncTaskHandler.ScriptTask). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_f2vScript" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="f2vScript" name="f2vScript" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="script1" />
+    <bpmn:scriptTask id="script1" name="script1" scriptFormat="FEEL">
+      <bpmn:extensionElements>
+        <zeebe:script expression="=amount * 2" resultVariable="doubled" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:scriptTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="script1" targetRef="afterScript" />
+    <bpmn:serviceTask id="afterScript" name="afterScript">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2vAfterScript" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="afterScript" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

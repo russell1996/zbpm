@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 Ф2в — публикация ДО деплоя модели (буфер сообщений).
+     Отдельная модель (своё имя сообщения и свой тип задания), чтобы кейс не делил
+     подписку/буфер с кейсом f2v-msg-start: иначе сообщение, оставшееся в буфере
+     стенда, доставлялось бы в чужой инстанс. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_f2vMsgEarly" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_Early" name="f2v-early-msg" />
+  <bpmn:process id="f2vMsgEarly" name="f2vMsgEarly" isExecutable="true">
+    <bpmn:startEvent id="msgStart" name="msgStart">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="med1" messageRef="Msg_Early" />
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="msgStart" targetRef="afterEarly" />
+    <bpmn:serviceTask id="afterEarly" name="afterEarly">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2vAfterEarly" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="afterEarly" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

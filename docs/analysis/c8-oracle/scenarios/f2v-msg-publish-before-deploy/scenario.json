@@ -1,0 +1,35 @@
+{
+  "id": "f2v-msg-publish-before-deploy",
+  "title": "Публикация ДО деплоя модели: буферизуется ли сообщение",
+  "bpmn": "process.bpmn",
+  "processId": "f2vMsgEarly",
+  "vars": {},
+  "start": "message",
+  "publishBeforeDeploy": true,
+  "steps": [
+    {
+      "action": "publish",
+      "name": "f2v-early-msg",
+      "timeToLive": 60000,
+      "variables": {
+        "payload": "early",
+        "caseTag": "f2v-msg-publish-before-deploy"
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "afterEarly"
+    },
+    {
+      "action": "observeState"
+    }
+  ],
+  "expected": {
+    "observations": []
+  },
+  "matrix": {
+    "docs89": "8.9: буферизация сообщений (message buffering) — сообщение с TTL>0, опубликованное до появления подписки, живёт на брокере до TTL и доставляется, когда подписка откроется; при TTL=0 сообщение отбрасывается",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/message/f2v-msg-early.bpmn"
+}

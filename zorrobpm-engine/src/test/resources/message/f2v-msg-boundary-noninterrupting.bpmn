@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 Ф2в — сообщение: НЕ прерывающая граница (cancelActivity="false").
+     Сообщение спавнит параллельную ветку, хост продолжает жить. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_f2vBoundaryNonInt" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_BoundaryNI" name="f2v-boundary-ni-msg">
+    <bpmn:extensionElements>
+      <zeebe:subscription correlationKey="=orderId" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:process id="f2vBoundaryNonInt" name="f2vBoundaryNonInt" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="host" />
+    <bpmn:serviceTask id="host" name="host">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2vHostNI" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="host" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+    <bpmn:boundaryEvent id="bnd" name="bnd" attachedToRef="host" cancelActivity="false">
+      <bpmn:outgoing>fb</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="medb" messageRef="Msg_BoundaryNI" />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fb" sourceRef="bnd" targetRef="afterBoundary" />
+    <bpmn:serviceTask id="afterBoundary" name="afterBoundary">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2vAfterBoundaryNI" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fb</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="afterBoundary" targetRef="end2" />
+    <bpmn:endEvent id="end2"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

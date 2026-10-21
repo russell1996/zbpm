@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 Ф2в — business rule task: вызов DMN-решения (zeebe:calledDecision).
+     В Camunda 8.5 такая модель НЕ ПРИНИМАЕТСЯ (zeebe:calledDecision в XSD 8.5
+     отсутствует — отказ на деплое, измерено). У нас — поддерживается
+     (SyncTaskHandler.BusinessRuleTask + DmnService). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_f2vDmn" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="f2vDmn" name="f2vDmn" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="decide" />
+    <bpmn:businessRuleTask id="decide" name="decide">
+      <bpmn:extensionElements>
+        <zeebe:calledDecision decisionId="f2vDecision" resultVariable="decision" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:businessRuleTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="decide" targetRef="afterDecision" />
+    <bpmn:serviceTask id="afterDecision" name="afterDecision">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2vAfterDecision" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="afterDecision" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

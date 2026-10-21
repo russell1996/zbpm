@@ -176,6 +176,25 @@ async function throwError(client, job, errorCode, errorMessage) {
   console.log(`THROW_ERROR key=${job.key} type=${job.type} code=${errorCode} msg="${errorMessage || ''}"`);
 }
 
+/**
+ * WO-OPS-30 F2c: publish a message (Camunda `PublishMessage`).
+ * `correlationKey` — empty string means "no key" (broadcast by name);
+ * `timeToLive` — how long the message may live on the broker (ms, 0 = default);
+ * `variables` — the payload delivered to the woken subscription / started instance.
+ */
+async function publishMessage(client, name, correlationKey, timeToLive, variables) {
+  const res = await unary(client, 'PublishMessage', {
+    name,
+    correlationKey: correlationKey || '',
+    timeToLive: String(timeToLive || 0),
+    variables: JSON.stringify(variables || {}),
+  });
+  console.log(
+    `PUBLISH name=${name} key=${correlationKey || '-'} ttl=${timeToLive || 0} vars=${JSON.stringify(variables || {})} -> key=${res.key}`,
+  );
+  return res;
+}
+
 /** Human-readable dump of a job batch (type/elementId/pi/vars) for oracle logs. */
 function show(tag, jobs) {
   console.log(`--- ${tag}: ${jobs.length} job(s) ---`);
@@ -218,6 +237,7 @@ module.exports = {
   complete,
   failJob,
   throwError,
+  publishMessage,
   show,
   itemOf,
   parseVars,

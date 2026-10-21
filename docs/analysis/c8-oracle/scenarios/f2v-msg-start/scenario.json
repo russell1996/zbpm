@@ -1,0 +1,41 @@
+{
+  "id": "f2v-msg-start",
+  "title": "Старт инстанса по сообщению (message start event)",
+  "bpmn": "process.bpmn",
+  "processId": "f2vMsgStart",
+  "vars": {},
+  "start": "message",
+  "publishBeforeDeploy": false,
+  "steps": [
+    {
+      "action": "publish",
+      "name": "f2v-start-msg",
+      "variables": {
+        "payload": "hello",
+        "caseTag": "f2v-msg-start"
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "afterStart"
+    },
+    {
+      "action": "completeJob",
+      "element": "afterStart",
+      "vars": {
+        "done": true
+      }
+    },
+    {
+      "action": "observeState"
+    }
+  ],
+  "expected": {
+    "observations": []
+  },
+  "matrix": {
+    "docs89": "8.9: сообщение публикуется через PublishMessage; подписка message start event создаёт инстанс; переменные сообщения попадают в скоуп инстанса",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/message/f2v-msg-start.bpmn"
+}
