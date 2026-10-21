@@ -136,6 +136,72 @@ our engine; F0 rows carry the verdict `measured-8.5 (ours pending)`.
 | `matrix.ours` | what our engine does (column 3); empty = pending |
 | `maxRounds` | safety cap for the drive loop (default 40) |
 
+## 4b. Run the F2a job-protocol scenarios (WO-OPS-30 Ф2а)
+
+`job-protocol.js` drives the **job protocol** (completion merge, fail/retries/backoff,
+`throwError`, activation timeout/redelivery, `zeebe:taskDefinition` retries, `zeebe:taskHeaders`,
+dispatch by type, no worker) against the live broker. Its scenario format is the one above,
+extended with a `steps` array — a step is either a worker action (`complete` / `fail` /
+`throwError`) or an observation (`observeJob` / `observeJobImmediately` / `activateAndAbandon` /
+`observeIncident`).
+
+```bash
+node job-protocol.js --sync     # regenerate scenarios/f2a-*/ from the canonical case list
+node job-protocol.js             # run every F2a case against the live broker
+node job-protocol.js f2a-merge-root
+```
+
+**One source of truth for both engines.** The canonical case list is
+`zorrobpm-engine/src/test/resources/job-protocol-cases.json` (BPMN + steps + expectations);
+`--sync` writes the `scenarios/f2a-<id>/` copies from it, and every run **byte-compares**
+`scenarios/f2a-<id>/process.bpmn` against
+`zorrobpm-engine/src/test/resources/job-protocol/<id>.bpmn` — a mismatch aborts the run, so the
+two engines can never be measured against different models.
+
+The matrix itself: `docs/analysis/job-protocol-conformance-matrix.md`
+(8.9 docs | Zeebe 8.5 live | ours | verdict).
+
+## 4c. Run the F2b HTTP-connector scenarios (WO-OPS-30 Ф2б)
+
+`http-connector.js` measures OUR HTTP connector against the REAL Camunda REST connector
+(`io.camunda:http-json:1` of the Connectors bundle 8.5.9). Same discipline as F2a: the canonical
+case list is `zorrobpm-http-connector/src/test/resources/http-connector-cases.json` (job payload in
+the Camunda dialect + expectations for both sides + the 8.9-docs column); the BPMN for the live
+side is GENERATED from that list, so the two engines can never be measured against different
+models.
+
+```bash
+node http-connector.js                  # run every case
+node http-connector.js f2b-get-200-json # one case
+```
+
+**The shared mock target.** Both engines must hit the SAME server, otherwise the requests are not
+comparable. `stack/up.sh` starts `zbpm-cmp-mock` (node, image `node:22-alpine`) on the oracle
+network:
+
+* the connectors bundle reaches it as `http://zbpm-cmp-mock:8080` (docker DNS),
+* our own maven container reaches it the same way (`docker run --network zbpm-cmp_default …`),
+* the oracle runner (on the host) reads the request log through the published
+  `127.0.0.1:18099`.
+
+The mock's route table is NOT written in the mock: it is read from the `routes` section of the
+canonical case list — the very same table the Java mock in our JUnit test uses, so "the mock means
+one thing for the live side and another for ours" is impossible by construction.
+
+```bash
+# our side against the SAME mock (campaign run)
+docker run --rm --network zbpm-cmp_default --user "$(id -u):$(id -g)" \
+  -v "$PWD:/build" -w /build -v zbpm_m2:/tmp/.m2 maven:3.9.9-eclipse-temurin-21 \
+  mvn -B -ntp -o -Dmaven.repo.local=/tmp/.m2/repository -pl zorrobpm-http-connector \
+  test -Dtest=HttpConnectorConformanceIntegrationTests -Df2b.mock.base=http://zbpm-cmp-mock:8080
+
+# our side in CI (no external containers): the embedded Java mock with the same route table
+mvn -pl zorrobpm-http-connector test -Dtest=HttpConnectorConformanceIntegrationTests
+```
+
+The matrix itself: `docs/analysis/http-connector-conformance-matrix.md`
+(8.9 docs | Connectors 8.5.9 live | ours | verdict).
+
 ## F0 finding — Zeebe 8.5 variable scoping (measured live)
 
 Measured on live Zeebe 8.5.0 (see report `docs/internal`):

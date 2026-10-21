@@ -1,0 +1,91 @@
+{
+  "id": "f2a-no-worker",
+  "title": "Воркера нет: задание dispatched, но не взято",
+  "bpmn": "process.bpmn",
+  "processId": "f2aNoWorker",
+  "vars": {},
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "work",
+      "timeoutMs": 2000
+    },
+    {
+      "action": "wait",
+      "ms": 5000
+    },
+    {
+      "action": "observeJob",
+      "element": "work"
+    },
+    {
+      "action": "watchdog",
+      "oursOnly": true
+    },
+    {
+      "action": "observeIncident",
+      "element": "work"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "work",
+        "occurrence": 1,
+        "outcome": "jobObserved",
+        "retries": 3
+      },
+      {
+        "step": "observeJob",
+        "element": "work",
+        "occurrence": 2,
+        "outcome": "jobObserved",
+        "retries": 3
+      },
+      {
+        "step": "observeIncident",
+        "element": "work",
+        "outcome": "incident",
+        "messageContains": "SERVICE_TASK_DISPATCH_TIMEOUT"
+      }
+    ],
+    "liveReference": [
+      {
+        "step": "observeJob",
+        "element": "work",
+        "occurrence": 1,
+        "outcome": "jobObserved",
+        "retries": 3
+      },
+      {
+        "step": "observeJob",
+        "element": "work",
+        "occurrence": 2,
+        "outcome": "jobObserved",
+        "retries": 3
+      },
+      {
+        "step": "observeIncident",
+        "element": "work",
+        "outcome": "notReadable",
+        "note": "инцидент на живом 8.5 не читается (Gateway API не отдаёт инциденты, Operate вне стенда); ВЫВОД «инцидента нет» — по документации 8.9 (job queuing) и по отсутствию следующего задания"
+      }
+    ],
+    "note": "ОСОЗНАННОЕ РАСХОЖДЕНИЕ (корень R3, by design — WO-REL-27): live-8.5 молча ждёт — задание в очереди брокера, через 5 с оно ПРЕДЛАГАЕТСЯ воркеру снова (jobObserved), инцидента НЕТ. У нас задание тоже остаётся dispatched, но по dispatch-timeout (15 мин) поднимается инцидент SERVICE_TASK_DISPATCH_TIMEOUT: воркера нет — это сигнал оператору, а не тишина.",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "CREATED"
+      },
+      "incidents": 1,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Job workers 8.9 (Job queuing): «Zeebe queues jobs until workers request them... Zeebe queues all jobs during any job worker outages, and progress resumes as soon as workers are available.» (инцидента нет)",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-no-worker.bpmn"
+}

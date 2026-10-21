@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 Ф2в, п.4 инвентаря — КОНТРАКТ воркера-потребителя (воркеры консьюмера
+     вне этого репозитория; контракт проверяем с нашей стороны).
+     Что движок ОБЕЩАЕТ воркеру:
+       * входные переменные по маппингу (source → target), с сохранением типа;
+       * слияние результата completion в скоуп (виден следующей задаче);
+       * ошибка воркера → инцидент на элементе.
+     Модель: сервис-задача work с inputMapping → сервис-задача afterWork. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_f2vContract" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="f2vContractWorker" name="f2vContractWorker" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="work" />
+    <bpmn:serviceTask id="work" name="work">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2vContractWork" />
+        <zeebe:ioMapping>
+          <zeebe:input source="=order.id" target="orderId" />
+          <zeebe:input source="=payload" target="payloadIn" />
+          <zeebe:input source="=label" target="labelIn" />
+        </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="work" targetRef="afterWork" />
+    <bpmn:serviceTask id="afterWork" name="afterWork">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2vContractAfter" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f3" sourceRef="afterWork" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f3</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

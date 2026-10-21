@@ -1,0 +1,648 @@
+{
+  "_comment": [
+    "WO-OPS-30 Ф2в — ЕДИНЫЙ список кейсов сообщений/script/DMN (Zeebe 8.5 live vs наш движок).",
+    "Один источник правды для обеих сторон: этот файл читают и живой оракул",
+    "(docs/analysis/c8-oracle/messages.js), и наш JUnit",
+    "(zorrobpm-engine/.../MessageConformanceIntegrationTests).",
+    "BPMN лежит в zorrobpm-engine/src/test/resources/message/*.bpmn — копии в",
+    "docs/analysis/c8-oracle/scenarios/f2v-*/process.bpmn генерирует 'node messages.js --sync',",
+    "а при каждом прогоне оракул сверяет побайтово (иначе «оба движка» меряют разные модели).",
+    "",
+    "ШАГИ: publish (опубликовать сообщение) / observeJob (есть ли задание элемента) /",
+    "completeJob (завершить задание элемента) / observeState (итоговые состояния активностей —",
+    "только наша сторона: на живом 8.5 Gateway API не отдаёт состояние инстанса).",
+    "",
+    "ПОЛЕ start: 'message' — инстанс создаёт публикация сообщения (message start event),",
+    "'none' (по умолчанию) — инстанс стартует сам на шаге 0, поля vars.",
+    "ПОЛЕ publishBeforeDeploy: true — публикация happens ДО деплоя модели (кейс про буфер).",
+    "",
+    "ОЖИДАНИЯ: expect.observations — ИЗМЕРЕНИЕ на живом Zeebe 8.5",
+    "(docs/analysis/c8-oracle/scenarios/f2v-*/result-8.5.json), перенесённое как ожидание;",
+    "для кейсов с известным расхождением рядом лежит expect.liveReference (что показала живая",
+    "сторона) и expect.knownDifference. Колонка «8.9 docs» — docs.camunda.io 8.9 (дизайн),",
+    "поведение — 8.5 live. Наш JUnit сверяет ожидание с НАШИМ измерением: расхождение",
+    "краснит тест (кроме шага observeState — он не сравним между сторонами по построению)."
+  ],
+  "cases": [
+    {
+      "id": "f2v-msg-start",
+      "title": "Старт инстанса по сообщению (message start event)",
+      "bpmn": "message/f2v-msg-start.bpmn",
+      "processId": "f2vMsgStart",
+      "start": "message",
+      "vars": {},
+      "steps": [
+        {
+          "action": "publish",
+          "name": "f2v-start-msg",
+          "variables": {
+            "payload": "hello",
+            "caseTag": "f2v-msg-start"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterStart"
+        },
+        {
+          "action": "completeJob",
+          "element": "afterStart",
+          "vars": {
+            "done": true
+          }
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "publish",
+            "outcome": "published"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterStart",
+            "outcome": "jobObserved",
+            "jobType": "f2vAfterStart",
+            "variables": "{\"caseTag\":\"f2v-msg-start\",\"payload\":\"hello\"}"
+          },
+          {
+            "step": "completeJob",
+            "element": "afterStart",
+            "outcome": "completed",
+            "jobType": "f2vAfterStart"
+          }
+        ]
+      },
+      "docs89": "8.9: сообщение публикуется через PublishMessage; подписка message start event создаёт инстанс; переменные сообщения попадают в скоуп инстанса"
+    },
+    {
+      "id": "f2v-msg-unknown-name",
+      "title": "Публикация в пустоту: никто не слушает + TTL",
+      "bpmn": "message/f2v-msg-start.bpmn",
+      "processId": "f2vMsgStart",
+      "start": "message",
+      "vars": {},
+      "steps": [
+        {
+          "action": "publish",
+          "name": "f2v-unknown-msg",
+          "timeToLive": 60000,
+          "variables": {
+            "payload": "nobody",
+            "caseTag": "f2v-msg-unknown-name"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterStart"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "publish",
+            "outcome": "published"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterStart",
+            "outcome": "noJob",
+            "jobType": "f2vAfterStart"
+          }
+        ]
+      },
+      "docs89": "8.9: PublishMessage с timeToLive — сообщение с TTL>0 буферизуется на брокере до истечения TTL; при TTL=0 (по умолчанию) сообщение отбрасывается, если подписки нет"
+    },
+    {
+      "id": "f2v-msg-publish-before-deploy",
+      "title": "Публикация ДО деплоя модели: буферизуется ли сообщение",
+      "bpmn": "message/f2v-msg-early.bpmn",
+      "processId": "f2vMsgEarly",
+      "start": "message",
+      "publishBeforeDeploy": true,
+      "vars": {},
+      "steps": [
+        {
+          "action": "publish",
+          "name": "f2v-early-msg",
+          "timeToLive": 60000,
+          "variables": {
+            "payload": "early",
+            "caseTag": "f2v-msg-publish-before-deploy"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterEarly"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "publish",
+            "outcome": "published"
+          },
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterEarly",
+            "outcome": "noJob",
+            "jobType": "f2vAfterEarly"
+          }
+        ]
+      },
+      "docs89": "8.9: буферизация сообщений (message buffering) — сообщение с TTL>0, опубликованное до появления подписки, живёт на брокере до TTL и доставляется, когда подписка откроется; при TTL=0 сообщение отбрасывается"
+    },
+    {
+      "id": "f2v-msg-buffered-catch",
+      "title": "Буфер: публикация с ключом и TTL>0 ДО появления подписки (путь catch)",
+      "bpmn": "message/f2v-msg-buffered-catch.bpmn",
+      "processId": "f2vBufferedCatch",
+      "publishBeforeStart": true,
+      "vars": {
+        "orderId": "ORD-BUF"
+      },
+      "steps": [
+        {
+          "action": "publish",
+          "name": "f2v-buffered-msg",
+          "correlationKey": "ORD-BUF",
+          "timeToLive": 60000,
+          "variables": {
+            "payload": "early",
+            "caseTag": "f2v-msg-buffered-catch"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterCatch"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "publish",
+            "outcome": "published"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterCatch",
+            "outcome": "noJob",
+            "jobType": "f2vAfterBuffered",
+            "liveReference": {
+              "outcome": "jobObserved",
+              "jobType": "f2vAfterBuffered",
+              "variables": "{\"caseTag\":\"f2v-msg-buffered-catch\",\"orderId\":\"ORD-BUF\",\"payload\":\"early\"}"
+            }
+          }
+        ],
+        "knownDifference": [
+          "('observeJob', 'afterCatch')#1"
+        ]
+      },
+      "docs89": "8.9: сообщение с TTL>0 буферизуется на брокере и доставляется, когда откроется подписка с тем же ключом корреляции; при TTL=0 буферизации нет"
+    },
+    {
+      "id": "f2v-msg-buffered-start-key",
+      "title": "Буфер на пути message start С ключом корреляции: буферизуется ли (контроль к f2v-msg-buffered-catch)",
+      "bpmn": "message/f2v-msg-buffered-start-key.bpmn",
+      "processId": "f2vBufferedStartKey",
+      "start": "message",
+      "publishBeforeDeploy": true,
+      "vars": {},
+      "steps": [
+        {
+          "action": "publish",
+          "name": "f2v-buffered-start-msg",
+          "correlationKey": "ORD-BUF-START",
+          "timeToLive": 60000,
+          "variables": {
+            "payload": "early",
+            "caseTag": "f2v-msg-buffered-start-key"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterStart"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "publish",
+            "outcome": "published"
+          },
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterStart",
+            "outcome": "noJob",
+            "jobType": "f2vAfterBufferedStartKey"
+          }
+        ]
+      },
+      "docs89": "8.9: сообщение с TTL>0 буферизуется на брокере; для message start новая инстанция создаётся, если нет активной инстанса с тем же ключом"
+    },
+    {
+      "id": "f2v-msg-throw-catch",
+      "title": "Бросок сообщения процессом и приём сообщения",
+      "bpmn": "message/f2v-msg-throw-catch.bpmn",
+      "processId": "f2vThrowCatch",
+      "vars": {
+        "orderId": "ORD-1"
+      },
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "throw1"
+        },
+        {
+          "action": "completeJob",
+          "element": "throw1",
+          "vars": {}
+        },
+        {
+          "action": "publish",
+          "name": "f2v-throw-msg",
+          "correlationKey": "ORD-1",
+          "variables": {
+            "payload": "late",
+            "caseTag": "f2v-msg-throw-catch"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterCatch"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "observeJob",
+            "element": "throw1",
+            "outcome": "jobObserved",
+            "jobType": "f2vThrow",
+            "variables": "{\"orderId\":\"ORD-1\"}"
+          },
+          {
+            "step": "completeJob",
+            "element": "throw1",
+            "outcome": "completed",
+            "jobType": "f2vThrow"
+          },
+          {
+            "step": "publish",
+            "outcome": "published"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterCatch",
+            "outcome": "jobObserved",
+            "jobType": "f2vAfterCatch",
+            "variables": "{\"caseTag\":\"f2v-msg-throw-catch\",\"orderId\":\"ORD-1\",\"payload\":\"late\"}"
+          }
+        ]
+      },
+      "docs89": "8.9: бросок сообщения из процесса (intermediate message throw event) публикует сообщение; в 8.9 бросок — элемент с zeebe:publishMessage"
+    },
+    {
+      "id": "f2v-msg-catch-key",
+      "title": "Корреляция по ключу: чужой ключ не будит подписку",
+      "bpmn": "message/f2v-msg-catch-key.bpmn",
+      "processId": "f2vCatchKey",
+      "vars": {
+        "orderId": "ORD-1"
+      },
+      "steps": [
+        {
+          "action": "publish",
+          "name": "f2v-catch-msg",
+          "correlationKey": "WRONG-KEY",
+          "variables": {
+            "payload": "wrong",
+            "caseTag": "f2v-msg-catch-key"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterCatch"
+        },
+        {
+          "action": "publish",
+          "name": "f2v-catch-msg",
+          "correlationKey": "ORD-1",
+          "variables": {
+            "payload": "right",
+            "caseTag": "f2v-msg-catch-key"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterCatch"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "publish",
+            "occurrence": 1,
+            "outcome": "published"
+          },
+          {
+            "step": "publish",
+            "occurrence": 2,
+            "outcome": "published"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterCatch",
+            "occurrence": 1,
+            "outcome": "noJob",
+            "jobType": "f2vAfterCatchKey"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterCatch",
+            "occurrence": 2,
+            "outcome": "jobObserved",
+            "jobType": "f2vAfterCatchKey",
+            "variables": "{\"caseTag\":\"f2v-msg-catch-key\",\"orderId\":\"ORD-1\",\"payload\":\"right\"}"
+          }
+        ]
+      },
+      "docs89": "8.9: подписка с correlationKey будится только сообщением с тем же ключом; подписка без ключа — любым сообщением с тем же именем"
+    },
+    {
+      "id": "f2v-msg-boundary",
+      "title": "Граница по сообщению (прерывающая): хост отменяется",
+      "bpmn": "message/f2v-msg-boundary.bpmn",
+      "processId": "f2vBoundary",
+      "vars": {
+        "orderId": "ORD-2"
+      },
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "host"
+        },
+        {
+          "action": "publish",
+          "name": "f2v-boundary-msg",
+          "correlationKey": "ORD-2",
+          "variables": {
+            "payload": "cancel",
+            "caseTag": "f2v-msg-boundary"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterBoundary"
+        },
+        {
+          "action": "observeJob",
+          "element": "host"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "observeJob",
+            "element": "host",
+            "occurrence": 1,
+            "outcome": "jobObserved",
+            "jobType": "f2vHost",
+            "variables": "{\"orderId\":\"ORD-2\"}"
+          },
+          {
+            "step": "observeJob",
+            "element": "host",
+            "occurrence": 2,
+            "outcome": "noJob",
+            "jobType": "f2vHost"
+          },
+          {
+            "step": "publish",
+            "outcome": "published"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterBoundary",
+            "outcome": "jobObserved",
+            "jobType": "f2vAfterBoundary",
+            "variables": "{\"caseTag\":\"f2v-msg-boundary\",\"orderId\":\"ORD-2\",\"payload\":\"cancel\"}"
+          }
+        ]
+      },
+      "docs89": "8.9: boundary message event (cancelActivity=true) прерывает хост и уводит поток по ветке границы"
+    },
+    {
+      "id": "f2v-msg-boundary-noninterrupting",
+      "title": "Граница по сообщению (не прерывающая): ветка спавнится, хост жив",
+      "bpmn": "message/f2v-msg-boundary-noninterrupting.bpmn",
+      "processId": "f2vBoundaryNonInt",
+      "vars": {
+        "orderId": "ORD-3"
+      },
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "host"
+        },
+        {
+          "action": "publish",
+          "name": "f2v-boundary-ni-msg",
+          "correlationKey": "ORD-3",
+          "variables": {
+            "payload": "spawn",
+            "caseTag": "f2v-msg-boundary-noninterrupting"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterBoundary"
+        },
+        {
+          "action": "observeJob",
+          "element": "host"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "observeJob",
+            "element": "host",
+            "occurrence": 1,
+            "outcome": "jobObserved",
+            "jobType": "f2vHostNI",
+            "variables": "{\"orderId\":\"ORD-3\"}"
+          },
+          {
+            "step": "observeJob",
+            "element": "host",
+            "occurrence": 2,
+            "outcome": "jobObserved",
+            "jobType": "f2vHostNI",
+            "variables": "{\"orderId\":\"ORD-3\"}",
+            "liveReference": {
+              "outcome": "jobObserved",
+              "jobType": "f2vHostNI",
+              "variables": "{\"caseTag\":\"f2v-msg-boundary-noninterrupting\",\"orderId\":\"ORD-3\",\"payload\":\"spawn\"}"
+            }
+          },
+          {
+            "step": "publish",
+            "outcome": "published"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterBoundary",
+            "outcome": "jobObserved",
+            "jobType": "f2vAfterBoundaryNI",
+            "variables": "{\"caseTag\":\"f2v-msg-boundary-noninterrupting\",\"orderId\":\"ORD-3\",\"payload\":\"spawn\"}"
+          }
+        ],
+        "knownDifference": [
+          "('observeJob', 'host')#2"
+        ]
+      },
+      "docs89": "8.9: boundary message event (cancelActivity=false) создаёт параллельную ветку, хост продолжает работу"
+    },
+    {
+      "id": "f2v-script-feel",
+      "title": "Script task: FEEL-выражение с resultVariable",
+      "bpmn": "message/f2v-script-feel.bpmn",
+      "processId": "f2vScript",
+      "vars": {
+        "amount": 21
+      },
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "afterScript"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterScript",
+            "outcome": "jobObserved",
+            "jobType": "f2vAfterScript",
+            "variables": "{\"amount\":21,\"doubled\":42}"
+          }
+        ]
+      },
+      "docs89": "8.9: script task с zeebe:script (FEEL) — исполняется воркером скриптов; результат кладётся в resultVariable"
+    },
+    {
+      "id": "f2v-dmn-called",
+      "title": "Business rule task: вызов DMN-решения (zeebe:calledDecision)",
+      "bpmn": "message/f2v-dmn-called.bpmn",
+      "dmn": "message/f2v-decision.dmn",
+      "processId": "f2vDmn",
+      "vars": {
+        "amount": 21
+      },
+      "steps": [
+        {
+          "action": "observeJob",
+          "element": "afterDecision"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterDecision",
+            "outcome": "jobObserved",
+            "jobType": "f2vAfterDecision",
+            "variables": "{\"amount\":21,\"decision\":20}",
+            "liveReference": {
+              "outcome": "noJob",
+              "jobType": "f2vAfterDecision"
+            }
+          }
+        ],
+        "knownDifference": [
+          "('observeJob', 'afterDecision')#1"
+        ]
+      },
+      "docs89": "8.9: business rule task с zeebe:calledDecision — вызов DMN-решения, результат в resultVariable"
+    }
+  ]
+}

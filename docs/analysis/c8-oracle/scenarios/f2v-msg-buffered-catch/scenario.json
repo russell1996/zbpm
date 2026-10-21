@@ -1,0 +1,61 @@
+{
+  "id": "f2v-msg-buffered-catch",
+  "title": "Буфер: публикация с ключом и TTL>0 ДО появления подписки (путь catch)",
+  "bpmn": "process.bpmn",
+  "processId": "f2vBufferedCatch",
+  "vars": {
+    "orderId": "ORD-BUF"
+  },
+  "start": "none",
+  "publishBeforeDeploy": false,
+  "steps": [
+    {
+      "action": "publish",
+      "name": "f2v-buffered-msg",
+      "correlationKey": "ORD-BUF",
+      "timeToLive": 60000,
+      "variables": {
+        "payload": "early",
+        "caseTag": "f2v-msg-buffered-catch"
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "afterCatch"
+    },
+    {
+      "action": "observeState"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "publish",
+        "outcome": "published"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterCatch",
+        "outcome": "noJob",
+        "jobType": "f2vAfterBuffered",
+        "liveReference": {
+          "outcome": "jobObserved",
+          "jobType": "f2vAfterBuffered",
+          "variables": "{\"caseTag\":\"f2v-msg-buffered-catch\",\"orderId\":\"ORD-BUF\",\"payload\":\"early\"}"
+        }
+      }
+    ],
+    "knownDifference": [
+      "('observeJob', 'afterCatch')#1"
+    ]
+  },
+  "matrix": {
+    "docs89": "8.9: сообщение с TTL>0 буферизуется на брокере и доставляется, когда откроется подписка с тем же ключом корреляции; при TTL=0 буферизации нет",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/message/f2v-msg-buffered-catch.bpmn"
+}

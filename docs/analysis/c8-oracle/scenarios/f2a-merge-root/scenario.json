@@ -1,0 +1,60 @@
+{
+  "id": "f2a-merge-root",
+  "title": "Слияние переменных completion в скоуп: корневое задание",
+  "bpmn": "process.bpmn",
+  "processId": "f2aMergeRoot",
+  "vars": {
+    "greeting": "camunda"
+  },
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "work"
+    },
+    {
+      "action": "complete",
+      "element": "work",
+      "vars": {
+        "c": "C",
+        "n": 42
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "dump"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "dump",
+        "outcome": "jobObserved",
+        "jobType": "f2aDump",
+        "retries": 3,
+        "variables": {
+          "c": "C",
+          "greeting": "camunda",
+          "n": 42
+        }
+      }
+    ],
+    "note": "live-8.5: переменные completion сливаются в root-скоуп и видны следующему элементу",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "COMPLETED",
+        "f2": "COMPLETED",
+        "dump": "CREATED"
+      },
+      "incidents": 0,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Job workers 8.9: «When the job worker completes its work, it sends a complete job command along with any variables, which in turn is merged into the process instance.» / «When Completing a job the variables are propagated from the scope of the task to its higher scopes.»",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-merge-root.bpmn"
+}

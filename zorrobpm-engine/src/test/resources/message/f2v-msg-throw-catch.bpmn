@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 Ф2в — сообщение: бросок (intermediate throw) и приём (catch).
+     Ключевой момент кампании: в Camunda 8.5 бросок сообщения — это ЗАДАНИЕ
+     (zeebe:taskDefinition на throw-событии): движок сам сообщение НЕ публикует,
+     воркер должен опубликовать его отдельно (PublishMessage с correlationKey).
+     У нас бросок — внутреннее действие движка (публикация без ключа).
+     Один и тот же XML — две разные семантики, это и есть строка матрицы. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_f2vThrowCatch" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_Throw" name="f2v-throw-msg">
+    <bpmn:extensionElements>
+      <zeebe:subscription correlationKey="=orderId" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:process id="f2vThrowCatch" name="f2vThrowCatch" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="throw1" />
+    <bpmn:intermediateThrowEvent id="throw1" name="throw1">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2vThrow" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="med1" messageRef="Msg_Throw" />
+    </bpmn:intermediateThrowEvent>
+    <bpmn:sequenceFlow id="f2" sourceRef="throw1" targetRef="catch1" />
+    <bpmn:intermediateCatchEvent id="catch1" name="catch1">
+      <bpmn:incoming>f2</bpmn:incoming>
+      <bpmn:outgoing>f3</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="med2" messageRef="Msg_Throw" />
+    </bpmn:intermediateCatchEvent>
+    <bpmn:sequenceFlow id="f3" sourceRef="catch1" targetRef="afterCatch" />
+    <bpmn:serviceTask id="afterCatch" name="afterCatch">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2vAfterCatch" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f3</bpmn:incoming>
+      <bpmn:outgoing>f4</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f4" sourceRef="afterCatch" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f4</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

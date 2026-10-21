@@ -1,0 +1,76 @@
+{
+  "id": "f2v-msg-boundary",
+  "title": "Граница по сообщению (прерывающая): хост отменяется",
+  "bpmn": "process.bpmn",
+  "processId": "f2vBoundary",
+  "vars": {
+    "orderId": "ORD-2"
+  },
+  "start": "none",
+  "publishBeforeDeploy": false,
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "host"
+    },
+    {
+      "action": "publish",
+      "name": "f2v-boundary-msg",
+      "correlationKey": "ORD-2",
+      "variables": {
+        "payload": "cancel",
+        "caseTag": "f2v-msg-boundary"
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "afterBoundary"
+    },
+    {
+      "action": "observeJob",
+      "element": "host"
+    },
+    {
+      "action": "observeState"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "observeJob",
+        "element": "host",
+        "occurrence": 1,
+        "outcome": "jobObserved",
+        "jobType": "f2vHost",
+        "variables": "{\"orderId\":\"ORD-2\"}"
+      },
+      {
+        "step": "observeJob",
+        "element": "host",
+        "occurrence": 2,
+        "outcome": "noJob",
+        "jobType": "f2vHost"
+      },
+      {
+        "step": "publish",
+        "outcome": "published"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterBoundary",
+        "outcome": "jobObserved",
+        "jobType": "f2vAfterBoundary",
+        "variables": "{\"caseTag\":\"f2v-msg-boundary\",\"orderId\":\"ORD-2\",\"payload\":\"cancel\"}"
+      }
+    ]
+  },
+  "matrix": {
+    "docs89": "8.9: boundary message event (cancelActivity=true) прерывает хост и уводит поток по ветке границы",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/message/f2v-msg-boundary.bpmn"
+}

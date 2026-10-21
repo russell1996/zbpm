@@ -1,0 +1,53 @@
+{
+  "id": "f2a-throw-no-boundary",
+  "title": "throwError без границы ошибки: необработанная ошибка",
+  "bpmn": "process.bpmn",
+  "processId": "f2aThrowNoBoundary",
+  "vars": {},
+  "steps": [
+    {
+      "action": "throwError",
+      "element": "work",
+      "code": "E1",
+      "message": "boom"
+    },
+    {
+      "action": "observeJob",
+      "element": "dump"
+    },
+    {
+      "action": "observeIncident",
+      "element": "work"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "dump",
+        "outcome": "noJob"
+      },
+      {
+        "step": "observeIncident",
+        "element": "work",
+        "outcome": "incident",
+        "messageContains": "Unhandled BPMN error 'E1'"
+      }
+    ],
+    "note": "live-8.5: необработанная ошибка → инцидент на элементе, инстанс жив, следующего задания нет",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "ERROR"
+      },
+      "incidents": 1,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Error events 8.9: «When an error is thrown and not caught, an incident (for example, Unhandled error event) is raised... The incident is attached to the corresponding element where the error was thrown (that is, the task of the processed job).»",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-throw-no-boundary.bpmn"
+}

@@ -26,6 +26,30 @@ services:
       - ZEEBE_BROKER_GATEWAY_NETWORK_PORT=26500
     restart: unless-stopped
 
+  # WO-OPS-30 F2b — the shared mock HTTP target. BOTH engines talk to it: the connectors
+  # bundle below (by docker name zbpm-cmp-mock) and our own connector (the maven container
+  # joins this network), so the request that arrives is byte-identical on both sides.
+  # The route table is NOT in the image — it is read from the canonical case list, the very
+  # same file our JUnit conformance test reads.
+  mock:
+    image: node:22-alpine
+    container_name: zbpm-cmp-mock
+    command:
+      - node
+      - /mock/http-mock.js
+      - --port
+      - "8080"
+      - --cases
+      - /cases/http-connector-cases.json
+    volumes:
+      - ../mock:/mock:ro
+      - ../../../../zorrobpm-http-connector/src/test/resources:/cases:ro
+    ports:
+      # Published on the loopback only: the oracle runner (on the host) reads the mock's
+      # request log through it. 8080 on the host is reserved by another project.
+      - "127.0.0.1:18099:8080"
+    restart: unless-stopped
+
   # No depends_on on purpose: zeebe may already be running as a standalone container
   # (e.g. started by the maintainer for the campaign). `docker compose up -d connectors` then
   # starts ONLY the connectors service; it connects to the gateway once it is reachable.

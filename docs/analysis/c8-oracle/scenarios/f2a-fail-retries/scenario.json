@@ -1,0 +1,99 @@
+{
+  "id": "f2a-fail-retries",
+  "title": "fail: бюджет попыток уменьшается, на нуле — инцидент",
+  "bpmn": "process.bpmn",
+  "processId": "f2aFailRetries",
+  "vars": {},
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "work"
+    },
+    {
+      "action": "fail",
+      "element": "work",
+      "message": "boom-2",
+      "retries": 2
+    },
+    {
+      "action": "observeJob",
+      "element": "work"
+    },
+    {
+      "action": "fail",
+      "element": "work",
+      "message": "boom-1",
+      "retries": 1
+    },
+    {
+      "action": "observeJob",
+      "element": "work"
+    },
+    {
+      "action": "fail",
+      "element": "work",
+      "message": "boom-0",
+      "retries": 0
+    },
+    {
+      "action": "observeJob",
+      "element": "work"
+    },
+    {
+      "action": "observeIncident",
+      "element": "work"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "work",
+        "occurrence": 1,
+        "outcome": "jobObserved",
+        "retries": 3
+      },
+      {
+        "step": "observeJob",
+        "element": "work",
+        "occurrence": 2,
+        "outcome": "jobObserved",
+        "retries": 2
+      },
+      {
+        "step": "observeJob",
+        "element": "work",
+        "occurrence": 3,
+        "outcome": "jobObserved",
+        "retries": 1
+      },
+      {
+        "step": "observeJob",
+        "element": "work",
+        "occurrence": 4,
+        "outcome": "noJob"
+      },
+      {
+        "step": "observeIncident",
+        "element": "work",
+        "outcome": "incident",
+        "messageContains": "boom-0"
+      }
+    ],
+    "note": "live-8.5: retries 3→2→1→0, на нуле job больше не выдаётся и поднимается инцидент с текстом отказа",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "ERROR"
+      },
+      "incidents": 1,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Job workers 8.9: «Fail job commands include the number of remaining retries, which is set by the job worker. If remaining retries is greater than zero, the job is retried and reassigned. If remaining retries is zero or negative, an incident is raised and the job is not retried until the incident is resolved.»",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-fail-retries.bpmn"
+}

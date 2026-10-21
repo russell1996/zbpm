@@ -1,0 +1,85 @@
+{
+  "id": "f2v-msg-boundary-noninterrupting",
+  "title": "Граница по сообщению (не прерывающая): ветка спавнится, хост жив",
+  "bpmn": "process.bpmn",
+  "processId": "f2vBoundaryNonInt",
+  "vars": {
+    "orderId": "ORD-3"
+  },
+  "start": "none",
+  "publishBeforeDeploy": false,
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "host"
+    },
+    {
+      "action": "publish",
+      "name": "f2v-boundary-ni-msg",
+      "correlationKey": "ORD-3",
+      "variables": {
+        "payload": "spawn",
+        "caseTag": "f2v-msg-boundary-noninterrupting"
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "afterBoundary"
+    },
+    {
+      "action": "observeJob",
+      "element": "host"
+    },
+    {
+      "action": "observeState"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "observeJob",
+        "element": "host",
+        "occurrence": 1,
+        "outcome": "jobObserved",
+        "jobType": "f2vHostNI",
+        "variables": "{\"orderId\":\"ORD-3\"}"
+      },
+      {
+        "step": "observeJob",
+        "element": "host",
+        "occurrence": 2,
+        "outcome": "jobObserved",
+        "jobType": "f2vHostNI",
+        "variables": "{\"orderId\":\"ORD-3\"}",
+        "liveReference": {
+          "outcome": "jobObserved",
+          "jobType": "f2vHostNI",
+          "variables": "{\"caseTag\":\"f2v-msg-boundary-noninterrupting\",\"orderId\":\"ORD-3\",\"payload\":\"spawn\"}"
+        }
+      },
+      {
+        "step": "publish",
+        "outcome": "published"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterBoundary",
+        "outcome": "jobObserved",
+        "jobType": "f2vAfterBoundaryNI",
+        "variables": "{\"caseTag\":\"f2v-msg-boundary-noninterrupting\",\"orderId\":\"ORD-3\",\"payload\":\"spawn\"}"
+      }
+    ],
+    "knownDifference": [
+      "('observeJob', 'host')#2"
+    ]
+  },
+  "matrix": {
+    "docs89": "8.9: boundary message event (cancelActivity=false) создаёт параллельную ветку, хост продолжает работу",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/message/f2v-msg-boundary-noninterrupting.bpmn"
+}

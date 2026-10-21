@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 Ф2в — сообщение: старт по сообщению.
+     Модель ОДНА и та же для обеих сторон: одинаковый XML деплоится и в живой
+     Zeebe 8.5 (camunda/zeebe:8.5.0), и в наш движок. Публикуем сообщение
+     'f2v-start-msg' — у Camunda это стартует инстанс (message start event),
+     у нас — тоже (подписка на старт появляется при деплое). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_f2vMsgStart" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_Start" name="f2v-start-msg" />
+  <bpmn:process id="f2vMsgStart" name="f2vMsgStart" isExecutable="true">
+    <bpmn:startEvent id="msgStart" name="msgStart">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+      <bpmn:messageEventDefinition id="med1" messageRef="Msg_Start" />
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="msgStart" targetRef="afterStart" />
+    <bpmn:serviceTask id="afterStart" name="afterStart">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2vAfterStart" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="afterStart" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

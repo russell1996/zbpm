@@ -1,0 +1,76 @@
+{
+  "id": "f2a-merge-sub",
+  "title": "Слияние переменных completion в скоуп: задание внутри подпроцесса",
+  "bpmn": "process.bpmn",
+  "processId": "f2aMergeSub",
+  "vars": {},
+  "steps": [
+    {
+      "action": "complete",
+      "element": "work",
+      "vars": {
+        "c": "C"
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "dumpIn"
+    },
+    {
+      "action": "complete",
+      "element": "dumpIn",
+      "vars": {}
+    },
+    {
+      "action": "observeJob",
+      "element": "rootDump"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "dumpIn",
+        "outcome": "jobObserved",
+        "jobType": "f2aDumpIn",
+        "variables": {
+          "c": "C",
+          "x": "subValue"
+        }
+      },
+      {
+        "step": "observeJob",
+        "element": "rootDump",
+        "outcome": "jobObserved",
+        "jobType": "f2aRootDump",
+        "variables": {
+          "c": "C"
+        }
+      }
+    ],
+    "note": "live-8.5: переменная скоупа подпроцесса (x) в root НЕ уходит, переменная completion (c) — уходит в root",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "sp": "COMPLETED",
+        "spStart": "COMPLETED",
+        "s1": "COMPLETED",
+        "work": "COMPLETED",
+        "s2": "COMPLETED",
+        "dumpIn": "COMPLETED",
+        "s3": "COMPLETED",
+        "spEnd": "COMPLETED",
+        "f2": "COMPLETED",
+        "rootDump": "CREATED"
+      },
+      "incidents": 0,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Job workers 8.9: «When Completing a job the variables are propagated from the scope of the task to its higher scopes.» (скоуп задания и ВЫШЕ — до root)",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-merge-sub.bpmn"
+}

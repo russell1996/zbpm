@@ -1,0 +1,1508 @@
+{
+  "_comment": [
+    "WO-OPS-30 Ф2б — ЕДИНЫЙ список кейсов HTTP-коннектора (Camunda Connectors 8.5.9 live vs наш коннектор).",
+    "Один источник правды для обеих сторон: этот файл читают и оракул (docs/analysis/c8-oracle/http-connector.js),",
+    "и наш JUnit (zorrobpm-http-connector/.../HttpConnectorConformanceIntegrationTests).",
+    "",
+    "ФОРМАТ job.variables — диалект КАМУНДЫ (как его пишет шаблон io.camunda.connectors.HttpJson.v2):",
+    "  url / method / headers / queryParameters / body / authentication.* / connectionTimeoutInSeconds / readTimeoutInSeconds.",
+    "ФОРМАТ job.taskHeaders — resultVariable / resultExpression / errorExpression / retryBackoff.",
+    "Наша сторона получает РОВНО ТО ЖЕ тело задания (тот же словарь переменных и taskHeaders) —",
+    "перевод в нашу диалекту делает боевой CamundaHttpJsonWorker, который и меряется.",
+    "",
+    "MOCK — общий контракт мок-цели: обе стороны бьют в ОДИН и тот же сервер (в кампании — контейнер",
+    "zbpm-cmp-mock в сети zbpm-cmp_default, оба видят его по имени), поэтому URL и тело запроса",
+    "у сторон совпадают байт в байт. В CI (мока-контейнера нет) наша сторона поднимает встроенный",
+    "Java-мок с ТОЙ ЖЕ таблицей routes — расхождение двух реализаций не спрятать: обе стороны",
+    "сверяют наблюдённый ответ с объявленным в routes, и несовпадение падает.",
+    "",
+    "ОЖИДАНИЯ: expect.live — что ДОЛЖЕН делать живой коннектор Camunda 8.5.9 (по документации 8.9);",
+    "expect.ours — что делает наш коннектор. Расхождение наблюдения с ожиданием = находка (docs!=8.5 / ours differs).",
+    "Исходники ожиданий (live) — docs.camunda.io 8.9 (components/connectors/protocol/rest) + шаблон",
+    "io.camunda.connectors.HttpJson.v2 (version 13 в main; в отчёте Ф0 зафиксирован version 18 — имена входов совпадают).",
+    "",
+    "ИСХОДЫ: live ∈ {completed, bpmnError, failed, noHttpCall}; ours ∈ {success, bpmnError, transient}.",
+    "  completed  — сервис-задача завершена (коннектор завершил job), переменные пришли в дамп-задание;",
+    "  bpmnError  — коннектор бросил BPMN-ошибку (её поймала граница ошибок), код ошибки известен;",
+    "  failed     — коннектор УПАЛ job (ретраится), ни одно следующее задание не появилось;",
+    "  noHttpCall — HTTP-запроса вообще не было (коннектор отверг вход до сокета) —",
+    "  success    — наш воркер вернул переменные успеха (http.status/http.headers/http.body);",
+    "  transient  — наш воркер бросил исключение (транзиентная ветка: FAILED -> ретраи движка)."
+  ],
+  "mockBase": "http://zbpm-cmp-mock:8080",
+  "routes": {
+    "/f2b/ok": {
+      "status": 200,
+      "contentType": "application/json",
+      "bodyMarker": "zorro-f2b"
+    },
+    "/f2b/text": {
+      "status": 200,
+      "contentType": "text/plain",
+      "bodyMarker": "zorro-f2b-text"
+    },
+    "/f2b/empty": {
+      "status": 200,
+      "contentType": "application/json",
+      "bodyMarker": ""
+    },
+    "/f2b/large": {
+      "status": 200,
+      "contentType": "application/json",
+      "bodyMarker": "",
+      "bodyBytes": 2097152
+    },
+    "/f2b/status/404": {
+      "status": 404,
+      "contentType": "application/json",
+      "bodyMarker": "404"
+    },
+    "/f2b/status/500": {
+      "status": 500,
+      "contentType": "application/json",
+      "bodyMarker": "500"
+    },
+    "/f2b/redirect": {
+      "status": 302,
+      "contentType": "text/plain",
+      "bodyMarker": ""
+    },
+    "/f2b/slow": {
+      "status": 200,
+      "contentType": "application/json",
+      "bodyMarker": "zorro-f2b"
+    },
+    "/f2b/headers": {
+      "status": 200,
+      "contentType": "application/json",
+      "bodyMarker": "zorro-f2b",
+      "extraHeaders": {
+        "x-f2b-probe": "v1",
+        "set-cookie": "f2b=1; Path=/"
+      }
+    },
+    "/f2b/close": {
+      "special": "close",
+      "status": 0,
+      "contentType": "",
+      "bodyMarker": ""
+    },
+    "/f2b/oauth-token": {
+      "status": 200,
+      "contentType": "application/json",
+      "bodyMarker": "not-a-token"
+    },
+    "/f2b/medium": {
+      "status": 200,
+      "contentType": "application/json",
+      "bodyMarker": "",
+      "bodyBytes": 102400
+    },
+    "/f2b/1mib": {
+      "status": 200,
+      "contentType": "application/json",
+      "bodyMarker": "",
+      "bodyBytes": 1048576
+    },
+    "/f2b/512kib": {
+      "status": 200,
+      "contentType": "application/json",
+      "bodyMarker": "",
+      "bodyBytes": 524288
+    }
+  },
+  "cases": [
+    {
+      "id": "f2b-get-200-json",
+      "group": "response-class",
+      "title": "GET 200 application/json — успешный ответ",
+      "docs89": "REST connector 8.9: коннектор завершает задание; в контексте ответа доступны status/body/headers; Result variable кладёт полный ответ в переменную процесса.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-get-200-json"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200,
+          "httpBodyType": "JSON",
+          "httpBodyContains": "zorro-f2b"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-get-200-json"
+          }
+        }
+      },
+      "note": "Базовая линия: обе стороны делают ОДИН GET и получают 200."
+    },
+    {
+      "id": "f2b-post-body",
+      "group": "input",
+      "title": "POST с телом запроса и Content-Type",
+      "docs89": "REST connector 8.9: при POST/PUT/PATCH тело передаётся в поле Request body; Content-Type по умолчанию application/json.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "text/plain",
+            "x-f2b-case": "f2b-post-body"
+          },
+          "body": "zorro-f2b-body"
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200
+        },
+        "request": {
+          "method": "POST",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "content-type": "text/plain",
+            "x-f2b-case": "f2b-post-body"
+          },
+          "body": "zorro-f2b-body"
+        },
+        "requestLive": {
+          "method": "POST",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "content-type": "text/plain",
+            "x-f2b-case": "f2b-post-body"
+          },
+          "body": "\"zorro-f2b-body\"",
+          "note": "тело-строка не-JSON живая сторона сериализует как JSON-строку (с кавычками): измерено на 8.5.9"
+        }
+      },
+      "note": "Тело — обычный текст (не JSON): тогда запрос совпадает у сторон байт в байт, а не «похож»."
+    },
+    {
+      "id": "f2b-post-json-body",
+      "group": "input",
+      "title": "POST с JSON-телом (FEEL-строка)",
+      "docs89": "REST connector 8.9: Request body — FEEL-выражение; FEEL-карта сериализуется в JSON тела.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "x-f2b-case": "f2b-post-json-body"
+          },
+          "body": "{\"temp\":25}"
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200
+        },
+        "request": {
+          "method": "POST",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "content-type": "application/json",
+            "x-f2b-case": "f2b-post-json-body"
+          },
+          "body": "{\"temp\":25}"
+        },
+        "requestLive": {
+          "method": "POST",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "content-type": "application/json",
+            "x-f2b-case": "f2b-post-json-body"
+          },
+          "body": "{\"temp\":25}",
+          "note": "тело — валидный JSON: живая сторона шлёт его как есть (без экранирования) — подтверждает правило «валидный JSON — как есть, иначе JSON-строка»"
+        }
+      },
+      "note": "Тело — JSON-текст; на живой стороне подаётся как FEEL-строка (иначе сериализация FEEL-карты может отличаться пробелами)."
+    },
+    {
+      "id": "f2b-post-json-ct-text-body",
+      "group": "input",
+      "title": "POST: Content-Type application/json, а тело — обычный текст",
+      "docs89": "REST connector 8.9: Request body — FEEL-выражение; при application/json тело сериализуется в JSON.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "POST",
+          "headers": {
+            "Content-Type": "application/json",
+            "x-f2b-case": "f2b-post-json-ct-text-body"
+          },
+          "body": "zorro-f2b-body"
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200
+        },
+        "request": {
+          "method": "POST",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "content-type": "application/json",
+            "x-f2b-case": "f2b-post-json-ct-text-body"
+          },
+          "body": "zorro-f2b-body"
+        },
+        "requestLive": {
+          "method": "POST",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "content-type": "application/json",
+            "x-f2b-case": "f2b-post-json-ct-text-body"
+          },
+          "body": "\"zorro-f2b-body\"",
+          "note": "тело-строка не-JSON живая сторона сериализует как JSON-строку (с кавычками): измерено на 8.5.9"
+        }
+      },
+      "note": "Уточняет правило сериализации тела: JSON-Content-Type при текстовом теле."
+    },
+    {
+      "id": "f2b-method-put",
+      "group": "input",
+      "title": "PUT с телом",
+      "docs89": "REST connector 8.9: метод выбирается из списка GET/POST/DELETE/PATCH/PUT.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "PUT",
+          "body": "zorro-f2b-put",
+          "headers": {
+            "x-f2b-case": "f2b-method-put"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200
+        },
+        "request": {
+          "method": "PUT",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-method-put"
+          },
+          "body": "zorro-f2b-put"
+        },
+        "requestLive": {
+          "method": "PUT",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-method-put"
+          },
+          "body": "\"zorro-f2b-put\"",
+          "note": "тело-строка не-JSON живая сторона сериализует как JSON-строку (с кавычками): измерено на 8.5.9"
+        }
+      },
+      "note": "PUT без явного Content-Type — у живой стороны дефолт application/json (док 8.9), у нас заголовка нет."
+    },
+    {
+      "id": "f2b-method-delete",
+      "group": "input",
+      "title": "DELETE без тела",
+      "docs89": "REST connector 8.9: DELETE в списке методов; тело для DELETE не предусмотрено.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "DELETE",
+          "headers": {
+            "x-f2b-case": "f2b-method-delete"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200
+        },
+        "request": {
+          "method": "DELETE",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-method-delete"
+          },
+          "body": ""
+        }
+      },
+      "note": "Метод без тела: наш коннектор тело для DELETE не шлёт (http.body только для POST/PUT/PATCH)."
+    },
+    {
+      "id": "f2b-headers-custom",
+      "group": "input",
+      "title": "Произвольные заголовки запроса",
+      "docs89": "REST connector 8.9: HTTP Headers задаются FEEL-картой и уходят в запрос.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "headers": {
+            "Origin": "https://modeler.camunda.io/",
+            "x-f2b-case": "f2b-headers-custom"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "origin": "https://modeler.camunda.io/",
+            "x-f2b-case": "f2b-headers-custom"
+          }
+        }
+      },
+      "note": "Заголовки — FEEL-карта у Camunda и JSON-текст у нас; на проводе сравнивается то, что сервер реально увидел."
+    },
+    {
+      "id": "f2b-query-parameters",
+      "group": "input",
+      "title": "Параметры запроса (queryParameters)",
+      "docs89": "REST connector 8.9: Query parameters задаются FEEL-картой и добавляются к URL запроса.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "queryParameters": {
+            "q": "Berlin",
+            "units": "metric"
+          },
+          "headers": {
+            "x-f2b-case": "f2b-query-parameters"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {
+            "q": "Berlin",
+            "units": "metric"
+          },
+          "headers": {
+            "x-f2b-case": "f2b-query-parameters"
+          }
+        }
+      },
+      "note": "Сравниваются ПАРЫ query (после URL-кодирования), а не сырой порядок в URL."
+    },
+    {
+      "id": "f2b-auth-basic-inline",
+      "group": "auth",
+      "title": "Basic-аутентификация: логин/пароль в модели (диалект Camunda)",
+      "docs89": "REST connector 8.9 (Basic): Username и Password задаются в модели (в проде — ссылкой {{secrets.X}}), коннектор шлёт Authorization: Basic.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "authentication.type": "basic",
+          "authentication.username": "zorro-user",
+          "authentication.password": "zorro-pass",
+          "headers": {
+            "x-f2b-case": "f2b-auth-basic-inline"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "authorization": "Basic em9ycm8tdXNlcjp6b3Jyby1wYXNz"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "requestOurs": false,
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-auth-basic-inline"
+          }
+        }
+      },
+      "note": "Наш коннектор отвергает ЛЮБОЙ authentication.* кроме .type (инлайн-секрет в модели — стоп). Рабочий путь у нас другой: http.authRef (см. f2b-ours-authref-basic)."
+    },
+    {
+      "id": "f2b-auth-bearer-inline",
+      "group": "auth",
+      "title": "Bearer-токен в модели (диалект Camunda)",
+      "docs89": "REST connector 8.9 (Bearer token): Bearer задаётся в модели (в проде — ссылкой {{secrets.X}}), коннектор шлёт Authorization: Bearer.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "authentication.type": "bearer",
+          "authentication.token": "zorro-token",
+          "headers": {
+            "x-f2b-case": "f2b-auth-bearer-inline"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "authorization": "Bearer zorro-token"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "requestOurs": false,
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-auth-bearer-inline"
+          }
+        }
+      },
+      "note": "Тот же стоп, что и в basic: секрет в модели — не наш контракт."
+    },
+    {
+      "id": "f2b-auth-apikey-inline",
+      "group": "auth",
+      "title": "API key в модели (диалект Camunda, в заголовке)",
+      "docs89": "REST connector 8.9 (API key): имя и значение ключа задаются в модели, location — headers или query.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "authentication.type": "apiKey",
+          "authentication.apiKeyLocation": "headers",
+          "authentication.name": "X-Api-Key",
+          "authentication.value": "zorro-key",
+          "headers": {
+            "x-f2b-case": "f2b-auth-apikey-inline"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "headerXApiKey": "zorro-key"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "requestOurs": false,
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-auth-apikey-inline"
+          }
+        }
+      },
+      "note": "Тот же стоп, что и в basic/bearer."
+    },
+    {
+      "id": "f2b-auth-oauth",
+      "group": "auth",
+      "title": "OAuth 2.0 client-credentials (диалект Camunda)",
+      "docs89": "REST connector 8.9 (OAuth token): отдельный flow с token endpoint, client id/secret и scopes.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "authentication.type": "oauth-client-credentials-flow",
+          "authentication.oauthTokenEndpoint": "{MOCK}/f2b/oauth-token",
+          "authentication.clientId": "zorro-client",
+          "authentication.clientSecret": "zorro-secret",
+          "headers": {
+            "x-f2b-case": "f2b-auth-oauth"
+          },
+          "authentication.clientAuthentication": "credentialsBody",
+          "authentication.audience": "zorro-audience",
+          "authentication.scopes": "zorro-scope"
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "failed"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "requestLive": {
+          "method": "POST",
+          "path": "/f2b/oauth-token",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-auth-oauth"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "На стенде нет OAuth-эндпоинта (token endpoint отвечает 200 не-токеном) — живой коннектор на этом падает; наш отвергает тип заранее."
+    },
+    {
+      "id": "f2b-ours-authref-basic",
+      "group": "auth",
+      "title": "НАША диалекта: Basic через http.authRef (нет аналога у Camunda)",
+      "docs89": "У Camunda секрет резолвится из secret store по ссылке {{secrets.X}} внутри authentication.*; у нас — ссылка http.authRef на серверный секрет.",
+      "oursOnly": true,
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "http.authType": "basic",
+          "http.authRef": "f2b-basic",
+          "headers": {
+            "x-f2b-case": "f2b-ours-authref-basic"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "note": "живая сторона нашу диалекту (http.authType/http.authRef) просто игнорирует — коннектор Camunda таких переменных не читает и делает обычный GET; сравнения авторизации между сторонами нет (строка ours-only)"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200
+        },
+        "requestOurs": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-ours-authref-basic"
+          },
+          "authorization": "Basic em9ycm8tdXNlcjp6b3Jyby1wYXNz"
+        }
+      },
+      "note": "Регресс нашего рабочего пути авторизации (серверный секрет, не литерал в модели). Живой колонки нет — это НЕ «не проверено», а «не существует у Camunda»."
+    },
+    {
+      "id": "f2b-result-variable",
+      "group": "output",
+      "title": "taskHeader resultVariable",
+      "docs89": "REST connector 8.9 (Result variable): полный ответ выгружается в переменную процесса под указанным именем.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-result-variable"
+          }
+        },
+        "taskHeaders": {
+          "resultVariable": "response"
+        }
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "responseStatus": 200,
+          "responseVarName": "response"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-result-variable"
+          }
+        },
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-result-variable"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "Наш коннектор ОТВЕРГАет resultVariable: ответ отдаётся тройкой http.* и выбирается output io-mapping. Это отказ, а не «сработало иначе»."
+    },
+    {
+      "id": "f2b-result-expression",
+      "group": "output",
+      "title": "taskHeader resultExpression (FEEL)",
+      "docs89": "REST connector 8.9 (Result expression): FEEL-контекстное выражение над response, результат — переменные процесса.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-result-expression"
+          }
+        },
+        "taskHeaders": {
+          "resultExpression": "={ probe: response.body.probe }"
+        }
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "responseStatus": 200,
+          "variableProbe": "zorro-f2b"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200,
+          "httpBodyContains": "zorro-f2b"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-result-expression"
+          }
+        }
+      },
+      "note": "У нас resultExpression не исполняется: WARN в лог, ответ идёт в http.*. Заведомое отличие (второй движок FEEL не заводим) — но автору шаблона это ломает ожидание."
+    },
+    {
+      "id": "f2b-error-expression",
+      "group": "output",
+      "title": "taskHeader errorExpression (FEEL → bpmnError)",
+      "docs89": "REST connector 8.9 (Error handling): errorExpression получает error.code/error.variables и может вернуть bpmnError(...), иначе null.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/status/404",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-error-expression"
+          }
+        },
+        "taskHeaders": {
+          "errorExpression": "=if matches(error.code, \"404\") then bpmnError(\"Too hot\", \"body\") else null"
+        }
+      },
+      "expect": {
+        "live": {
+          "outcome": "bpmnError",
+          "responseStatus": 404
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/status/404",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-error-expression"
+          }
+        },
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/status/404",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-error-expression"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "Живой коннектор ошибку 404 превращает в bpmnError по выражению автора; наш — отвергает сам заголовок (выражения ошибок не исполняем). Коды РАЗНЫЕ: это важно для границы ошибок автора."
+    },
+    {
+      "id": "f2b-status-404",
+      "group": "response-class",
+      "title": "Ответ 404 без errorExpression",
+      "docs89": "REST connector 8.9 (Error handling): при ошибке коннектор бросает исключение, тело ответа попадает в переменную error; без errorExpression это ретраибельный отказ задания.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/status/404",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-status-404"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "failed"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_404"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/status/404",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-status-404"
+          }
+        }
+      },
+      "note": "Ключевое расхождение СЕМАНТИКИ: не-2xx у Camunda = ретраибельный отказ задания, у нас = BPMN-ошибка HTTP_404 (ретраев не будет)."
+    },
+    {
+      "id": "f2b-status-500",
+      "group": "response-class",
+      "title": "Ответ 500 без errorExpression",
+      "docs89": "REST connector 8.9 (Error handling): та же логика, что и для 404 — коннектор бросает ошибку, задание ретраится.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/status/500",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-status-500"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "failed"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_500"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/status/500",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-status-500"
+          }
+        }
+      },
+      "note": "Как f2b-status-404, но 500 — «наш сервер упал»: у Camunda это тоже ретраится, у нас — HTTP_500 без ретраев."
+    },
+    {
+      "id": "f2b-redirect-default",
+      "group": "response-class",
+      "title": "Ответ 302 (followRedirects по умолчанию выключен)",
+      "docs89": "REST connector 8.9 (Allow redirects): при выключенном followRedirects коннектор ВОЗВРАЩАЕТ исходный 3xx-ответ вместе с Location, разбираться с редиректом должен процесс.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/redirect",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-redirect-default"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/redirect",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-redirect-default"
+          }
+        }
+      },
+      "note": "У нас ЛЮБОЙ 3xx при max-redirects=0 (дефолт) — детерминированная ошибка конфигурации; у Camunda 3xx — нормальный ответ. Расхождение поведения, не только формы."
+    },
+    {
+      "id": "f2b-follow-redirects-true",
+      "group": "response-class",
+      "title": "followRedirects=true (следовать за редиректом)",
+      "docs89": "REST connector 8.9 (Allow redirects): при включённом followRedirects коннектор сам следует за 3xx и возвращает финальный ответ.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/redirect",
+          "method": "GET",
+          "followRedirects": "true",
+          "headers": {
+            "x-f2b-case": "f2b-follow-redirects-true"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/redirect",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-follow-redirects-true"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "Наш бюджет редиректов — админская ручка (max-redirects), из BPMN его не расширить. Разрешение автору — отдельная задача."
+    },
+    {
+      "id": "f2b-empty-body",
+      "group": "response-class",
+      "title": "200 с пустым телом",
+      "docs89": "REST connector 8.9: body — тело ответа; отдельного формата ответа в 8.9 ещё нет (формат As JSON/As text появился в 8.10).",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/empty",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-empty-body"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/empty",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-empty-body"
+          }
+        }
+      },
+      "note": "Пустое тело при content-type application/json: у нас тип http.body = JSON и значение пустое."
+    },
+    {
+      "id": "f2b-text-plain",
+      "group": "response-class",
+      "title": "200 text/plain (тело не JSON)",
+      "docs89": "REST connector 8.9: body — тело ответа; в 8.10 явно сказано, что режим As JSON падает на не-JSON теле (в 8.9 этого ещё нет).",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/text",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-text-plain"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200,
+          "httpBodyType": "STRING",
+          "httpBodyContains": "zorro-f2b-text"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/text",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-text-plain"
+          }
+        }
+      },
+      "note": "Тип http.body у нас выводится из Content-Type: json → JSON, иначе STRING."
+    },
+    {
+      "id": "f2b-medium-body",
+      "group": "response-class",
+      "title": "Тело ответа 100 КиБ (граница размера)",
+      "docs89": "REST connector 8.9: ограничения на размер ответа не описаны (сторож ~1.5 МиБ появился в 8.10).",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/medium",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-medium-body"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/medium",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-medium-body"
+          }
+        }
+      },
+      "note": "Промежуточная точка между 100 КиБ и 2 МиБ: показывает, где именно ломается размер."
+    },
+    {
+      "id": "f2b-large-body",
+      "group": "response-class",
+      "title": "Большое тело ответа (2 МиБ)",
+      "docs89": "REST connector 8.9: ограничения на размер ответа не описаны (сторож ~1.5 МиБ появился в 8.10).",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/large",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-large-body"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/large",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-large-body"
+          }
+        }
+      },
+      "note": "У нас жёсткий кап 1 МиБ (max-response-bytes) — молчаливого усечения нет, но задание падает."
+    },
+    {
+      "id": "f2b-medium-body-result-variable",
+      "group": "response-class",
+      "title": "100 КиБ тела + resultVariable (ответ кладётся в переменную)",
+      "docs89": "REST connector 8.9: Result variable выгружает полный ответ в переменную процесса; ограничений на размер НЕТ в 8.9 (сторож ~1.5 МиБ появился в 8.10).",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/medium",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-medium-body-result-variable"
+          }
+        },
+        "taskHeaders": {
+          "resultVariable": "response"
+        }
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "responseStatus": 200,
+          "responseVarName": "response"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/medium",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-medium-body-result-variable"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "Ответ ПЛЮС resultVariable: переменная процесса несёт всё тело — проверяем, влезает ли такой payload."
+    },
+    {
+      "id": "f2b-large-body-result-variable",
+      "group": "response-class",
+      "title": "2 МиБ тела + resultVariable (ответ кладётся в переменную)",
+      "docs89": "REST connector 8.9: Result variable выгружает полный ответ в переменную процесса; ограничений на размер НЕТ в 8.9 (сторож ~1.5 МиБ появился в 8.10).",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/large",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-large-body-result-variable"
+          }
+        },
+        "taskHeaders": {
+          "resultVariable": "response"
+        }
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "responseStatus": 200,
+          "responseVarName": "response"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/large",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-large-body-result-variable"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "Тот же payload, но в 20 раз больше. Если живая сторона падает — падает САМО ЗАВЕРШЕНИЕ задания (payload не влезает в брокер), а не HTTP-вызов."
+    },
+    {
+      "id": "f2b-1mib-body-result-variable",
+      "group": "response-class",
+      "title": "1 МиБ тела + resultVariable (ровно наш кап)",
+      "docs89": "REST connector 8.9: Result variable выгружает полный ответ в переменную; ограничений на размер в 8.9 не описано.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/1mib",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-1mib-body-result-variable"
+          }
+        },
+        "taskHeaders": {
+          "resultVariable": "response"
+        }
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "responseStatus": 200,
+          "responseVarName": "response"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/1mib",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-1mib-body-result-variable"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "Ровно 1 МиБ — наш кап max-response-bytes. Точка, где можно сравнить границы."
+    },
+    {
+      "id": "f2b-512kib-body-result-variable",
+      "group": "response-class",
+      "title": "512 КиБ тела + resultVariable (второй bracket по размеру)",
+      "docs89": "REST connector 8.9: Result variable выгружает полный ответ в переменную; ограничений на размер в 8.9 не описано.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/512kib",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-512kib-body-result-variable"
+          }
+        },
+        "taskHeaders": {
+          "resultVariable": "response"
+        }
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "responseStatus": 200,
+          "responseVarName": "response"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/512kib",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-512kib-body-result-variable"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "Второй bracket: между 100 КиБ (проходит) и 1 МиБ (не проходит)."
+    },
+    {
+      "id": "f2b-read-timeout",
+      "group": "timeout",
+      "title": "Read timeout: сервер отвечает дольше readTimeout",
+      "docs89": "REST connector 8.9 (Network communication timeouts): read timeout — сколько ждать данных после установления соединения; по умолчанию 20 с, 0 = бесконечно.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/slow?ms=4000",
+          "method": "GET",
+          "readTimeoutInSeconds": "1",
+          "headers": {
+            "x-f2b-case": "f2b-read-timeout"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "failed"
+        },
+        "ours": {
+          "outcome": "transient"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/slow",
+          "query": {
+            "ms": "4000"
+          },
+          "headers": {
+            "x-f2b-case": "f2b-read-timeout"
+          }
+        }
+      },
+      "note": "У нас таймаут — транзиентная ветка (исключение → FAILED → ретраи движка), а не детерминированная ошибка."
+    },
+    {
+      "id": "f2b-timeout-zero",
+      "group": "timeout",
+      "title": "readTimeoutInSeconds=0 (бесконечное ожидание)",
+      "docs89": "REST connector 8.9: 0 = неограниченное ожидание чтения.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/slow?ms=200",
+          "method": "GET",
+          "readTimeoutInSeconds": "0",
+          "headers": {
+            "x-f2b-case": "f2b-timeout-zero"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG"
+        },
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/slow",
+          "query": {
+            "ms": "200"
+          },
+          "headers": {
+            "x-f2b-case": "f2b-timeout-zero"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "У нас таймаут обязан быть в 1..max — 0 не значит «бесконечно» (свой кап, чтобы воркер не висел вечно)."
+    },
+    {
+      "id": "f2b-response-headers",
+      "group": "output",
+      "title": "Заголовки ответа (в т.ч. set-cookie)",
+      "docs89": "REST connector 8.9: в контексте ответа доступны headers — все, что вернул сервер.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/headers",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-response-headers"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "success",
+          "httpStatus": 200,
+          "httpHeadersContain": "x-f2b-probe",
+          "httpHeadersDoNotContain": "set-cookie"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/headers",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-response-headers"
+          }
+        }
+      },
+      "note": "У нас set-cookie ВЫРЕЗАЕТСЯ из http.headers (безопасность, решение maintainer п.4) — у Camunda ответа нет."
+    },
+    {
+      "id": "f2b-retry-backoff",
+      "group": "timeout",
+      "title": "Повтор попытки: retries=3 + retryBackoff=PT2S после ответа 500",
+      "docs89": "REST connector 8.9: у коннектора есть taskHeader retryBackoff (ISO-8601) — пауза перед следующей попыткой; число попыток — в zeebe:taskDefinition (retries).",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "retries": 3,
+        "variables": {
+          "url": "{MOCK}/f2b/status/500",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-retry-backoff"
+          }
+        },
+        "taskHeaders": {
+          "retryBackoff": "PT2S"
+        }
+      },
+      "expect": {
+        "live": {
+          "outcome": "failed",
+          "retriesMeasured": true
+        },
+        "ours": {
+          "outcome": "notApplicable",
+          "notApplicable": true,
+          "reason": "backoff между попытками — свойство протокола job, а не семантика воркера: измерено в Ф2а (корень R1 «нет backoff между попытками»)"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/status/500",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-retry-backoff"
+          }
+        }
+      },
+      "note": "Живая сторона: сколько раз коннектор повторил запрос и с каким интервалом — это видно по журналу мока (число запросов и метки времени). Наша сторона на уровне воркера не измеряется: повтор задания — забота движка (Ф2а, R1)."
+    },
+    {
+      "id": "f2b-network-error",
+      "group": "timeout",
+      "title": "Сетевая ошибка: сервер рвёт соединение",
+      "docs89": "REST connector 8.9: при сетевой ошибке коннектор бросает исключение, задание ретраится (то же, что при не-2xx).",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/close",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-network-error"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "failed"
+        },
+        "ours": {
+          "outcome": "transient"
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/close",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-network-error"
+          }
+        }
+      },
+      "note": "Оборванное соединение — транзиентная ошибка у нас (исключение → FAILED → ретраи движка)."
+    },
+    {
+      "id": "f2b-ssrf-private-host",
+      "group": "by-design",
+      "title": "ПРИВАТНЫЙ хост при allow-private-networks=false (наша защита)",
+      "docs89": "У Camunda SSRF-защиты нет: коннектор ходит куда указан (кроме настроек прокси в Self-Managed).",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-ssrf-private-host"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_CONFIG",
+          "allowPrivateNetworks": false
+        },
+        "requestLive": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-ssrf-private-host"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "by design: наш SSRF-гейт — единственная точка проверки исходящих URL; приватный адрес без явного разрешения админа отвергается ДО сокета."
+    },
+    {
+      "id": "f2b-connector-disabled",
+      "group": "by-design",
+      "title": "Коннектор выключен (zorrobpm.http-connector.enabled=false)",
+      "docs89": "У Camunda коннектор включён всегда — отдельного «выключателя» у него нет.",
+      "job": {
+        "type": "io.camunda:http-json:1",
+        "variables": {
+          "url": "{MOCK}/f2b/ok",
+          "method": "GET",
+          "headers": {
+            "x-f2b-case": "f2b-connector-disabled"
+          }
+        },
+        "taskHeaders": {}
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed"
+        },
+        "ours": {
+          "outcome": "bpmnError",
+          "errorCode": "HTTP_CONNECTOR_DISABLED",
+          "connectorEnabled": false
+        },
+        "request": {
+          "method": "GET",
+          "path": "/f2b/ok",
+          "query": {},
+          "headers": {
+            "x-f2b-case": "f2b-connector-disabled"
+          }
+        },
+        "requestOurs": false
+      },
+      "note": "by design: коннектор у нас выключен по умолчанию и включается админом; выключенный коннектор отвечает детерминированной ошибкой, а не «молчащим успехом». Живая сторона выключателя не имеет — коннектор Camunda всегда включён."
+    }
+  ]
+}

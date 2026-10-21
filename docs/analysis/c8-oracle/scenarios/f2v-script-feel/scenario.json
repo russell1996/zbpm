@@ -1,0 +1,40 @@
+{
+  "id": "f2v-script-feel",
+  "title": "Script task: FEEL-выражение с resultVariable",
+  "bpmn": "process.bpmn",
+  "processId": "f2vScript",
+  "vars": {
+    "amount": 21
+  },
+  "start": "none",
+  "publishBeforeDeploy": false,
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "afterScript"
+    },
+    {
+      "action": "observeState"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterScript",
+        "outcome": "jobObserved",
+        "jobType": "f2vAfterScript",
+        "variables": "{\"amount\":21,\"doubled\":42}"
+      }
+    ]
+  },
+  "matrix": {
+    "docs89": "8.9: script task с zeebe:script (FEEL) — исполняется воркером скриптов; результат кладётся в resultVariable",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/message/f2v-script-feel.bpmn"
+}

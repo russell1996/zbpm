@@ -1,0 +1,55 @@
+{
+  "id": "f2a-throw-boundary",
+  "title": "throwError, пойманный границей ошибки",
+  "bpmn": "process.bpmn",
+  "processId": "f2aThrowBoundary",
+  "vars": {},
+  "steps": [
+    {
+      "action": "throwError",
+      "element": "work",
+      "code": "E1",
+      "message": "boom"
+    },
+    {
+      "action": "observeJob",
+      "element": "after"
+    },
+    {
+      "action": "observeJob",
+      "element": "dump"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJob",
+        "element": "after",
+        "outcome": "jobObserved",
+        "jobType": "f2aAfter"
+      },
+      {
+        "step": "observeJob",
+        "element": "dump",
+        "outcome": "noJob"
+      }
+    ],
+    "note": "live-8.5: граница ловит ошибку, поток продолжается из границы, обычный исходящий поток НЕ берётся",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "CANCELLED",
+        "f4": "COMPLETED",
+        "after": "CREATED"
+      },
+      "incidents": 0,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Error events 8.9: «A thrown error can be caught by an error catch event, specifically using an error boundary event or an error event subprocess.» / «Error boundary events and error event subprocesses must be interrupting... If the error is thrown for a job, the associated task is terminated first.»",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-throw-boundary.bpmn"
+}

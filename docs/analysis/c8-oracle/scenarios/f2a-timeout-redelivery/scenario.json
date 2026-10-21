@@ -1,0 +1,60 @@
+{
+  "id": "f2a-timeout-redelivery",
+  "title": "Таймаут активации задания и повторная выдача",
+  "bpmn": "process.bpmn",
+  "processId": "f2aTimeoutRedelivery",
+  "vars": {},
+  "steps": [
+    {
+      "action": "activateAndAbandon",
+      "element": "work",
+      "timeoutMs": 2000
+    },
+    {
+      "action": "wait",
+      "ms": 5000
+    },
+    {
+      "action": "observeJob",
+      "element": "work"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "activateAndAbandon",
+        "element": "work",
+        "outcome": "dispatchedNoActivationTimeout"
+      }
+    ],
+    "liveReference": [
+      {
+        "step": "activateAndAbandon",
+        "element": "work",
+        "outcome": "activatedAndAbandoned",
+        "retries": 3
+      },
+      {
+        "step": "observeJob",
+        "element": "work",
+        "outcome": "jobObserved",
+        "retries": 3
+      }
+    ],
+    "note": "РАСХОЖДЕНИЕ (корень R3): live-8.5 по истечении таймаута активации отдаёт задание СНОВА (бюджет не тратится); у нас нет ни активации, ни лизы — задание ушло в очередь один раз",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "CREATED"
+      },
+      "incidents": 0,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Job workers 8.9 (Timeouts): «If the job is not completed or failed within the configured job activation timeout, Zeebe reassigns the job to another job worker. This does not affect the number of remaining retries.»",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-timeout-redelivery.bpmn"
+}

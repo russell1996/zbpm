@@ -1,0 +1,47 @@
+{
+  "id": "f2v-dmn-called",
+  "title": "Business rule task: вызов DMN-решения (zeebe:calledDecision)",
+  "bpmn": "process.bpmn",
+  "processId": "f2vDmn",
+  "vars": {
+    "amount": 21
+  },
+  "start": "none",
+  "publishBeforeDeploy": false,
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "afterDecision"
+    },
+    {
+      "action": "observeState"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterDecision",
+        "outcome": "jobObserved",
+        "jobType": "f2vAfterDecision",
+        "variables": "{\"amount\":21,\"decision\":20}",
+        "liveReference": {
+          "outcome": "noJob",
+          "jobType": "f2vAfterDecision"
+        }
+      }
+    ],
+    "knownDifference": [
+      "('observeJob', 'afterDecision')#1"
+    ]
+  },
+  "matrix": {
+    "docs89": "8.9: business rule task с zeebe:calledDecision — вызов DMN-решения, результат в resultVariable",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/message/f2v-dmn-called.bpmn"
+}

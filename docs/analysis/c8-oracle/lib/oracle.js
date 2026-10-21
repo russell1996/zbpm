@@ -57,13 +57,17 @@ async function topology(client) {
 /**
  * Activate jobs of one type (server-streaming call), collecting them into an array.
  * `worker` is fixed to 'c8-oracle'; a 30s activation timeout is enough for these scenarios.
+ *
+ * WO-OPS-30 F2a: `timeoutMs` overrides the activation timeout — the job timeout /
+ * redelivery probe needs a SHORT activation timeout (the job must become available
+ * again after it expires), everything else keeps the 30s default.
  */
-function activate(client, type, max = 100) {
+function activate(client, type, max = 100, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     const call = client.ActivateJobs({
       type,
       worker: 'c8-oracle',
-      timeout: '30000',
+      timeout: String(timeoutMs),
       maxJobsToActivate: max,
       requestTimeout: '3000',
     });
@@ -140,6 +144,57 @@ async function complete(client, job, variables) {
   console.log(`COMPLETE key=${job.key} type=${job.type} vars=${JSON.stringify(variables || {})}`);
 }
 
+/**
+ * WO-OPS-30 F2a: fail a job (Camunda `failJob`).
+ * `retries` — the ABSOLUTE number of retries the job should have left (Camunda 8
+ * semantics: the value is set, not a delta); `retryBackOffMs` — the delay before the
+ * next attempt (the job is not offered while the backoff runs).
+ */
+async function failJob(client, job, retries, errorMessage, retryBackOffMs = 0, variables) {
+  await unary(client, 'FailJob', {
+    jobKey: job.key,
+    retries: retries === undefined || retries === null ? 0 : retries,
+    errorMessage: errorMessage || '',
+    retryBackOff: retryBackOffMs || 0,
+    variables: JSON.stringify(variables || {}),
+  });
+  console.log(
+    `FAIL key=${job.key} type=${job.type} retries=${retries} backoff=${retryBackOffMs || 0} msg="${errorMessage || ''}" vars=${JSON.stringify(variables || {})}`,
+  );
+}
+
+/**
+ * WO-OPS-30 F2a: throw a BPMN error from a job (Camunda `throwError`) — caught by a
+ * matching error boundary event, otherwise an incident is raised on the element.
+ */
+async function throwError(client, job, errorCode, errorMessage) {
+  await unary(client, 'ThrowError', {
+    jobKey: job.key,
+    errorCode: errorCode || '',
+    errorMessage: errorMessage || '',
+  });
+  console.log(`THROW_ERROR key=${job.key} type=${job.type} code=${errorCode} msg="${errorMessage || ''}"`);
+}
+
+/**
+ * WO-OPS-30 F2c: publish a message (Camunda `PublishMessage`).
+ * `correlationKey` — empty string means "no key" (broadcast by name);
+ * `timeToLive` — how long the message may live on the broker (ms, 0 = default);
+ * `variables` — the payload delivered to the woken subscription / started instance.
+ */
+async function publishMessage(client, name, correlationKey, timeToLive, variables) {
+  const res = await unary(client, 'PublishMessage', {
+    name,
+    correlationKey: correlationKey || '',
+    timeToLive: String(timeToLive || 0),
+    variables: JSON.stringify(variables || {}),
+  });
+  console.log(
+    `PUBLISH name=${name} key=${correlationKey || '-'} ttl=${timeToLive || 0} vars=${JSON.stringify(variables || {})} -> key=${res.key}`,
+  );
+  return res;
+}
+
 /** Human-readable dump of a job batch (type/elementId/pi/vars) for oracle logs. */
 function show(tag, jobs) {
   console.log(`--- ${tag}: ${jobs.length} job(s) ---`);
@@ -180,6 +235,9 @@ module.exports = {
   cancelPi,
   poll,
   complete,
+  failJob,
+  throwError,
+  publishMessage,
   show,
   itemOf,
   parseVars,

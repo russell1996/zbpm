@@ -1,0 +1,60 @@
+{
+  "id": "f2a-fail-backoff",
+  "title": "fail с backoff: задание не выдаётся до истечения backoff",
+  "bpmn": "process.bpmn",
+  "processId": "f2aFailBackoff",
+  "vars": {},
+  "steps": [
+    {
+      "action": "fail",
+      "element": "work",
+      "message": "backoff",
+      "retries": 2,
+      "retryBackOffMs": 5000
+    },
+    {
+      "action": "observeJobImmediately",
+      "element": "work"
+    },
+    {
+      "action": "wait",
+      "ms": 6000
+    },
+    {
+      "action": "observeJob",
+      "element": "work"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "observeJobImmediately",
+        "element": "work",
+        "outcome": "jobObserved",
+        "retries": 2
+      }
+    ],
+    "liveReference": [
+      {
+        "step": "observeJobImmediately",
+        "element": "work",
+        "outcome": "notActivatable"
+      }
+    ],
+    "note": "РАСХОЖДЕНИЕ (корень R1): live-8.5 не выдаёт задание до истечения retryBackOff; у нас повтор уходит в очередь сразу",
+    "leak": {
+      "activities": {
+        "start": "COMPLETED",
+        "f1": "COMPLETED",
+        "work": "CREATED"
+      },
+      "incidents": 0,
+      "_note": "ПОЛНЫЙ набор активностей инстанса (включая start и потоки) — сравнивается полностью: «забытая» живая активность валит тест (находка reviewer Б-3)"
+    }
+  },
+  "matrix": {
+    "docs89": "Job workers 8.9: «When failing a job it is possible to specify a retry back off. This back off allows waiting for a specified amount of time before retrying the job... If no retry back off the job is immediately retried.»",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/job-protocol/f2a-fail-backoff.bpmn"
+}

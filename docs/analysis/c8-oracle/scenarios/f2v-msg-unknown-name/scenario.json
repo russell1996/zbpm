@@ -1,0 +1,50 @@
+{
+  "id": "f2v-msg-unknown-name",
+  "title": "Публикация в пустоту: никто не слушает + TTL",
+  "bpmn": "process.bpmn",
+  "processId": "f2vMsgStart",
+  "vars": {},
+  "start": "message",
+  "publishBeforeDeploy": false,
+  "steps": [
+    {
+      "action": "publish",
+      "name": "f2v-unknown-msg",
+      "timeToLive": 60000,
+      "variables": {
+        "payload": "nobody",
+        "caseTag": "f2v-msg-unknown-name"
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "afterStart"
+    },
+    {
+      "action": "observeState"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "publish",
+        "outcome": "published"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterStart",
+        "outcome": "noJob",
+        "jobType": "f2vAfterStart"
+      }
+    ]
+  },
+  "matrix": {
+    "docs89": "8.9: PublishMessage с timeToLive — сообщение с TTL>0 буферизуется на брокере до истечения TTL; при TTL=0 (по умолчанию) сообщение отбрасывается, если подписки нет",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/message/f2v-msg-start.bpmn"
+}

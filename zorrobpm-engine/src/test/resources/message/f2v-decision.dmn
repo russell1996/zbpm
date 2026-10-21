@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-30 Ф2в — DMN-решение для кейса f2v-dmn-called (decisionId=f2vDecision).
+     Порог 10: amount >= 10 -> doubled=20, иначе doubled=5. -->
+<definitions xmlns="https://www.omg.org/spec/DMN/20191111/MODEL/" id="Definitions_f2vDecision" name="f2v-decision" namespace="http://camunda.org/schema/1.0/dmn">
+  <decision id="f2vDecision" name="F2V Decision">
+    <decisionTable id="DecisionTable_f2v" hitPolicy="FIRST">
+      <input id="Input_1" label="Amount">
+        <inputExpression id="InputExpression_1" typeRef="number" expressionLanguage="feel">
+          <text>amount</text>
+        </inputExpression>
+      </input>
+      <output id="Output_1" label="Doubled" name="doubled" typeRef="number" />
+      <rule id="Rule_1">
+        <inputEntry id="In_1"><text>&gt;= 10</text></inputEntry>
+        <outputEntry id="Out_1"><text>20</text></outputEntry>
+      </rule>
+      <rule id="Rule_2">
+        <inputEntry id="In_2"><text>&lt; 10</text></inputEntry>
+        <outputEntry id="Out_2"><text>5</text></outputEntry>
+      </rule>
+    </decisionTable>
+  </decision>
+</definitions>

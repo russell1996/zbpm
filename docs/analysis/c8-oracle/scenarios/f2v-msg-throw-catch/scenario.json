@@ -1,0 +1,75 @@
+{
+  "id": "f2v-msg-throw-catch",
+  "title": "Бросок сообщения процессом и приём сообщения",
+  "bpmn": "process.bpmn",
+  "processId": "f2vThrowCatch",
+  "vars": {
+    "orderId": "ORD-1"
+  },
+  "start": "none",
+  "publishBeforeDeploy": false,
+  "steps": [
+    {
+      "action": "observeJob",
+      "element": "throw1"
+    },
+    {
+      "action": "completeJob",
+      "element": "throw1",
+      "vars": {}
+    },
+    {
+      "action": "publish",
+      "name": "f2v-throw-msg",
+      "correlationKey": "ORD-1",
+      "variables": {
+        "payload": "late",
+        "caseTag": "f2v-msg-throw-catch"
+      }
+    },
+    {
+      "action": "observeJob",
+      "element": "afterCatch"
+    },
+    {
+      "action": "observeState"
+    }
+  ],
+  "expected": {
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "observeJob",
+        "element": "throw1",
+        "outcome": "jobObserved",
+        "jobType": "f2vThrow",
+        "variables": "{\"orderId\":\"ORD-1\"}"
+      },
+      {
+        "step": "completeJob",
+        "element": "throw1",
+        "outcome": "completed",
+        "jobType": "f2vThrow"
+      },
+      {
+        "step": "publish",
+        "outcome": "published"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterCatch",
+        "outcome": "jobObserved",
+        "jobType": "f2vAfterCatch",
+        "variables": "{\"caseTag\":\"f2v-msg-throw-catch\",\"orderId\":\"ORD-1\",\"payload\":\"late\"}"
+      }
+    ]
+  },
+  "matrix": {
+    "docs89": "8.9: бросок сообщения из процесса (intermediate message throw event) публикует сообщение; в 8.9 бросок — элемент с zeebe:publishMessage",
+    "ours": ""
+  },
+  "_source": "zorrobpm-engine/src/test/resources/message/f2v-msg-throw-catch.bpmn"
+}
