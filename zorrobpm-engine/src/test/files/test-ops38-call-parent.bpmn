@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WO-OPS-38: родитель с call activity на ops38-call-child.
+
+  Отмена родителя каскадно УБИВАЕТ дочерний инстанс (InstanceCancellationService.kill
+  — «дерево call activity», WO-AUDIT-12 F-02). Именно этот путь снимал ТОЛЬКО
+  message-подписки ребёнка: signal-подписки (граница + signal-started ESP)
+  переживали kill и оставались в мёртвом дочернем инстансе.
+
+  После call activity — user task (parentWait): отменённый родитель НЕ должен
+  продолжить поток (G-P: нет живых activity в завершённом инстансе).
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="defs-ops38-callparent" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="ops38-call-parent" name="ops38-call-parent" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flowP1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flowP1" name="flowP1" sourceRef="startEvent" targetRef="call" />
+    <bpmn:callActivity id="call" name="call">
+      <bpmn:extensionElements>
+        <zeebe:calledElement processId="ops38-call-child" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowP1</bpmn:incoming>
+      <bpmn:outgoing>flowP2</bpmn:outgoing>
+    </bpmn:callActivity>
+    <bpmn:sequenceFlow id="flowP2" name="flowP2" sourceRef="call" targetRef="parentWait" />
+    <bpmn:userTask id="parentWait" name="parentWait">
+      <bpmn:extensionElements>
+        <zeebe:userTask />
+      </bpmn:extensionElements>
+      <bpmn:incoming>flowP2</bpmn:incoming>
+      <bpmn:outgoing>flowP3</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flowP3" name="flowP3" sourceRef="parentWait" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>flowP3</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

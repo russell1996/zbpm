@@ -2,7 +2,6 @@ package com.zorrodev.bpm.engine.service;
 
 import com.zorrodev.bpm.engine.service.db.ActivityDbOperations;
 import com.zorrodev.bpm.engine.service.db.IncidentDbOperations;
-import com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations;
 import com.zorrodev.bpm.engine.service.db.ProcessInstanceDbOperations;
 import com.zorrodev.bpm.engine.service.db.TimerDbOperations;
 import lombok.RequiredArgsConstructor;
@@ -62,7 +61,6 @@ public class InstanceCancellationService {
     private final ActivityDbOperations activityDbOperations;
     private final IncidentDbOperations incidentDbOperations;
     private final TimerDbOperations timerDbOperations;
-    private final MessageSubscriptionDbOperations messageSubscriptionDbOperations;
 
     /**
      * Убивает всех ещё живых потомков инстанса (дерево call activity) —
@@ -95,7 +93,11 @@ public class InstanceCancellationService {
         activityDbOperations.cancelErrorActivities(processInstanceId);
         incidentDbOperations.completeOpenIncidentsByProcessInstanceId(processInstanceId);
         timerDbOperations.deleteTimerJobsByProcessInstanceId(processInstanceId);
-        messageSubscriptionDbOperations.deleteMessageSubscriptionsByProcessInstanceId(processInstanceId);
+        // WO-OPS-38: подписки (message И signal) снимает ТЕРМИНАЛЬНЫЙ переход
+        // инстанса — ProcessInstanceDbOperationsImpl.cancelProcessInstance, тем же
+        // FinishedInstanceSubscriptionCleaner, что и при нормальном завершении.
+        // Раньше здесь стояло удаление ТОЛЬКО message-подписок, а signal-подписки
+        // переживали kill: broadcast сигнала уходил в убитого ребёнка.
         processInstanceDbOperations.cancelProcessInstance(processInstanceId);
     }
 }
