@@ -12,8 +12,7 @@
 # проверять) — энд-тоенд «сборка красная на живой утечке» доказан мутацией
 # (отчёт WO-OPS-32, раздел POF).
 LeakInvariantListenerTests :: WO-OPS-26 — тест самого инварианта намеренно оставляет живую activity в завершённом инстансе (orderProbe и проверки детектора); энд-тоенд «сборка красная» доказан мутацией в отчёте WO-OPS-32 (POF).
-CompensationWaitIntegrationTests#waitForCompletionFalse_throwContinuesWithoutWaitingForHandler :: WO-OPS-35 — компенсация без ожидания: handler-задача (service_task compHandler) остаётся жить в завершённом инстансе, её job уйдёт воркеру по мёртвому инстансу.
-AdHocJobWorkerIntegrationTests#fulfilledResult_withoutCancelLeavesRestAlive :: WO-OPS-35 — ad-hoc scope закрыт с cancelRemaining=false: внутренняя задача taskY остаётся жить, инстанс при этом завершается.
-AdHocSubProcessIntegrationTests#cancelFalse_scopeFinishesImmediatelyAndSecondLivesOn :: WO-OPS-35 — ad-hoc scope закрыт с cancelRemaining=false: внутренняя задача taskD2 остаётся жить, инстанс при этом завершается.
-MetricsWiringIntegrationTests#cancelInstance_decrementsActiveGaugeWithoutCompleted :: WO-OPS-35 — низкоуровневый DBService.cancelProcessInstance помечает инстанс отменённым, но не гасит его activity (taskM остаётся CREATED); гашение делает вызывающий (REST-путь делает, прямой вызов — нет).
-MetricsWiringIntegrationTests#incidentRaise_complete_incidentFailedAndStuckPair :: WO-OPS-35 — низкоуровневый DBService.cancelProcessInstance помечает инстанс отменённым, но не гасит его activity (taskM остаётся CREATED).
+# WO-OPS-35: записи этого WO сняты (инвариант в режиме enforce) — см. отчёт
+# docs/internal: компенсация без ожидания гасит handler-задачу
+# вместе с инстансом, ad-hoc с cancelRemainingInstances=false ЖДЁТ остаток
+# (Camunda 8.9), низкоуровневая отмена гасит activity сама.

@@ -242,16 +242,31 @@ public class AdHocJobWorkerIntegrationTests {
     @Transactional
     @Test
     void fulfilledResult_withoutCancelLeavesRestAlive() throws Exception {
-        // Criterion 5, second half: cancel=false spares the remaining elements.
+        // Camunda 8.9 (docs.camunda.io, «Ad-hoc sub-processes»): «If set to false, the
+        // ad-hoc sub-process waits for the completion of all active instances before
+        // completing.» Прежнее поведение движка («скоуп закрыт, остаток жив, инстанс мёртв»)
+        // несовместимо ни с Camunda, ни с инвариантом утечек (WO-OPS-35): инстанс
+        // завершался, а taskY оставалась жить в мёртвом инстансе.
         UUID pi = start();
         UUID scopeId = scope(pi).getId();
 
         runtimeService.completeAdHocScopeJob(scopeId, result(jobToken(pi, scopeId), false, false, activate("taskY")));
         runtimeService.completeAdHocScopeJob(scopeId, result(jobToken(pi, scopeId), true, false));
 
-        assertThat(tasks(pi, "adhoc", ActivityStatus.COMPLETED)).hasSize(1);
+        // the scope did NOT close — it waits for taskY, which is NOT cancelled
+        assertThat(tasks(pi, "adhoc", ActivityStatus.COMPLETED)).isEmpty();
+        assertThat(tasks(pi, "adhoc", ActivityStatus.CREATED)).hasSize(1);
         assertThat(tasks(pi, "taskY", ActivityStatus.CREATED)).hasSize(1);
         assertThat(tasks(pi, "taskY", ActivityStatus.CANCELLED)).isEmpty();
+        assertThat(instanceDone(pi)).isFalse();
+
+        // the last active instance completes → a new scope job is offered → the worker
+        // fulfills it → the scope closes and the instance ends
+        runtimeService.completeUserTask(tasks(pi, "taskY", ActivityStatus.CREATED).get(0).getId(), List.of());
+        runtimeService.completeAdHocScopeJob(scopeId, result(jobToken(pi, scopeId), true, false));
+
+        assertThat(tasks(pi, "adhoc", ActivityStatus.COMPLETED)).hasSize(1);
+        assertThat(instanceDone(pi)).isTrue();
     }
 
     @Transactional

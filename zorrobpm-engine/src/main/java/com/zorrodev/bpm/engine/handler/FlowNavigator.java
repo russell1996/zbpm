@@ -206,10 +206,14 @@ public class FlowNavigator {
                     // Chain end of some activated root (or an unrelated dead end on this token):
                     // the chain settled — evaluate even without an arrival of its own.
                     if (evaluateScopeDone(processInstanceId, bpmn, scope, state, active, cancelled)) {
-                        finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope,
+                        boolean finished = finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope,
                             state == null ? null : AdHocJoin.joinKey(scope.getId(), state.batchUuid()), executor, null,
                             active, cancelled);
-                        outcome = ArrivalOutcome.SCOPE_FINISHED;
+                        // WO-OPS-35: скоуп мог остаться ОТКРЫТЫМ (cancelRemainingInstances=false,
+                        // остаток жив) — тогда ветку он не поглотил, поток идёт своим ходом.
+                        if (finished) {
+                            outcome = ArrivalOutcome.SCOPE_FINISHED;
+                        }
                     }
                 }
                 continue;
@@ -222,9 +226,13 @@ public class FlowNavigator {
                 // only an early completionCondition (whose cancel semantics covers the
                 // not-yet-created downstream: the scope takes over, the chain never runs).
                 if (adHocConditionMet(processInstanceId, bpmn, scope)) {
-                    finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope, key,
+                    boolean finished = finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope, key,
                         executor, null, active, cancelled);
-                    outcome = ArrivalOutcome.SCOPE_FINISHED;
+                    // WO-OPS-35: скоуп остался открыт (cancelRemainingInstances=false, остаток
+                    // жив) — ветку он не поглотил, цепочка продолжается внутри скоупа.
+                    if (finished) {
+                        outcome = ArrivalOutcome.SCOPE_FINISHED;
+                    }
                 } else {
                     log.info("{}/{}: Ad-hoc subprocess {} root {} done, chain continues",
                         processInstanceId, tokenId, scope.getBpmnElementId(), element.getId());
@@ -232,9 +240,13 @@ public class FlowNavigator {
                 continue;
             }
             if (evaluateScopeDone(processInstanceId, bpmn, scope, state, active, cancelled)) {
-                finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope, key,
+                boolean finished = finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope, key,
                     executor, null, active, cancelled);
-                outcome = ArrivalOutcome.SCOPE_FINISHED;
+                // WO-OPS-35: скоуп остался открыт (cancelRemainingInstances=false, остаток жив)
+                // — ветку он не поглотил.
+                if (finished) {
+                    outcome = ArrivalOutcome.SCOPE_FINISHED;
+                }
             } else {
                 Integer expected = dbService.getInclusiveExpected(processInstanceId, key);
                 int arrived = dbService.getParallelGatewayArrivedFlows(processInstanceId, key).size();
@@ -377,13 +389,17 @@ public class FlowNavigator {
      *
      * @param cancelRemainingOverride WO-C8-33 worker flag; null = resolve the BPMN
      *        {@code cancelRemainingInstances} attribute (docs default true), as internal mode does
+     * @return {@code true} — скоуп завершён (контейнер COMPLETED, поток продолжен);
+     *         {@code false} — скоуп остался ОТКРЫТ (WO-OPS-35: cancelRemainingInstances=false
+     *         при живом остатке — Camunda 8.9: «the ad-hoc sub-process waits for the completion
+     *         of all active instances before completing»)
      */
-    public void finishAdHocScope(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
+    public boolean finishAdHocScope(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
             Activity scope, String key, TokenExecutor executor, Boolean cancelRemainingOverride) {
         // WO-C8-37 (C37-1): same incoming-token resume as the arrival path — see
         // resumeTokenForScope. The worker path has no arrival token at hand, only
         // the scope row, so it resolves the incoming token itself.
-        finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope, key, executor,
+        return finishAdHocScope0(processInstanceId, resumeTokenForScope(scope, tokenId), bpmn, scope, key, executor,
             cancelRemainingOverride, null, new HashSet<>());
     }
 
@@ -392,13 +408,9 @@ public class FlowNavigator {
      * null) and the internal traversal (single hoisted snapshot + cancelled-id tracking, so
      * the mate list stays exactly what a fresh query would return).
      */
-    private void finishAdHocScope0(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
+    private boolean finishAdHocScope0(UUID processInstanceId, UUID tokenId, BpmnProcessDefinitionModel bpmn,
             Activity scope, String key, TokenExecutor executor, Boolean cancelRemainingOverride,
             List<Activity> activeSnapshot, Set<UUID> cancelled) {
-        if (key != null) {
-            dbService.clearParallelGatewayArrivals(processInstanceId, key);
-        }
-        dbService.completeActivity(scope.getId());
         BpmnElementModel scopeElement = bpmn.getElement(scope.getBpmnElementId());
         boolean cancelRest = cancelRemainingOverride != null ? cancelRemainingOverride : Optional.ofNullable(scopeElement)
             .map(BpmnElementModel::getExtensions)
@@ -406,32 +418,43 @@ public class FlowNavigator {
             .map(AdHocSubProcessExtensionModel::getCancelRemainingInstances)
             .map(cancel -> !Boolean.FALSE.equals(cancel))
             .orElse(true);
+        // WO-C8-37 (C37-1): mates are the activities INSIDE the scope —
+        // enclosingScopeChain contains the scope (scope token or its
+        // descendants), wherever the arrival token landed. The old
+        // token-equality check died with the scope token: inner elements live
+        // on the scope token while scope.getToken() is the incoming token.
+        // Fresh read every time (NOT the traversal snapshot): the snapshot
+        // predates worker-driven activations/completions that run between the
+        // arrival snapshot and this tail (job-worker finish path).
+        // The container itself and other AD_HOC scope activities are excluded: a
+        // nested ad-hoc that finishes must not wipe its outer scope — only the
+        // token-mate elements go. Approximation, documented in the WO-C8-32 report:
+        // an outer scope's unfinished non-container siblings share this token and
+        // are cancelled as well.
+        List<Activity> mates = elementSupport.filterActivitiesInScope(
+                processInstanceId, dbService.getActiveActivities(processInstanceId), scope.getId()).stream()
+            .filter(a -> !cancelled.contains(a.getId())
+                && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS)
+            .toList();
+        if (!cancelRest && !mates.isEmpty()) {
+            // WO-OPS-35: cancelRemainingInstances=false — Camunda 8.9 (docs.camunda.io,
+            // «Ad-hoc sub-processes»): «If set to false, the ad-hoc sub-process waits for
+            // the completion of all active instances before completing.» Прежнее поведение
+            // («скоуп закрыт, остаток жив, инстанс мёртв») несовместимо ни с Camunda, ни
+            // с инвариантом утечек: инстанс завершался, а внутренняя задача оставалась
+            // жить в мёртвом инстансе, и её job уходил воркеру по мёртвому инстансу.
+            // Теперь скоуп ОСТАЁТСЯ ОТКРЫТЫМ до завершения остатка: следующее прибытие
+            // (оно приходит по завершении каждого внутреннего элемента) снова проверит
+            // условие и закроет скоуп уже без остатка.
+            log.info("{}/{}: Ad-hoc subprocess {} waits for {} remaining instance(s) (cancelRemainingInstances=false)",
+                processInstanceId, tokenId, scope.getBpmnElementId(), mates.size());
+            return false;
+        }
+        if (key != null) {
+            dbService.clearParallelGatewayArrivals(processInstanceId, key);
+        }
+        dbService.completeActivity(scope.getId());
         if (cancelRest) {
-            // The container activity is already COMPLETED above, so it is excluded; other
-            // AD_HOC scope activities on this token are spared too (a nested ad-hoc that
-            // finishes must not wipe its outer scope — only the token-mate elements go).
-            // Approximation, documented in the WO-C8-32 report: an outer scope's unfinished
-            // non-container siblings share this token and are cancelled as well.
-            // WO-C8-37 (C37-1): mates are the activities on the SCOPE token
-            // (scope.getToken()) — inner elements live there now, not on the arrival
-            // token. A nested ad-hoc finishing inside an outer scope cancels only its
-            // own subtree; the outer scope's own inner elements on the outer scope
-            // token are untouched.
-            List<Activity> active = activeSnapshot != null
-                ? activeSnapshot : dbService.getActiveActivities(processInstanceId);
-            // WO-C8-37 (C37-1): mates are the activities INSIDE the scope —
-            // enclosingScopeChain contains the scope (scope token or its
-            // descendants), wherever the arrival token landed. The old
-            // token-equality check died with the scope token: inner elements live
-            // on the scope token while scope.getToken() is the incoming token.
-            // Fresh read every time (NOT the traversal snapshot): the snapshot
-            // predates worker-driven activations/completions that run between the
-            // arrival snapshot and this tail (job-worker finish path).
-            List<Activity> mates = elementSupport.filterActivitiesInScope(
-                    processInstanceId, dbService.getActiveActivities(processInstanceId), scope.getId()).stream()
-                .filter(a -> !cancelled.contains(a.getId())
-                    && a.getType() != BpmnElementType.AD_HOC_SUB_PROCESS)
-                .toList();
             for (Activity mate : mates) {
                 dbService.cancelActivity(mate.getId());
                 cancelled.add(mate.getId());
@@ -440,6 +463,7 @@ public class FlowNavigator {
         log.info("{}/{}: Completing {}: {}/{} (cancelRemaining={})", processInstanceId, tokenId,
             scope.getType(), scope.getId(), scope.getBpmnElementId(), cancelRest);
         proceedToOutgoing(processInstanceId, tokenId, bpmn, scopeElement, executor);
+        return true;
     }
 
     /**

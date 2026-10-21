@@ -69,6 +69,8 @@ class DBServiceImplTest {
     @Mock private SignalSubscriptionDbOperations signalSubscriptionDbOperations;
     @Mock private TimerDbOperations timerDbOperations;
     @Mock private ActivityDbOperations activityDbOperations;
+    /** WO-OPS-35: гашение живых compensation-handler'ов вместе с инстансом. */
+    @Mock private com.zorrodev.bpm.engine.service.CompensationHandlerTerminator compensationHandlerTerminator;
 
     @InjectMocks
     private DBServiceImpl dbService;
