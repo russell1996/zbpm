@@ -14,10 +14,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import org.opentest4j.AssertionFailedError;
+import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.TestContext;
 import org.springframework.test.context.TestExecutionListener;
 import org.springframework.test.context.support.AbstractTestExecutionListener;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * WO-OPS-26: глобальный инвариант утечек BPMN во всех тестах движка.
@@ -133,12 +135,14 @@ public class LeakInvariantTestListener extends AbstractTestExecutionListener {
             // (см. javadoc класса).
             return;
         }
-        Evaluation evaluation = evaluate(jdbc, baseline, testId);
+        Evaluation evaluation = evaluate(jdbc, baseline, testId, isTransactional(testContext));
         CHECKS_PERFORMED.incrementAndGet();
         LAST_VIOLATIONS.put(testId, List.copyOf(evaluation.allOwn()));
 
         appendReport(testId, evaluation.hard(), evaluation.allowed(), REPORT_FILE,
             REPORT_PROPERTY);
+        appendReport(testId, evaluation.commitPhase(), List.of(), "commit-phase",
+            REPORT_FILE, REPORT_PROPERTY);
         appendReport(testId, evaluation.foreign(), List.of(), FOREIGN_REPORT_FILE,
             FOREIGN_REPORT_PROPERTY);
         enforce(testId, evaluation.hard());
@@ -160,12 +164,14 @@ public class LeakInvariantTestListener extends AbstractTestExecutionListener {
     /** Результат одной проверки, разложенный по категориям. */
     record Evaluation(List<LeakInvariantChecker.Violation> hard,
         List<LeakInvariantChecker.Violation> allowed,
+        List<LeakInvariantChecker.Violation> commitPhase,
         List<LeakInvariantChecker.Violation> foreign) {
 
         /** Все нарушения СВОИХ инстансов (allowlisted + не allowlisted). */
         List<LeakInvariantChecker.Violation> allOwn() {
             List<LeakInvariantChecker.Violation> all = new ArrayList<>(hard);
             all.addAll(allowed);
+            all.addAll(commitPhase);
             return all;
         }
     }
@@ -176,22 +182,51 @@ public class LeakInvariantTestListener extends AbstractTestExecutionListener {
      * было одно и то же место, а не две копии правил.
      */
     static Evaluation evaluate(JdbcTemplate jdbc, LeakInvariantChecker.Baseline baseline,
-        String testId) {
+        String testId, boolean transactional) {
         LeakInvariantChecker.CheckResult result = LeakInvariantChecker.check(jdbc, baseline);
         List<AllowEntry> allowlist = loadAllowlist();
         List<LeakInvariantChecker.Violation> hard = new ArrayList<>();
         List<LeakInvariantChecker.Violation> allowed = new ArrayList<>();
+        List<LeakInvariantChecker.Violation> commitPhase = new ArrayList<>();
         for (LeakInvariantChecker.Violation v : result.own()) {
             if (isAllowlistedPattern(allowlist, testId)) {
                 allowed.add(v);
+            } else if (transactional && COMMIT_PHASE_TYPES.contains(v.type())) {
+                // Строки, которые движок чистит В ФАЗЕ КОМИТА
+                // (clearInstanceBookkeepingAtCommit → beforeCommit): в
+                // @Transactional-тесте коммита не будет (откат), поэтому в
+                // прод-состоянии их не было бы. Это НЕ утечка — это снимок
+                // ДО коммита. Только отчёт, никогда не принуждается.
+                commitPhase.add(v);
             } else {
                 hard.add(v);
             }
         }
         // Чужие инстансы (общая БД) — только отчёт: принуждать их нельзя,
         // это не свойство теста (см. javadoc класса).
-        return new Evaluation(List.copyOf(hard), List.copyOf(allowed),
+        return new Evaluation(List.copyOf(hard), List.copyOf(allowed), List.copyOf(commitPhase),
             List.copyOf(result.foreign()));
+    }
+
+    /** Типы остатка, которые движок чистит в фазе коммита (см. evaluate). */
+    static final Set<String> COMMIT_PHASE_TYPES = Set.of("arrival");
+
+    /** Тест транзакционный? Тогда фазы коммита не будет — см. evaluate. */
+    static boolean isTransactional(TestContext testContext) {
+        return isTransactional(testContext.getTestMethod(), testContext.getTestClass());
+    }
+
+    /**
+     * Тест транзакционный (метод или класс помечены {@code @Transactional},
+     * в т.ч. мета-аннотацией)? Тогда фазы коммита не будет — движок не выполнит
+     * зачистку в {@code beforeCommit}, и «до-коммитный» снимок остатка нельзя
+     * читать как прод-состояние (см. {@link #COMMIT_PHASE_TYPES}).
+     */
+    static boolean isTransactional(java.lang.reflect.Method testMethod, Class<?> testClass) {
+        return (testMethod != null
+                && AnnotationUtils.findAnnotation(testMethod, Transactional.class) != null)
+            || (testClass != null
+                && AnnotationUtils.findAnnotation(testClass, Transactional.class) != null);
     }
 
     /**
@@ -267,12 +302,21 @@ public class LeakInvariantTestListener extends AbstractTestExecutionListener {
         List<LeakInvariantChecker.Violation> allowed,
         String fileName,
         String property) {
+        appendReport(testId, hard, allowed, "violation", fileName, property);
+    }
+
+    private static void appendReport(String testId,
+        List<LeakInvariantChecker.Violation> hard,
+        List<LeakInvariantChecker.Violation> allowed,
+        String prefix,
+        String fileName,
+        String property) {
         if (hard.isEmpty() && allowed.isEmpty()) {
             return;
         }
         StringBuilder sb = new StringBuilder();
         for (LeakInvariantChecker.Violation v : hard) {
-            sb.append("violation | ").append(testId).append(" | ").append(v).append('\n');
+            sb.append(prefix).append(" | ").append(testId).append(" | ").append(v).append('\n');
         }
         for (LeakInvariantChecker.Violation v : allowed) {
             sb.append("allowed | ").append(testId).append(" | ").append(v).append('\n');

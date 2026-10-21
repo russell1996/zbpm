@@ -312,6 +312,50 @@ public class LeakInvariantListenerTests {
             .doesNotThrowAnyException();
     }
 
+    /**
+     * WO-OPS-32 (после независимой проверки): arrival-строки движок чистит
+     * В ФАЗЕ КОМИТА ({@code clearInstanceBookkeepingAtCommit} → beforeCommit).
+     * В @Transactional-тесте коммита не будет (откат) → в прод-состоянии таких
+     * строк не было бы → это НЕ утечка, а снимок до коммита. Такие строки идут
+     * только в отчёт (категория «commit-phase») и никогда не роняют сборку.
+     * Без транзакции (фаза коммита прошла) — оставшаяся arrival-строка уже
+     * дефект движка и принуждается.
+     */
+    @Test
+    @Order(13)
+    void arrivalRows_areCommitPhaseInTransactionalTest_andHardOtherwise() throws Exception {
+        Baseline before = LeakInvariantChecker.snapshot(jdbc);
+        UUID pi = startCompletedStartEnd();
+        jdbc.update("INSERT INTO parallel_gateways (id, process_instance_id,"
+            + " gateway_element_id, entered_flow_id, created_at) VALUES (?,?,?,?,?)",
+            UUID.randomUUID(), pi, "joinX", "flowA", Instant.now());
+
+        // Чужой (не allowlisted) test-id: иначеallowlist этого класса забрал бы
+        // нарушение в «allowed» и политика не проверялась бы.
+        String testId = "com.zorrodev.bpm.engine.integration.SomeOtherTest#arrivalRows";
+
+        // Определение транзакционности — тоже под проверкой: мутация «всегда
+        // не-транзакционный» возвращает arrival-строки в принуждаемые.
+        assertThat(LeakInvariantTestListener.isTransactional(
+            LeakInvariantListenerTests.class.getDeclaredMethod(
+                "arrivalRows_areCommitPhaseInTransactionalTest_andHardOtherwise"),
+            LeakInvariantListenerTests.class))
+            .as("этот класс помечен @Transactional — фазы коммита не будет").isTrue();
+        assertThat(LeakInvariantTestListener.isTransactional(
+            LeakInvariantBaselineAttributionIntegrationTests.class.getDeclaredMethod(
+                "createInstanceBeforeTheTest"),
+            LeakInvariantBaselineAttributionIntegrationTests.class))
+            .as("этот класс НЕ транзакционный — фаза коммита проходит").isFalse();
+        LeakInvariantTestListener.Evaluation transactional =
+            LeakInvariantTestListener.evaluate(jdbc, before, testId, true);
+        assertThat(transactional.hard()).extracting(Violation::type).doesNotContain("arrival");
+        assertThat(transactional.commitPhase()).extracting(Violation::type).contains("arrival");
+
+        LeakInvariantTestListener.Evaluation committed =
+            LeakInvariantTestListener.evaluate(jdbc, before, testId, false);
+        assertThat(committed.hard()).extracting(Violation::type).contains("arrival");
+    }
+
     @Test
     @Order(12)
     void allowlist_matchingAndReason() {
