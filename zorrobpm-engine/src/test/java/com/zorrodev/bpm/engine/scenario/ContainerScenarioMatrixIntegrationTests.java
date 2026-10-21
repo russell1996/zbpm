@@ -21,8 +21,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -247,6 +249,39 @@ public class ContainerScenarioMatrixIntegrationTests {
         return problems;
     }
 
+    /**
+     * Расхождение переменных — ПО СТРОКЕ, ровно как в инструменте прибития
+     * ({@code scenario-matrix-container-diff.js}, функция {@code same}): наш движок
+     * хранит значение сырым текстом ("2", "true"), оракул отдаёт разобранный JSON
+     * (2, true). Это ОДНО И ТО ЖЕ значение в разной форме хранения, поэтому
+     * сравнение должно быть строковым — иначе пересчёт в CI и инструмент прибития
+     * считают вердикт по-разному, и легитимная пересъёмка эталона (например, когда
+     * в фазе 4 появится числовая переменная) роняла бы сборку.
+     */
+    private boolean varsDiffer(Map<String, Object> zeebeVars, Map<String, String> ourVars) {
+        // обе стороны приводим к ОДНОЙ форме (normalizeVars разбирает JSON-строки),
+        // и сравниваем ПО СТРОКЕ — как инструмент прибития (String(value)).
+        Map<String, Object> ours = normalizeVars(toObjectMap(ourVars));
+        Set<String> keys = new LinkedHashSet<>();
+        keys.addAll(zeebeVars.keySet());
+        keys.addAll(ours.keySet());
+        for (String key : keys) {
+            String a = zeebeVars.get(key) == null ? "null" : String.valueOf(zeebeVars.get(key));
+            String b = ours.get(key) == null ? "null" : String.valueOf(ours.get(key));
+            if (!a.equals(b)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Карта «имя → значение» из нашей стороны (сырые тексты). */
+    private Map<String, Object> toObjectMap(Map<String, String> raw) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        raw.forEach(out::put);
+        return out;
+    }
+
     /** Пересчёт вердикта по сохранённой стороне Zeebe и текущей нашей стороне. */
     @SuppressWarnings("unchecked")
     private String recomputeVerdict(Map<String, Object> pinnedZeebe, ScenarioOutcome outcome,
@@ -265,11 +300,7 @@ public class ContainerScenarioMatrixIntegrationTests {
             return "ours-differs";
         }
         Map<String, Object> pinnedZeebeVars = (Map<String, Object>) pinnedZeebe.get("vars");
-        Map<String, Object> rawOurVars = new LinkedHashMap<>();
-        outcome.rootVars().forEach(rawOurVars::put);
-        Map<String, Object> ourVars = normalizeVars(rawOurVars);
-        if (pinnedZeebeVars != null
-                && !normalizeVars(pinnedZeebeVars).equals(ourVars)) {
+        if (pinnedZeebeVars != null && varsDiffer(pinnedZeebeVars, outcome.rootVars())) {
             return "ours-differs";
         }
         @SuppressWarnings("unchecked")
