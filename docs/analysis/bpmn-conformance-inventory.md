@@ -353,6 +353,32 @@ expression), `FEEL_EXPRESSION_PLAIN` (как есть, без снятия).
 теста на отсутствие остатков. Поэтому в §2/§3 колонка «свой» — это то, что реально защищает от регрессии;
 «авто» — детектор, результат которого надо уметь читать (`target/leak-invariant-report.txt`).
 
+### 7.4 Что детектор реально нашёл (замер полного прогона движка)
+
+Полный `mvn -B -ntp clean verify` на дереве этой ветки (код = master `87bdda7e4`) отработал
+`BUILD SUCCESS` за 9 мин 37 с; попутно детектор инварианта (режим `report`) записал
+`zorrobpm-engine/target/leak-invariant-report.txt`:
+
+| Величина | Значение |
+|---|---|
+| строк-нарушений всего | **1077** |
+| тест-классов, в которых они найдены | **45** |
+| строк в allowlist (`allowed \| …`) | **0** (allowlist пуст) |
+| по типам нарушений | `task` — 701, `activity` — 345, `subscription` — 18, `arrival` — 11, `timer` — 1, `scope-var` — 1 |
+| топ-классов | `FeelIoMappingConformanceIntegrationTests` — 282, `InclusiveJoinReadinessMatrixIntegrationTests` — 218, `DmnEvaluationIntegrationTests` — 51, `UserTaskCandidateQueryIntegrationTests` — 39, `InclusiveJoinReadinessIntegrationTests` — 36, `FinishedInstanceArrivalCleanupIntegrationTests` — 36, `MiTaskCompletionConditionSiblingsIntegrationTests` — 33, `IoMappingStaticSourceIntegrationTests` — 33 |
+
+**Что из этого следует (осторожно — это замер, а не диагноз).** Отчёт не различает два разных случая:
+(а) реальная утечка в сценарии, (б) артефакт общей H2-базы — «чужая» завершённая строка, попавшая в
+baseline-дельту (этот класс артефактов прямо описан в javadoc самого `LeakInvariantChecker`: диагностика
+H2d-прогона дала 1107 token-нарушений, из них 664 в `Camunda8ParityCharacterizationTests`, и авторы
+приняли решение **не** считать `pending_branches > 0` детектором живых утечек). Разделить (а) и (б)
+по этому файлу нельзя — нужен прогон на PostgreSQL с изоляцией (`ci/run-pg-tests.sh`) и/или поштучный
+разбор.
+
+**Практический вывод для ФАЗ 5 и для `enforce`:** включить `enforce` («-Dzbpm.leakInvariant=enforce») на
+текущем дереве нельзя — падать будут 45 классов, и причины надо сначала разобрать (часть — артефакты
+общей БД). Это ровно та работа, что заведена отдельной задачей (ветка `fix/ops-32-leak-enforce`).
+
 ---
 
 ## 8. Пустые/односторонние места — сводка (кандидаты ФАЗ 1–5)
