@@ -1,0 +1,415 @@
+{
+  "oracle": "zeebe-8.5.0-live",
+  "gateway": "8.5.0",
+  "generatedAt": "2026-10-21T08:25:39.991Z",
+  "scenarios": [
+    {
+      "id": "f3-call-activity",
+      "container": "F3",
+      "content": "CALL_ACTIVITY",
+      "cardinality": 0,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f3-call-activity-mi",
+      "container": "F3",
+      "content": "CALL_ACTIVITY_MULTI_INSTANCE",
+      "cardinality": 2,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "item": "b",
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            null,
+            "b"
+          ],
+          "loopCounter": 2
+        },
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "DEPLOY_REJECTED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "error": "UNSUPPORTED_MULTI_INSTANCE_CONTAINER: Multi-instance is supported on serviceTask, userTask and embedded subProcess: call carries multiInstanceLoopCharacteristics on a container and would run once. Move the multi-instance marker onto a task inside the container, or drop it."
+      },
+      "verdict": "ours-deploy-rejected",
+      "detail": "мы отвергли модель на деплое, а Zeebe 8.5 её исполнил (вывод о паритете приёма модели)."
+    },
+    {
+      "id": "f3-call-activity-vars",
+      "container": "F3",
+      "content": "CALL_ACTIVITY_VARS",
+      "cardinality": 0,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "childVar": "CV"
+        },
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "childVar": "CV"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f3-event-subprocess-interrupting",
+      "container": "F3",
+      "content": "EVENT_SUBPROCESS_INTERRUPTING",
+      "cardinality": 0,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "leftovers": [],
+        "error": "dump job never appeared"
+      },
+      "ours": {
+        "status": "NO_DUMP",
+        "vars": {},
+        "leaks": [
+          "type=activity element=after live activity, status=CREATED",
+          "type=task element=after open service_task"
+        ],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "ours-leaks",
+      "detail": "у нас остаток в завершённом инстансе: [\"type=activity element=after live activity, status=CREATED\",\"type=task element=after open service_task\"]; у Zeebe остатка нет; LEAK-INVARIANT (G-P): [\"type=activity element=after live activity, status=CREATED\",\"type=task element=after open service_task\"]"
+    },
+    {
+      "id": "f3-event-subprocess-non-interrupting",
+      "container": "F3",
+      "content": "EVENT_SUBPROCESS_NON_INTERRUPTING",
+      "cardinality": 0,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f3-mi-subprocess-completion-condition",
+      "container": "F3",
+      "content": "MI_SUBPROCESS_COMPLETION_CONDITION",
+      "cardinality": 3,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            null,
+            null
+          ]
+        },
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": "[\"a\",\"b\",\"c\"]",
+          "results": "[\"a\",null,null]"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f3-mi-subprocess-parallel",
+      "container": "F3",
+      "content": "MI_SUBPROCESS_PARALLEL",
+      "cardinality": 2,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": "[\"a\",\"b\"]",
+          "results": "[\"a\",\"b\"]"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f3-mi-subprocess-sequential",
+      "container": "F3",
+      "content": "MI_SUBPROCESS_SEQUENTIAL",
+      "cardinality": 2,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": "[\"a\",\"b\"]",
+          "results": "[\"a\",\"b\"]"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f3-mi-task-completion-condition",
+      "container": "F3",
+      "content": "MI_TASK_COMPLETION_CONDITION",
+      "cardinality": 3,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            null,
+            null
+          ]
+        },
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": "[\"a\",\"b\",\"c\"]",
+          "results": "[\"a\",null,null]"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f3-subprocess-nested",
+      "container": "F3",
+      "content": "SUBPROCESS_NESTED",
+      "cardinality": 0,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f3-subprocess-nested-vars",
+      "container": "F3",
+      "content": "SUBPROCESS_NESTED_VARS",
+      "cardinality": 0,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "inner": "IV"
+        },
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "inner": "IV"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f3-subprocess-plain",
+      "container": "F3",
+      "content": "SUBPROCESS_PLAIN",
+      "cardinality": 0,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f3-subprocess-plain-vars",
+      "container": "F3",
+      "content": "SUBPROCESS_PLAIN_VARS",
+      "cardinality": 0,
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "inner": "IV"
+        },
+        "leftovers": [],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "inner": "IV"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f3-transaction-cancel",
+      "container": "F3",
+      "content": "TRANSACTION_CANCEL",
+      "cardinality": 0,
+      "oracle": "REJECTED-8.5",
+      "zeebe": {
+        "status": "DEPLOY_REJECTED",
+        "vars": {},
+        "leftovers": [],
+        "error": "3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors:\n'f3-transaction-cancel.bpmn': - Element: cad2\n    - ERROR: Event definition of this type is not supported\n- Element: tx\n    - ERROR: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/\n- Element: cad1\n    - ERROR: Event definition of this type is not supported\n- Element: txEnd\n    - ERROR: End events must be one of: none, error, message, terminate, signal, escalation or compensation\n- Element: cb\n    - ERROR: Boundary events must be one of: timer, message, error, signal, escalation\n"
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 отверг модель на деплое — сравнивать нечего (вывод о паритете приёма модели)."
+    },
+    {
+      "id": "f3-transaction-plain",
+      "container": "F3",
+      "content": "TRANSACTION_PLAIN",
+      "cardinality": 0,
+      "oracle": "REJECTED-8.5",
+      "zeebe": {
+        "status": "DEPLOY_REJECTED",
+        "vars": {},
+        "leftovers": [],
+        "error": "3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors:\n'f3-transaction-plain.bpmn': - Element: tx\n    - ERROR: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/\n"
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 отверг модель на деплое — сравнивать нечего (вывод о паритете приёма модели)."
+    }
+  ]
+}
