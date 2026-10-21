@@ -667,7 +667,7 @@ deploy:
     # correct. Force-recreating these services after every deploy makes their bind mounts always
     # resolve to the current on-disk files, regardless of whether compose thinks anything changed.
     # Cheap and safe: neither service is in the main app's serving path.
-    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --force-recreate prometheus grafana postgres-exporter node-exporter || true
+    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --force-recreate prometheus grafana postgres-exporter node-exporter || echo "WARNING audit F-12 - observability force-recreate FAILED - prometheus/grafana may keep stale bind-mounts (scrape-token); app deploy continues, fix observability manually"
     # WO-REL-23: deploy smoke — wait for app health, fail job if not UP
     - |
       for i in $(seq 1 10); do
@@ -722,7 +722,7 @@ rollback:
     - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --remove-orphans || { echo "docker compose up failed"; docker compose -f docker-compose.yml -f docker-compose.observability.yml ps; docker compose logs app 2>&1 | tail -n 200; exit 1; }
     # Same bind-mount-inode fix as `deploy` (2026-09-14 incident) — force-recreate so these
     # services never keep an orphaned inode of a file the DEPLOY_DIR resync just replaced.
-    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --force-recreate prometheus grafana postgres-exporter node-exporter || true
+    - docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --force-recreate prometheus grafana postgres-exporter node-exporter || echo "WARNING audit F-12 - observability force-recreate FAILED - prometheus/grafana may keep stale bind-mounts (scrape-token); app deploy continues, fix observability manually"
     # WO-REL-23: rollback smoke — same health gate as deploy
     - |
       for i in $(seq 1 10); do
