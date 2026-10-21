@@ -59,7 +59,8 @@ class EngineStateDurabilityGuardTest {
             "PHASE_ONLY_ELEMENT_TYPES — EnumSet.of(...) формально мутабелен (в отличие от "
                     + "Set.of), но используется ТОЛЬКО на чтение и состояние процесса не несёт. "
                     + "Найдено стражем фазы 5 (WO-OPS-28): заменять на Set.of — кандидат "
-                    + "WO-OPS-37 (не заведён, ID не занимаю)");
+                    + "WO-OPS-38 (не заведён, ID не занимаю; WO-OPS-37 уже занят — "
+                    + "WO-OPS-37-interrupting-event-subprocess-leaves-main-flow, находка фазы 3)");
 
     /** Каталог скомпилированных классов движка (target/classes). */
     private static final Path CLASSES = Path.of("target", "classes");
