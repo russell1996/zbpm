@@ -36,7 +36,6 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -140,8 +139,9 @@ public abstract class Phase1TaskDataConformanceSupport {
         obs.put("observeWork", Boolean.TRUE.equals(c.get("observeWork")));
         obs.put("observeElement", observeElement == null ? null : String.valueOf(observeElement));
 
-        // G-P: baseline ДО кейса — «снимок» завершённых инстансов (G-P механика WO-OPS-26).
-        Set<UUID> baseline = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbcTemplate);
+        // G-P: baseline ДО кейса (WO-OPS-26; API после WO-OPS-32: снимок «все инстансы +
+        // завершённые» — по нему чекер отличает НАШИ инстансы от чужих общей БД).
+        LeakInvariantChecker.Baseline baseline = LeakInvariantChecker.snapshot(jdbcTemplate);
 
         UUID pi = null;
         try {
@@ -440,8 +440,11 @@ public abstract class Phase1TaskDataConformanceSupport {
      * Чекер смотрит только ЗАВЕРШЁННЫЕ инстансы, поэтому для «зависшего» кейса
      * список пуст по построению — это отмечено в отчёте (пробел L-2 инвентаря).
      */
-    private List<String> leaks(Set<UUID> baseline, UUID pi) {
-        return LeakInvariantChecker.check(jdbcTemplate, baseline).stream()
+    private List<String> leaks(LeakInvariantChecker.Baseline baseline, UUID pi) {
+        // Только «свои» нарушения (own): инстанс кейса создан после baseline; чужие
+        // инстансы общей БД (созданные ДО baseline, завершённые в его окне) — артефакт
+        // изоляции и к этому кейсу не относятся (WO-OPS-32).
+        return LeakInvariantChecker.check(jdbcTemplate, baseline).own().stream()
             .filter(v -> pi.equals(v.instanceId()))
             .map(LeakInvariantChecker.Violation::toString)
             .toList();
