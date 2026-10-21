@@ -162,6 +162,9 @@ public abstract class Phase1TaskDataConformanceSupport {
             obs.put("outcome", "deployOrStartError");
             obs.put("error", rootMessage(e));
             obs.put("incidents", List.of());
+            // Инстанс не создан → инвариант утечек НЕ проверялся (не «проверено и чисто»).
+            obs.put("leaksChecked", Boolean.FALSE);
+            obs.put("leaks", List.of());
             observed.put(id, obs);
             assertThat(obs.get("outcome")).as("кейс %s дал измерение", id).isNotNull();
             return;
@@ -192,9 +195,12 @@ public abstract class Phase1TaskDataConformanceSupport {
         obs.put("vars.all", allVars(pi));
         obs.put("incidents", openIncidents(pi));
         obs.put("instanceCompleted", instanceCompleted(pi));
+        obs.put("leaksChecked", Boolean.TRUE);
         obs.put("leaks", leaks(baseline, pi));
         observed.put(id, obs);
         assertThat(obs.get("outcome")).as("кейс %s дал измерение", id).isNotNull();
+        // G-P: нарушение инварианта утечек роняет тест, а не просто попадает в отчёт.
+        assertThat((List<?>) obs.get("leaks")).as("инвариант утечек G-P для кейса %s", id).isEmpty();
     }
 
     /* ------------------------------------------------------------------ драйв */

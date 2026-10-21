@@ -62,8 +62,13 @@ function shortError(text) {
 function leaksOf(ours) {
   if (!ours) return '—';
   const parts = [];
-  if (ours.leaks && ours.leaks.length) parts.push(`G-P: ${ours.leaks.length}`);
-  else parts.push('G-P: 0');
+  if (ours.leaksChecked === false) {
+    parts.push('G-P: н/п (инстанс не создан)');
+  } else if (ours.leaks && ours.leaks.length) {
+    parts.push(`G-P: ${ours.leaks.length} НАРУШЕНИЙ`);
+  } else {
+    parts.push('G-P: 0');
+  }
   const inc = (ours.incidents || []).length;
   parts.push(`инцидентов: ${inc}`);
   return parts.join(' · ');
@@ -150,6 +155,42 @@ console.log('|---|---|---|');
 for (const r of rows) {
   if (!r.headers) continue;
   console.log(`| \`${r.id}\` | ${r.headersZ === null ? '—' : r.headersZ} | ${r.headersO === null ? '—' : r.headersO} |`);
+}
+
+// ---- H2 vs PostgreSQL: тот же закоммиченный инструмент, то же сравнение ----
+const PG = path.join(ROOT, 'zorrobpm-engine', 'target', 'ops28-phase1-observed-pg.json');
+if (fs.existsSync(PG)) {
+  const pg = JSON.parse(fs.readFileSync(PG, 'utf8'));
+  const canonOurs = (map) => {
+    if (!map) return null;
+    return Object.keys(map).sort()
+      .map((k) => `${k}=${JSON.stringify(oursValue(map[k]))}`).join(', ') || '(empty)';
+  };
+  let diffs = 0;
+  const lines = [];
+  for (const c of corpus.cases) {
+    const a = ours[c.id] || {};
+    const b = pg[c.id] || {};
+    const same = a.outcome === b.outcome
+      && canonOurs(a['dump.root']) === canonOurs(b['dump.root'])
+      && JSON.stringify(a.leaks || []) === JSON.stringify(b.leaks || [])
+      && JSON.stringify((a['work.outbox'] || {}).taskHeaders)
+         === JSON.stringify((b['work.outbox'] || {}).taskHeaders);
+    if (!same) {
+      diffs++;
+      lines.push(`  ${c.id}: outcome ${a.outcome}/${b.outcome}, root ${canonOurs(a['dump.root'])} / ${canonOurs(b['dump.root'])}`);
+    }
+  }
+  console.log('\n\n### H2 vs PostgreSQL 16 (тот же корпус, тот же инструмент)');
+  console.log('```');
+  console.log(`cases compared: ${corpus.cases.length} | differences: ${diffs}`);
+  console.log(`PG leaks total: ${Object.values(pg).reduce((s, v) => s + ((v.leaks || []).length), 0)}`);
+  console.log(`H2 leaks total: ${Object.values(ours).reduce((s, v) => s + ((v.leaks || []).length), 0)}`);
+  if (lines.length) {
+    console.log('differences:');
+    lines.forEach((l) => console.log(l));
+  }
+  console.log('```');
 }
 
 console.log('\n\n### JSON');
