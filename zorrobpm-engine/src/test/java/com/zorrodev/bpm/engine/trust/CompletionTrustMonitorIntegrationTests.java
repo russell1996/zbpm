@@ -183,6 +183,43 @@ class CompletionTrustMonitorIntegrationTests {
     }
 
     /**
+     * WO-AUDIT-20 (3): повторная доставка completion по УЖЕ завершённой задаче.
+     *
+     * <p>Задача закрыта (человеком через REST — движок закрыл activity в COMPLETED), и
+     * приходит ВТОРАЯ доставка результата по тому же id. Это НЕ «джобу под неё
+     * воркеру не выдавали»: джоба была выдана, задача просто уже закрыта, а движок
+     * такой повтор поглощает guard'ом и считает в
+     * {@code zbpm.completion.replay{kind=…}} (WO-AUDIT-8). Вердикт монитора
+     * {@code no_job_issued} здесь — ложный (он утверждает о СОСТОЯНИИ задачи, которой
+     * как рабочей единицы уже нет) и даёт шум: одна аномалия — много WARN-строк.
+     *
+     * <p>Живая аномалия НЕ теряется: для ЖИВОЙ (не завершённой) user task'и
+     * {@code no_job_issued} по-прежнему считается — см.
+     * {@code completionForUserTask_isCountedAsNoJobIssued}.
+     */
+    @Test
+    void completionForAlreadyFinishedTask_isNotCountedAsNoJobIssued() throws Exception {
+        UUID pi = start(deploy("test-metrics-park.bpmn"));
+        ActivityEntity userTask = activityOf(pi, "taskM");
+
+        // Задача закрыта — после этого приходит повторная доставка результата.
+        runtimeService.completeUserTask(userTask.getId(), List.of());
+        assertThat(activityRepository.findById(userTask.getId()).orElseThrow().getStatus())
+            .as("фикстура должна закрыть задачу — иначе тест проверяет не то")
+            .isEqualTo(ActivityStatus.COMPLETED);
+        double before = unissued(CompletionTrustMonitor.REASON_NO_JOB_ISSUED);
+
+        String reason = monitor.inspect(userTask.getId());
+
+        assertThat(reason)
+            .as("задача уже закрыта — это повтор (replay), а не «джобу под неё не выдавали»")
+            .isNull();
+        assertThat(unissued(CompletionTrustMonitor.REASON_NO_JOB_ISSUED) - before)
+            .as("повтор не должен засчитываться как «джобу не выдавали»")
+            .isZero();
+    }
+
+    /**
      * WO-AUDIT-18 (3): штатный случай — service task, которую движок воркеру выдал.
      * Аномалией НЕ считается и счётчик не растёт (иначе метрика шумит на каждом
      * нормальном completion).

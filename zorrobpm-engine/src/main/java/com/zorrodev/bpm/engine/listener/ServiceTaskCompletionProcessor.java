@@ -2,6 +2,7 @@ package com.zorrodev.bpm.engine.listener;
 
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
+import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.service.RuntimeService;
 import com.zorrodev.bpm.engine.trust.CompletionTrustMonitor;
 import com.zorrodev.bpm.exchange.ServiceTaskCompleted;
@@ -42,11 +43,39 @@ public class ServiceTaskCompletionProcessor {
      */
     private final CompletionTrustMonitor completionTrustMonitor;
 
+    /**
+     * WO-AUDIT-20: реестр метрик движка — сюда попадает счётчик падений
+     * наблюдателя ({@code zbpm.completion.monitor.errors}). Живёт здесь, потому
+     * что монитор может быть подменён (в тестах), и его собственный счётчик
+     * тогда тоже не сработал бы: считать падение наблюдателя обязан тот, кто
+     * его переживает, — вызывающий.
+     */
+    private final BpmMetrics bpmMetrics;
+
     @Transactional
     public void process(ServiceTaskCompleted serviceTaskCompleted) {
         UUID serviceTaskId = serviceTaskCompleted.getServiceTaskId();
 
-        completionTrustMonitor.inspect(serviceTaskId);
+        // WO-AUDIT-20: монитор — НАБЛЮДАТЕЛЬ (счётчик + WARN-лог), а не часть приёма.
+        // Его исключение (сбой чтения, NPE в будущей правке) не имеет права уронить
+        // приём результата: транзакция откатилась бы, задача осталась бы невыполненной,
+        // а контейнерный retry переигрывал бы то же сообщение по кругу. Поэтому вызов
+        // обёрнут: падение СЧИТАЕТСЯ (zbpm.completion.monitor.errors) и логируется, а
+        // приём продолжается ровно как без монитора. Семантика приёма не меняется —
+        // меняется только то, что отказ наблюдателя больше не отказ приёма.
+        //
+        // Ограничение (честно): если монитор упал на уровне САМОЙ БАЗЫ (оборванное
+        // соединение, ошибка SQL), то PostgreSQL помечает общую транзакцию как
+        // aborted и фиксация всё равно упадёт — это факт СУБД, а не монитора, и
+        // завершение в такой транзакции всё равно не применилось бы.
+        try {
+            completionTrustMonitor.inspect(serviceTaskId);
+        } catch (Exception monitorFailure) {
+            bpmMetrics.completionMonitorError();
+            log.warn("WO-AUDIT-20: монитор доверия канала завершений упал "
+                + "(serviceTaskId={}) — приём completion продолжается без него: {}",
+                serviceTaskId, monitorFailure.toString());
+        }
 
         // a worker reports failure via status="FAILED" -> retries/incident, otherwise it completes the task
         // WO-C8-36 (CR-01): идентификатор вызова — в перегрузки (null = legacy без проверки).

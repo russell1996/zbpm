@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.trust;
 
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
+import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.metrics.BpmMetrics;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
 import com.zorrodev.bpm.engine.repository.ElementListenerPhaseRepository;
@@ -29,11 +30,23 @@ import java.util.UUID;
  * <p><b>Что считается аномалией.</b>
  * <ul>
  *   <li>{@code unknown_task} — движок никогда не создавал задачу с таким id;</li>
- *   <li>{@code no_job_issued} — задача создана, но джобу под неё воркеру НЕ
- *       выдавали: нет строки {@code service_tasks} (она и есть запись о выдаче
- *       джобы) и нет открытой listener-фазы (WO-C8-21/24/28 — под user task
+ *   <li>{@code no_job_issued} — задача ЖИВА (создана и ещё не закрыта), но джобу под
+ *       неё воркеру НЕ выдавали: нет строки {@code service_tasks} (она и есть запись о
+ *       выдаче джобы) и нет открытой listener-фазы (WO-C8-21/24/28 — под user task
  *       выдаётся listener-джоба, её id — это id активности).</li>
  * </ul>
+ *
+ * <p><b>WO-AUDIT-20 (3): повтор по закрытой задаче — не аномалия.</b> Задача в
+ * терминальном состоянии (COMPLETED/CANCELLED/ERROR) — уже не рабочая единица, и
+ * completion по ней — это повтор доставки, а не «джобу не выдавали». Такой повтор
+ * движок поглощает guard'ом и считает в {@code zbpm.completion.replay{kind=…}}
+ * (WO-AUDIT-8) — повтор виден там, где он реально поглощён, и не шумит в
+ * {@code unissued}. Для ЖИВОЙ задачи вердикт {@code no_job_issued} остаётся в силе.
+ *
+ * <p><b>Монитор не имеет права ронять приём.</b> Его исключение (сбой чтения, NPE в
+ * будущей правке) переживает ВЫЗОВАЮЩИЙ — {@code ServiceTaskCompletionProcessor}
+ * (WO-AUDIT-20): падение считается ({@code zbpm.completion.monitor.errors}) и
+ * логируется, приём completion'а продолжается ровно как без монитора.
  *
  * <p><b>Чего монитор НЕ делает.</b> Он НЕ отклоняет completion и НЕ меняет
  * семантику приёма: это наблюдательность, а не новая авторизация — её введение
@@ -79,6 +92,17 @@ public class CompletionTrustMonitor {
             return record(REASON_UNKNOWN_TASK, serviceTaskId,
                 "движок никогда не создавал задачу с таким id");
         }
+        // WO-AUDIT-20 (3): задача в ТЕРМИНАЛЬНОМ состоянии (закрыта/отменена/ошибка) —
+        // рабочей единицы больше нет, и completion по ней — это ПОВТОР (replay), а не
+        // «джобу под неё воркеру не выдавали». Для живой задачи вердикт «джобу не
+        // выдавали» — правда; для уже закрытой он ложный и даёт шум (одна аномалия —
+        // много WARN-строк). Повтор при этом НЕ теряется: движок поглощает его
+        // guard'ом и считает в `zbpm.completion.replay{kind=…}` (WO-AUDIT-8,
+        // CompletionService.countServiceTaskReplay / countUserTaskReplay) — там, где
+        // он реально поглощён.
+        if (isFinished(activity.get())) {
+            return null;
+        }
         // Строка service_tasks — это и есть запись движка о том, что джоба выдана.
         if (serviceTaskRepository.existsById(serviceTaskId)) {
             return null;
@@ -99,6 +123,18 @@ public class CompletionTrustMonitor {
             || activity.getPendingAssigningListenerIndex() != null
             || activity.getPendingUpdatingListenerIndex() != null
             || activity.getPendingCancelingListenerIndex() != null;
+    }
+
+    /**
+     * WO-AUDIT-20 (3): задача в терминальном состоянии — рабочей единицы больше нет
+     * (закрыта, отменена границей, ушла в ошибку/инцидент). Completion по такой
+     * задаче — это повтор доставки, а не новая работа.
+     */
+    private static boolean isFinished(ActivityEntity activity) {
+        ActivityStatus status = activity.getStatus();
+        return status == ActivityStatus.COMPLETED
+            || status == ActivityStatus.CANCELLED
+            || status == ActivityStatus.ERROR;
     }
 
     /** Счётчик + WARN. Исход completion'а НЕ меняется — это наблюдение, а не запрет. */
