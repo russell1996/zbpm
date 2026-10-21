@@ -64,6 +64,9 @@ function leaksOf(ours) {
   const parts = [];
   if (ours.leaksChecked === false) {
     parts.push('G-P: н/п (инстанс не создан)');
+  } else if (ours.instanceCompleted === false) {
+    // инстанс не завершён → инвариант по построению ничего не проверяет (L-2 инвентаря)
+    parts.push('G-P: н/п (инстанс не завершён)');
   } else if (ours.leaks && ours.leaks.length) {
     parts.push(`G-P: ${ours.leaks.length} НАРУШЕНИЙ`);
   } else {
