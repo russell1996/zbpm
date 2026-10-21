@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -237,6 +238,30 @@ class HttpConnectorNestedInputCompatibilityTest {
         assertThat(result).isEmpty();
         assertThat(captor.getValue().stream().map(v -> v.getName()))
             .contains("http.status", "http.headers", "http.body", "http.error");
+    }
+
+    /**
+     * РЕГИСТР ЛИСТЬЯ ВЛОЖЕННОГО КОНТЕКСТА НЕ ВАЖЕН (находка reviewer, раунд 2).
+     * Плоская форма сравнивает имя регистронезависимо, и набор запрещённых имён
+     * содержит варианты написания ({@code http.apikey} И {@code http.api-key}) —
+     * значит и вложенная форма обязана ловить {@code apiKey}/{@code clientSecret}/
+     * {@code APIKEY}. Иначе гвард был бы СЛАБЕЕ master'а: на master модель с
+     * {@code target="http.apiKey"} получала жёсткий отказ, а здесь проходила бы —
+     * секрет-литерал уехал бы в тело задания.
+     */
+    @Test
+    void nestedHttpContextWithSecretLiteral_isRejectedRegardlessOfCase() {
+        for (String leaf : List.of("apiKey", "apikey", "APIKEY", "clientSecret", "client-secret", "TOKEN")) {
+            JobDetailModel model = job(pv("http",
+                "{\"url\":\"" + baseUrl + "\",\"" + leaf + "\":\"s3cr3t\"}", "JSON"));
+
+            List<ProcessVariable> result = localWorker().handleJob(model);
+
+            assertThat(result).as("the nested leaf '%s' must be refused", leaf).isEmpty();
+            verify(activityService).throwServiceTaskError(any(), eq("HTTP_CONNECTOR_CONFIG"), any());
+            reset(activityService);
+            assertThat(lastRequestMethod).as("no request was made for the leaf '%s'", leaf).isNull();
+        }
     }
 
     /**

@@ -591,10 +591,18 @@ public class HttpConnectorWorker implements JobHandler {
         // WO-C8-58: вложенная форма — те же секреты лежают ЛИСТЬЯМИ контекста http
         // ({http: {token: …}}). Без этой проверки правило «секрет не живёт в модели
         // процесса» обходилось бы простой сменой формы записи.
+        //
+        // РЕГИСТР ВАЖЕН (находка reviewer, раунд 2): плоская форма сравнивает
+        // РЕГИСТРОНЕЗАВИСИМО (name.toLowerCase), а JsonNode.has — регистрозависим.
+        // С таким разнобоем модель с target="http.apiKey" на master получала жёсткий
+        // отказ, а на ветке проходила — гвард стал СЛАБЕЕ master'а (fail-open).
+        // Поэтому листья сравниваются в нижнем регистре, как и плоские имена.
         JsonNode httpContext = lookup.context("http");
         if (httpContext != null) {
-            for (String leaf : SECRET_LITERAL_LEAVES) {
-                if (httpContext.has(leaf)) {
+            java.util.Iterator<String> leaves = httpContext.fieldNames();
+            while (leaves.hasNext()) {
+                String leaf = leaves.next();
+                if (SECRET_LITERAL_LEAVES.contains(leaf.toLowerCase(Locale.ROOT))) {
                     throw new HttpConnectorConfigException(ERR_CONFIG,
                         "secret 'http." + leaf + "' must not be passed literally — use http.authRef instead");
                 }
