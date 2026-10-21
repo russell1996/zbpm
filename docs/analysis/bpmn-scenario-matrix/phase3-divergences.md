@@ -42,14 +42,14 @@
 
 - **Zeebe 8.5:** статус DEPLOY_REJECTED, переменные {}, остаток []
 - **Мы:** статус COMPLETED, переменные {}, нарушения инварианта [], инциденты []
-- **Ошибка оракула:** 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors:
+- **Ошибка оракула:** 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: | отвергнутые элементы: cad1, cad2, cb, tx, txEnd | причины: Boundary events must be one of: timer, message, error, signal, escalation / Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/ / End events must be one of: none, error, message, terminate, signal, escalation or compensation / Event definition of this type is not supported
 - **Вывод:** Zeebe 8.5 отверг модель на деплое — сравнивать нечего (вывод о паритете приёма модели).
 
 ### `f3-transaction-plain` — oracle-deploy-rejected
 
 - **Zeebe 8.5:** статус DEPLOY_REJECTED, переменные {}, остаток []
 - **Мы:** статус COMPLETED, переменные {}, нарушения инварианта [], инциденты []
-- **Ошибка оракула:** 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors:
+- **Ошибка оракула:** 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: | отвергнутые элементы: tx | причины: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/
 - **Вывод:** Zeebe 8.5 отверг модель на деплое — сравнивать нечего (вывод о паритете приёма модели).
 
 ## Отказы оракула на деплое — отдельный вывод (не «ours-differs»)
@@ -57,5 +57,5 @@
 Zeebe 8.5 отверг модель на деплое — оракул её не исполнил, сравнивать нечего.
 Это НЕ «ours-differs», а вывод о ПАРИТЕТЕ ПРИЁМА МОДЕЛИ (мы permissive, оракул — нет).
 
-- `f3-transaction-cancel`: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: / 'f3-transaction-cancel.bpmn': - Element: tx /     - ERROR: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/ / - Element: cb
-- `f3-transaction-plain`: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: / 'f3-transaction-plain.bpmn': - Element: tx /     - ERROR: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/
+- `f3-transaction-cancel`: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: | отвергнутые элементы: cad1, cad2, cb, tx, txEnd | причины: Boundary events must be one of: timer, message, error, signal, escalation / Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/ / End events must be one of: none, error, message, terminate, signal, escalation or compensation / Event definition of this type is not supported
+- `f3-transaction-plain`: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: | отвергнутые элементы: tx | причины: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/

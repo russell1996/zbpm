@@ -46,6 +46,46 @@ function normalize(raw) {
   return raw;
 }
 
+/**
+ * Текст ошибки оракула — со строками в ОТСОРТИРОВАННОМ порядке.
+ *
+ * <p>Zeebe перечисляет найденные в модели дефекты в недетерминированном порядке
+ * (между прогонами строки «- Element: …» идут в разной последовательности).
+ * Без сортировки прибитый эталон «дышит» при каждой пересъёмке — и пересъёмка
+ * перестаёт быть проверяемым шагом (диффа нет ⇒ фаза не изменилась). Содержание
+ * ошибки при этом не теряется: строки сортируются, а не выбрасываются.
+ */
+/**
+ * Краткая, УСТОЙЧИВАЯ сводка текста отказа оракула.
+ *
+ * <p>Полный текст отказа Zeebe перечисляет дефекты модели в НЕдетерминированном
+ * порядке (между прогонами строки идут иначе) — прибивать его дословно нельзя:
+ * эталон «дышал» бы при каждой пересъёмке, и пересъёмка перестала бы быть
+ * проверяемым шагом. Поэтому в эталон идёт СВОДКА (отсортированный список
+ * отвергнутых элементов), а полный текст остаётся в артефакте прогона
+ * (`target/scenario-matrix/zeebe-containers.json`) и в отчёте.
+ */
+function errorSummary(raw) {
+  const text = String(raw || '');
+  if (!text.includes('\n')) {
+    return text;
+  }
+  const elements = new Set();
+  const re = /- Element: ([A-Za-z0-9_.-]+)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    elements.add(m[1]);
+  }
+  const reasons = new Set();
+  const re2 = /- ERROR: ([^\n]+)/g;
+  while ((m = re2.exec(text)) !== null) {
+    reasons.add(m[1].trim());
+  }
+  const head = text.split('\n')[0];
+  return `${head} | отвергнутые элементы: ${[...elements].sort().join(', ')}`
+    + ` | причины: ${[...reasons].sort().join(' / ')}`;
+}
+
 /** Нарушения инварианта утечек — без id инстанса (он случайный). */
 function normalizeLeaks(leaks) {
   return (leaks || []).map((l) => String(l).replace(/instance=[0-9a-f-]{36}\s*/, '')).sort();
@@ -146,6 +186,13 @@ for (const o of ours) {
   const oursLeaks = normalizeLeaks(o.leaks);
   const zeebeLeftovers = (z.leftovers || []).map((l) => `${l.type}:${l.elementId}`).sort();
 
+  // ПОРЯДОК ПРАВИЛ — ЕДИНЫЙ с пересчётом вердикта в CI
+  // (ContainerScenarioMatrixIntegrationTests.recomputeVerdict): отказ оракула на деплое →
+  // отказ у нас на деплое → расхождение статуса → расхождение переменных →
+  // расхождение остатка (утечки) → расхождение достигнутых шагов.
+  // Порядок важен: если он разойдётся между инструментом и CI, легитимная пересъёмка
+  // эталона будет ронять сборку (и единственным путём к зелёному станет правка вердикта
+  // руками — ровно то, что запрещено).
   let verdict = 'match';
   const details = [];
   if (st.zeebe === 'DEPLOY_REJECTED') {
@@ -160,15 +207,15 @@ for (const o of ours) {
   } else if (varDiff.length > 0) {
     verdict = 'ours-differs';
     details.push(...varDiff);
-  } else if (!sameSteps(o.reachedSteps || [], z.reachedSteps || [])) {
-    verdict = 'ours-differs';
-    details.push(`достигнутые шаги разошлись: ours=${JSON.stringify(o.reachedSteps || [])}`
-      + ` zeebe=${JSON.stringify(z.reachedSteps || [])}`);
   } else if ((oursLeaks.length > 0) !== (zeebeLeftovers.length > 0)) {
     verdict = 'ours-leaks';
     details.push(oursLeaks.length > 0
       ? `у нас остаток в завершённом инстансе: ${JSON.stringify(oursLeaks)}; у Zeebe остатка нет`
       : `у Zeebe остались job'ы: ${JSON.stringify(zeebeLeftovers)}; у нас остатка нет`);
+  } else if (!sameSteps(o.reachedSteps || [], z.reachedSteps || [])) {
+    verdict = 'ours-differs';
+    details.push(`достигнутые шаги разошлись: ours=${JSON.stringify(o.reachedSteps || [])}`
+      + ` zeebe=${JSON.stringify(z.reachedSteps || [])}`);
   }
   if (oursLeaks.length > 0) {
     details.push(`LEAK-INVARIANT (G-P): ${JSON.stringify(oursLeaks)}`);
@@ -185,7 +232,7 @@ for (const o of ours) {
       leftovers: zeebeLeftovers,
       reachedSteps: z.reachedSteps || [],
       probedTypes: z.probedTypes || [],
-      error: z.error || '',
+      error: errorSummary(z.error),
     },
     ours: {
       status: o.status,
@@ -193,7 +240,7 @@ for (const o of ours) {
       leaks: oursLeaks,
       incidents: o.incidents || [],
       reachedSteps: o.reachedSteps || [],
-      error: o.error || '',
+      error: errorSummary(o.error),
     },
     verdict,
     detail: details.join('; '),

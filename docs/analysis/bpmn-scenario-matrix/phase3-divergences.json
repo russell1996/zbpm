@@ -1,7 +1,7 @@
 {
   "oracle": "zeebe-8.5.0-live",
   "gateway": "8.5.0",
-  "generatedAt": "2026-10-21T09:00:31.667Z",
+  "generatedAt": "2026-10-21T09:56:49.120Z",
   "scenarios": [
     {
       "id": "f3-call-activity",
@@ -517,7 +517,7 @@
         "leftovers": [],
         "reachedSteps": [],
         "probedTypes": [],
-        "error": "3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors:\n'f3-transaction-cancel.bpmn': - Element: tx\n    - ERROR: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/\n- Element: cb\n    - ERROR: Boundary events must be one of: timer, message, error, signal, escalation\n- Element: txEnd\n    - ERROR: End events must be one of: none, error, message, terminate, signal, escalation or compensation\n- Element: cad2\n    - ERROR: Event definition of this type is not supported\n- Element: cad1\n    - ERROR: Event definition of this type is not supported\n"
+        "error": "3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: | отвергнутые элементы: cad1, cad2, cb, tx, txEnd | причины: Boundary events must be one of: timer, message, error, signal, escalation / Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/ / End events must be one of: none, error, message, terminate, signal, escalation or compensation / Event definition of this type is not supported"
       },
       "ours": {
         "status": "COMPLETED",
@@ -545,7 +545,7 @@
         "leftovers": [],
         "reachedSteps": [],
         "probedTypes": [],
-        "error": "3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors:\n'f3-transaction-plain.bpmn': - Element: tx\n    - ERROR: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/\n"
+        "error": "3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: | отвергнутые элементы: tx | причины: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/"
       },
       "ours": {
         "status": "COMPLETED",
