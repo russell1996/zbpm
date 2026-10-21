@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-37: основной поток БРОСАЕТ сигнал, на который ловится прерывающий
+     event sub-process. Прерывание обязано погасить и поток основной ветки:
+     activity "after" (за броском) создаваться НЕ должна. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_ops37_sig" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:signal id="sigOps37" name="ops37sig" />
+  <bpmn:process id="test-ops37-esp-signal-interrupting" name="test-ops37-esp-signal-interrupting" isExecutable="true">
+    <bpmn:startEvent id="startEvent" name="startEvent">
+      <bpmn:outgoing>flow1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="flow1" name="flow1" sourceRef="startEvent" targetRef="work" />
+    <bpmn:userTask id="work" name="work">
+      <bpmn:incoming>flow1</bpmn:incoming>
+      <bpmn:outgoing>flow2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flow2" name="flow2" sourceRef="work" targetRef="throwSig" />
+    <bpmn:intermediateThrowEvent id="throwSig" name="throwSig">
+      <bpmn:incoming>flow2</bpmn:incoming>
+      <bpmn:outgoing>flow3</bpmn:outgoing>
+      <bpmn:signalEventDefinition id="sed1" signalRef="sigOps37" />
+    </bpmn:intermediateThrowEvent>
+    <bpmn:sequenceFlow id="flow3" name="flow3" sourceRef="throwSig" targetRef="after" />
+    <bpmn:userTask id="after" name="after">
+      <bpmn:incoming>flow3</bpmn:incoming>
+      <bpmn:outgoing>flow4</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:sequenceFlow id="flow4" name="flow4" sourceRef="after" targetRef="mainEnd" />
+    <bpmn:endEvent id="mainEnd" name="mainEnd">
+      <bpmn:incoming>flow4</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:subProcess id="esp" name="esp" triggeredByEvent="true">
+      <bpmn:startEvent id="evStart" name="evStart" isInterrupting="true">
+        <bpmn:outgoing>flowE1</bpmn:outgoing>
+        <bpmn:signalEventDefinition id="sed2" signalRef="sigOps37" />
+      </bpmn:startEvent>
+      <bpmn:sequenceFlow id="flowE1" name="flowE1" sourceRef="evStart" targetRef="evWork" />
+      <bpmn:userTask id="evWork" name="evWork">
+        <bpmn:incoming>flowE1</bpmn:incoming>
+        <bpmn:outgoing>flowE2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:sequenceFlow id="flowE2" name="flowE2" sourceRef="evWork" targetRef="evEnd" />
+      <bpmn:endEvent id="evEnd" name="evEnd">
+        <bpmn:incoming>flowE2</bpmn:incoming>
+      </bpmn:endEvent>
+    </bpmn:subProcess>
+  </bpmn:process>
+</bpmn:definitions>

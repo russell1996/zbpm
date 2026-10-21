@@ -1,7 +1,7 @@
 {
   "oracle": "zeebe-8.5.0-live",
   "gateway": "8.5.0",
-  "generatedAt": "2026-10-21T09:56:49.120Z",
+  "generatedAt": "2026-10-21T11:37:49.230Z",
   "scenarios": [
     {
       "id": "f3-call-activity",
@@ -137,10 +137,7 @@
       "ours": {
         "status": "NO_DUMP",
         "vars": {},
-        "leaks": [
-          "type=activity element=after live activity, status=CREATED",
-          "type=task element=after open service_task"
-        ],
+        "leaks": [],
         "incidents": [],
         "reachedSteps": [
           "work",
@@ -148,8 +145,8 @@
         ],
         "error": ""
       },
-      "verdict": "ours-leaks",
-      "detail": "у нас остаток в завершённом инстансе: [\"type=activity element=after live activity, status=CREATED\",\"type=task element=after open service_task\"]; у Zeebe остатка нет; LEAK-INVARIANT (G-P): [\"type=activity element=after live activity, status=CREATED\",\"type=task element=after open service_task\"]"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "f3-event-subprocess-non-interrupting",

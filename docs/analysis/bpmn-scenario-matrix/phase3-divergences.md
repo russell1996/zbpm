@@ -2,14 +2,14 @@
 
 - **Дата:** 2026-10-21
 - **Оракул:** живой Zeebe 8.5.0 (8.5.0), стенд `zbpm-cmp-zeebe`, gRPC 127.0.0.1:36500
-- **Сценариев:** 15 · совпали: 11 · расходятся: 0 · утечка у нас: 1 · отказ оракула на деплое: 2 · отказ у нас на деплое: 1
+- **Сценариев:** 15 · совпали: 12 · расходятся: 0 · утечка у нас: 0 · отказ оракула на деплое: 2 · отказ у нас на деплое: 1
 
 | # | Сценарий | Zeebe 8.5 live | ZorroBPM | Утечки (G-P) | Шаги (наши / Zeebe) | Вердикт |
 |---|---|---|---|---|---|---|
 | 1 | `f3-call-activity` | COMPLETED {} | COMPLETED {} | нет | ["childWork"] / ["childWork"] | **match** |
 | 2 | `f3-call-activity-mi` | COMPLETED {"item":"b","items":["a","b"],"loopCounter":2,"results":[null,"b"]} | **ОТВЕРГ МОДЕЛЬ НА ДЕПЛОЕ** (UNSUPPORTED_MULTI_INSTANCE_CONTAINER) | нет | [] / ["childWork"] | **ours-deploy-rejected** |
 | 3 | `f3-call-activity-vars` | COMPLETED {"childVar":"CV"} | COMPLETED {"childVar":"CV"} | нет | ["childWork"] / ["childWork"] | **match** |
-| 4 | `f3-event-subprocess-interrupting` | NO_DUMP_JOB {} | NO_DUMP {} | **2 нарушение(й)**: type=activity element=after live activity, status=CREATED; type=task element=after open service_task | ["work","evWork"] / ["work","evWork"] | **ours-leaks** |
+| 4 | `f3-event-subprocess-interrupting` | NO_DUMP_JOB {} | NO_DUMP {} | нет | ["work","evWork"] / ["work","evWork"] | **match** |
 | 5 | `f3-event-subprocess-non-interrupting` | COMPLETED {} | COMPLETED {} | нет | ["work","evWork","after"] / ["work","evWork","after"] | **match** |
 | 6 | `f3-mi-subprocess-completion-condition` | COMPLETED {"items":["a","b","c"],"results":["a",null,null]} | COMPLETED {"items":["a","b","c"],"results":["a",null,null]} | нет | ["work"] / ["work"] | **match** |
 | 7 | `f3-mi-subprocess-parallel` | COMPLETED {"items":["a","b"],"results":["a","b"]} | COMPLETED {"items":["a","b"],"results":["a","b"]} | нет | ["work"] / ["work"] | **match** |
@@ -30,13 +30,6 @@
 - **Мы:** статус DEPLOY_REJECTED, переменные {}, нарушения инварианта [], инциденты []
 - **Ошибка у нас:** UNSUPPORTED_MULTI_INSTANCE_CONTAINER: Multi-instance is supported on serviceTask, userTask and embedded subProcess: call carries multiInstanceLoopCharacteristics on a container and would run once. Move the multi-instance marker onto a task inside the container, or drop it.
 - **Вывод:** мы отвергли модель на деплое, а Zeebe 8.5 её исполнил (вывод о паритете приёма модели).
-
-### `f3-event-subprocess-interrupting` — ours-leaks
-
-- **Zeebe 8.5:** статус NO_DUMP_JOB, переменные {}, остаток []
-- **Мы:** статус NO_DUMP, переменные {}, нарушения инварианта ["type=activity element=after live activity, status=CREATED","type=task element=after open service_task"], инциденты []
-- **Ошибка оракула:** dump job never appeared
-- **Вывод:** у нас остаток в завершённом инстансе: ["type=activity element=after live activity, status=CREATED","type=task element=after open service_task"]; у Zeebe остатка нет; LEAK-INVARIANT (G-P): ["type=activity element=after live activity, status=CREATED","type=task element=after open service_task"]
 
 ### `f3-transaction-cancel` — oracle-deploy-rejected
 
