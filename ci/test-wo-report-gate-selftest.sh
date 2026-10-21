@@ -693,9 +693,9 @@ expect_marker "engine handler + FEEL, report with statements -> G26 OK" "$BASE_S
 # M2 killer: the marker at the START of a line inside a fenced block is quoted output, not a
 # statement — the gate must FAIL (and the mutation "remove the block-skipping rule" must redden
 # this case).
-expect_marker "marker at line start inside a ``` block -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+expect_marker "marker at line start inside a backtick-fenced block -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
   /tmp/wo-report-gate-selftest.report.$$.fencedmarker.md
-expect_marker "marker at line start inside a ``` block -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+expect_marker "marker at line start inside a backtick-fenced block -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
   /tmp/wo-report-gate-selftest.report.$$.fencedmarker.md
 expect_marker "marker at line start inside a ~~~ block -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
   /tmp/wo-report-gate-selftest.report.$$.tildemarker.md
