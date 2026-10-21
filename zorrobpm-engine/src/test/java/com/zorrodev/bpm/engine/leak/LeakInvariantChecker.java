@@ -1,6 +1,7 @@
 package com.zorrodev.bpm.engine.leak;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -9,8 +10,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 /**
  * WO-OPS-26: инвариант «после конца процесса нет живого мусора».
  *
- * <p>Проверяет все process instance, завершённые (completedAt != null — нормальное
- * завершение, отмена, terminate, ошибка) ПОСЛЕ переданного baseline-снапшота:
+ * <p>Проверяет process instance, завершённые (completedAt != null — нормальное
+ * завершение, отмена, terminate, ошибка) и СОЗДАННЫЕ ЗА ВРЕМЯ ТЕСТА:
  * (а) нет activity в CREATED/IN_PROGRESS; (б) нет токенов с несведённым счётчиком
  * ветвей (pendingBranches &gt; 0); (в) нет несработавших timer-job'ов инстанса;
  * (г) нет непотреблённых message/signal-подписок; (д) нет остаточных
@@ -18,6 +19,19 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * {@code _mi_batch_*}, которые хранятся осознанно — WO-ENG-7, тест
  * {@code MiOutputCollectionDiffIntegrationTests#internalBatchVariable_...});
  * (ж) нет незавершённых user/service task.
+ *
+ * <p><b>WO-OPS-32 — атрибуция нарушений.</b> Тесты движка делят ОДНУ БД (H2 в
+ * полном наборе, PostgreSQL в PG-наборе) без изоляции между классами. Инстанс,
+ * начатый ЧУЖИМ тестом, может завершиться В ОКНЕ ТЕКУЩЕГО теста (публикация
+ * сообщения, срабатывание таймера, чужой cancel) — и его остаток тогда
+ * записывался в отчёт ЗА ТЕКУЩИМ тестом. На полном прогоне это давало 1077
+ * «нарушений», из которых 1067 были ЧУЖИМИ инстансами (проверено изоляционным
+ * прогоном: {@code DmnEvaluationIntegrationTests} и
+ * {@code FeelIoMappingConformanceIntegrationTests} дают 0 нарушений поодиночке и
+ * 51/282 — в общем наборе). Поэтому нарушение приписывается ТОЛЬКО инстансу,
+ * который ТЕСТ САМ создал: «свой» (создан в окне теста) — принудительно;
+ * «чужой» (создан до теста, завершён в его окне) — только в отчёт, без
+ * принуждения (см. {@link CheckResult} и {@code LeakInvariantExtension}).
  *
  * <p>Инстансы, НЕ завершённые к моменту проверки (тест намеренно оставляет
  * процесс), не проверяются.
@@ -32,14 +46,43 @@ public final class LeakInvariantChecker {
         }
     }
 
+    /**
+     * Снимок БД на момент «до теста»: id всех инстансов и id завершённых.
+     *
+     * @param instanceIds все инстансы, существующие до теста (в т.ч. открытые)
+     * @param completedInstanceIds из них — завершённые
+     */
+    public record Baseline(Set<UUID> instanceIds, Set<UUID> completedInstanceIds) {
+    }
+
+    /**
+     * Результат проверки.
+     *
+     * @param own нарушения инстансов, СОЗДАННЫХ тестом (принуждаются в enforce)
+     * @param foreign нарушения инстансов, созданных ДО теста и завершённых в его
+     *     окне (артефакт общей БД — только отчёт, никогда не принуждаются)
+     */
+    public record CheckResult(List<Violation> own, List<Violation> foreign) {
+    }
+
+    /** Сколько id подставлять в один IN (защита от лимита параметров). */
+    private static final int IN_CHUNK = 400;
+
     private LeakInvariantChecker() {
     }
 
-    /** Снапшот id завершённых инстансов (baseline «до теста»). */
-    public static Set<UUID> snapshotCompletedInstanceIds(JdbcTemplate jdbc) {
-        return Set.copyOf(jdbc.query(
-            "SELECT id FROM process_instances WHERE completed_at IS NOT NULL",
-            (rs, rowNum) -> (UUID) rs.getObject("id")));
+    /** Снапшот инстансов (baseline «до теста»): все + завершённые. */
+    public static Baseline snapshot(JdbcTemplate jdbc) {
+        Set<UUID> all = new LinkedHashSet<>();
+        Set<UUID> completed = new LinkedHashSet<>();
+        jdbc.query("SELECT id, completed_at IS NOT NULL AS done FROM process_instances", rs -> {
+            UUID id = (UUID) rs.getObject("id");
+            all.add(id);
+            if (rs.getBoolean("done")) {
+                completed.add(id);
+            }
+        });
+        return new Baseline(Set.copyOf(all), Set.copyOf(completed));
     }
 
     /**
@@ -50,18 +93,41 @@ public final class LeakInvariantChecker {
      * но N+1 на горячем пути каждого теста — это та же болезнь, что уже
      * чинилась в этом движке ({{@code findDeadElementIds}}: C8-35 раунд 8).
      *
-     * @return список нарушений (пусто = чисто)
+     * @return свои и чужие нарушения (см. {@link CheckResult})
      */
-    public static List<Violation> check(JdbcTemplate jdbc, Set<UUID> baselineCompleted) {
-        List<UUID> fresh = jdbc.query(
+    public static CheckResult check(JdbcTemplate jdbc, Baseline baseline) {
+        List<UUID> completedNow = jdbc.query(
             "SELECT id FROM process_instances WHERE completed_at IS NOT NULL",
-            (rs, rowNum) -> (UUID) rs.getObject("id")).stream()
-            .filter(id -> !baselineCompleted.contains(id))
-            .toList();
-        if (fresh.isEmpty()) {
-            return List.of();
+            (rs, rowNum) -> (UUID) rs.getObject("id"));
+        Set<UUID> baseAll = baseline.instanceIds();
+        Set<UUID> baseCompleted = baseline.completedInstanceIds();
+        List<UUID> own = new ArrayList<>();
+        List<UUID> foreign = new ArrayList<>();
+        for (UUID id : completedNow) {
+            if (!baseAll.contains(id)) {
+                own.add(id);
+            } else if (!baseCompleted.contains(id)) {
+                // Инстанс существовал до теста и завершился в его окне — чужой.
+                foreign.add(id);
+            }
         }
+        return new CheckResult(residue(jdbc, own), residue(jdbc, foreign));
+    }
+
+    /** Остаток живого мусора по переданным инстансам. */
+    private static List<Violation> residue(JdbcTemplate jdbc, List<UUID> ids) {
         List<Violation> out = new ArrayList<>();
+        if (ids.isEmpty()) {
+            return out;
+        }
+        for (int from = 0; from < ids.size(); from += IN_CHUNK) {
+            List<UUID> chunk = ids.subList(from, Math.min(from + IN_CHUNK, ids.size()));
+            residueChunk(jdbc, chunk, out);
+        }
+        return out;
+    }
+
+    private static void residueChunk(JdbcTemplate jdbc, List<UUID> fresh, List<Violation> out) {
         String inList = "?,".repeat(fresh.size());
         inList = inList.substring(0, inList.length() - 1);
         Object[] ids = fresh.toArray();
@@ -78,16 +144,11 @@ public final class LeakInvariantChecker {
             ids));
 
         // (ж) висящие user/service task (completed_at IS NULL).
-        // Shared-контекст: тесты делят одну БД и baseline берётся «до теста»,
-        // поэтому завершённые ЧУЖИЕ инстансы тоже попадают в проверку. Чужая
-        // завершённая строка service_tasks/user_tasks с completed_at IS NULL —
-        // это НЕ мусор текущего теста, а артефакт изоляции (история чужих
-        // тестов). Настоящее нарушение текущего теста — только task-строка,
+        // Shared-контекст: тесты делят одну БД, поэтому чужая незавершённая
+        // task-строка — не мусор текущего теста, а артефакт изоляции (история
+        // чужих тестов). Настоящее нарушение текущего теста — только task-строка,
         // чья activity-строка того же инстанса всё ещё жива (orphan-пары
-        // activity+task) — либо orphan-task вообще без activity-строки.
-        // Отдельный запрос: открытые task-строки текущего fresh-инстанса, у
-        // которых НЕТ живой activity-строки — проверяются как и раньше
-        // (исключение: shared-артефакты чужих инстансов не в fresh-множестве).
+        // activity+task).
         out.addAll(jdbc.query(
             "SELECT t.process_instance_id, t.bpmn_element_id FROM user_tasks t"
                 + " WHERE t.process_instance_id IN (" + inList + ")"
@@ -211,7 +272,5 @@ public final class LeakInvariantChecker {
                     "scope-var", rs.getString("name"), "stale scoped variable"),
                 cancelIds));
         }
-
-        return List.copyOf(out);
     }
 }
