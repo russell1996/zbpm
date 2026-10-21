@@ -55,6 +55,13 @@ cleanup() {
         /tmp/wo-report-gate-selftest.report.$$.indented.md \
         /tmp/wo-report-gate-selftest.report.$$.cyr7.md \
         /tmp/wo-report-gate-selftest.report.$$.cyr8.md \
+        /tmp/wo-report-gate-selftest.report.$$.fencedmarker.md \
+        /tmp/wo-report-gate-selftest.report.$$.tildemarker.md \
+        /tmp/wo-report-gate-selftest.report.$$.indentedmarker.md \
+        /tmp/wo-report-gate-selftest.report.$$.indentedmulti.md \
+        /tmp/wo-report-gate-selftest.report.$$.nashort.md \
+        /tmp/wo-report-gate-selftest.report.$$.nadraft.md \
+        /tmp/wo-report-gate-selftest.report.$$.indent2.md \
         /tmp/wo-report-gate-selftest.out.$$
 }
 trap cleanup EXIT
@@ -189,6 +196,32 @@ expect_marker_cyr() { # <label> <report> <expected: ok|fail>
     # `set -euo pipefail` a failing grep in this pipeline would abort the whole selftest before
     # the summary, so the failure count would never be printed.
     printf '%s\n' "$out" | grep -E 'G25' | head -3 || true
+    FAILED=$((FAILED + 1))
+  fi
+}
+
+# expect_offbranch_skip <label> <report>
+# Off-branch (nothing ahead of the base) the G25/G26 checks have NO diff to judge, and the gate
+# must say so instead of evaluating an empty diff. The maintainer security review (WO-OPS-31 HOLD r1) showed
+# that the mutation "снятие ON_BRANCH-гейта" stayed GREEN under the old selftest: both the
+# off-branch case and the "branch touches no engine file" case printed a SKIP line, so the two
+# were indistinguishable. The two are told apart by their WORDING — "off-branch" = there is no
+# diff at all, "branch touches no ... file" = a verdict about a real diff.
+expect_offbranch_skip() {
+  local label="$1" report="$2" out ok=0 ln="${BASH_LINENO[0]}"
+  TOTAL=$((TOTAL + 1))
+  set +e
+  out="$(WO_GATE_BASE="$BASE_SHA" bash "$GATE" SELFTEST "$report" 2>&1)"
+  set -e
+  if printf '%s\n' "$out" | grep -q "G25/G26 skipped (off-branch" \
+     && ! printf '%s\n' "$out" | grep -q "branch touches no BPMN-execution file"; then
+    ok=1
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "SELFTEST OK      $label (off-branch announcement as expected)"
+  else
+    echo "SELFTEST FAILURE $label - ci/test-wo-report-gate-selftest.sh:$ln expected the off-branch G25/G26 skip, and NOT the 'branch touches no ... file' skip"
+    printf '%s\n' "$out" | grep -E 'G2[56]' | head -3 || true
     FAILED=$((FAILED + 1))
   fi
 }
@@ -449,6 +482,84 @@ cat > /tmp/wo-report-gate-selftest.report.$$.cyr8.md <<'EOF'
 LEAK-INVARIANT: проверено
 EOF
 
+# --- WO-OPS-31 round 4 (maintainer HOLD r1): the marker INSIDE a code block, at the start of a line ---
+# The old "quoted" fixture above puts the marker in the MIDDLE of a line ("[ERROR] ... [LEAK-INVARIANT:
+# ...]"), so it would not have been counted as a statement even WITHOUT the block-skipping rule —
+# which is exactly why the maintainer security review's mutation M2 (remove `inblock { prev_blank = 0; next }`)
+# stayed GREEN. These fixtures put the marker at the START of a line inside a block: that line
+# IS a statement shape, and only the block rule can reject it.
+cat > /tmp/wo-report-gate-selftest.report.$$.fencedmarker.md <<'EOF'
+# SELFTEST fixture report (marker at the start of a line inside a fenced block)
+
+## PRE-DONE
+
+```
+LEAK-INVARIANT: проверено в SelftestLeakProbeIntegrationTests (1/1)
+FEEL-PARITY: матрица docs/analysis/feel-iomapping-conformance-matrix.md, 1 кейс match
+```
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.tildemarker.md <<'EOF'
+# SELFTEST fixture report (marker at the start of a line inside a ~~~ fenced block)
+
+## PRE-DONE
+
+~~~
+LEAK-INVARIANT: проверено в SelftestLeakProbeIntegrationTests (1/1)
+FEEL-PARITY: матрица docs/analysis/feel-iomapping-conformance-matrix.md, 1 кейс match
+~~~
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.indentedmarker.md <<'EOF'
+# SELFTEST fixture report (marker at the start of an indented code-block line)
+
+## PRE-DONE
+
+    LEAK-INVARIANT: проверено в SelftestLeakProbeIntegrationTests (1/1)
+    FEEL-PARITY: матрица docs/analysis/feel-iomapping-conformance-matrix.md, 1 кейс match
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.indentedmulti.md <<'EOF'
+# SELFTEST fixture report (marker on the SECOND line of an indented code block)
+
+## PRE-DONE
+
+    [ERROR]   SelftestLeakProbeIntegrationTests.someCase:42 [LEAK-INVARIANT: no open service task (job) left]
+    LEAK-INVARIANT: проверено в SelftestLeakProbeIntegrationTests (1/1)
+    [ERROR]   SelftestLeakProbeIntegrationTests.otherCase:43 [FEEL-PARITY: matrix missing]
+    FEEL-PARITY: матрица docs/analysis/feel-iomapping-conformance-matrix.md, 1 кейс match
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.nashort.md <<'EOF'
+# SELFTEST fixture report (n/a whose reason says nothing)
+
+## PRE-DONE
+
+LEAK-INVARIANT: n/a — ok
+
+FEEL-PARITY: n/a — ok
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.nadraft.md <<'EOF'
+# SELFTEST fixture report (n/a whose reason is a draft)
+
+## PRE-DONE
+
+LEAK-INVARIANT: n/a — TODO
+
+FEEL-PARITY: n/a — TBD
+EOF
+
+cat > /tmp/wo-report-gate-selftest.report.$$.indent2.md <<'EOF'
+# SELFTEST fixture report (statement indented by TWO spaces — not a CommonMark code block)
+
+## PRE-DONE
+
+  LEAK-INVARIANT: проверено в SelftestLeakProbeIntegrationTests (1/1)
+
+  FEEL-PARITY: матрица docs/analysis/feel-iomapping-conformance-matrix.md, 1 кейс match
+EOF
+
 # F11. worker module touched (FEEL/ioMapping/worker semantics), engine untouched:
 #      G26 fires, G25 does not.
 mkdir -p zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector
@@ -550,6 +661,201 @@ expect_marker "docs-only diff -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
 expect_marker "docs-only diff -> G26 SKIP" "$BASE_SHA" "$head" skip "G26" \
   /tmp/wo-report-gate-selftest.report.$$.plain.md
 BASE_SHA="$head"
+
+# --- WO-OPS-31 round 4 (maintainer HOLD r1) ------------------------------------------------------
+# Two holes the maintainer security review found in the SELFTEST (not in the gate): a mutation of the gate
+# that removed a trigger branch, or a rule of the marker scanner, stayed GREEN because no
+# fixture covered that branch. The fixtures below close both holes:
+#   * every branch of the G25/G26 triggers gets its OWN file, and each file matches exactly one
+#     branch (so a dropped branch is caught);
+#   * the marker sits at the START of a line inside a code block (the old fixture had it in the
+#     MIDDLE of a line, so the block rule was never exercised);
+#   * the off-branch case is announced distinctly from "the branch touches no engine file".
+#
+# F16. one engine handler file + one FEEL file → BOTH checks fire, so the report fixtures below
+#      are judged against a diff that triggers both of them.
+mkdir -p zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/support
+printf '%s\n' "package com.zorrodev.bpm.engine.handler; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/handler/SelftestLeakProbe.java
+printf '%s\n' "package com.zorrodev.bpm.engine.support; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/support/FeelMarkerProbe.java
+git add zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/handler/SelftestLeakProbe.java \
+        zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/support/FeelMarkerProbe.java
+head="$(commit_all "selftest: engine handler + FEEL probe (both G25 and G26 fire)")"
+expect_marker "engine handler + FEEL, plain report -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "engine handler + FEEL, plain report -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "engine handler + FEEL, report with statements -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "engine handler + FEEL, report with statements -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+# M2 killer: the marker at the START of a line inside a fenced block is quoted output, not a
+# statement — the gate must FAIL (and the mutation "remove the block-skipping rule" must redden
+# this case).
+expect_marker "marker at line start inside a ``` block -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.fencedmarker.md
+expect_marker "marker at line start inside a ``` block -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.fencedmarker.md
+expect_marker "marker at line start inside a ~~~ block -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.tildemarker.md
+expect_marker "marker at line start inside a ~~~ block -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.tildemarker.md
+expect_marker "marker at line start in an indented code block -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.indentedmarker.md
+expect_marker "marker at line start in an indented code block -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.indentedmarker.md
+expect_marker "marker on the second line of an indented code block -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.indentedmulti.md
+expect_marker "marker on the second line of an indented code block -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.indentedmulti.md
+# a statement indented by TWO spaces is not a CommonMark code block — it IS a statement
+expect_marker "statement indented by two spaces -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.indent2.md
+expect_marker "statement indented by two spaces -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.indent2.md
+# "n/a — ok": the reason says nothing (and the value is long enough to pass the 8-character
+# floor) — the n/a branch of the statement checker must catch it
+expect_marker "'n/a — ok' (reason says nothing) -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.nashort.md
+expect_marker "'n/a — ok' (reason says nothing) -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.nashort.md
+# "n/a — TODO": the reason is a draft, not a reason
+expect_marker "'n/a — TODO' (draft as the reason) -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.nadraft.md
+expect_marker "'n/a — TODO' (draft as the reason) -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.nadraft.md
+BASE_SHA="$head"
+
+# T1. G25 trigger branch `service/impl/` — the file matches NO other branch.
+mkdir -p zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/service/impl
+printf '%s\n' "package com.zorrodev.bpm.engine.service.impl; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/service/impl/SelftestServiceImplProbe.java
+git add zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/service/impl/SelftestServiceImplProbe.java
+head="$(commit_all "selftest: engine service/impl probe")"
+expect_marker "engine service/impl -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "engine service/impl -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "engine service/impl -> G26 SKIP" "$BASE_SHA" "$head" skip "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+BASE_SHA="$head"
+
+# T2. G25 trigger branch `service/db/` — the branch WO-C8-48 needed (see report §9).
+mkdir -p zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/service/db
+printf '%s\n' "package com.zorrodev.bpm.engine.service.db; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/service/db/SelftestServiceDbProbe.java
+git add zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/service/db/SelftestServiceDbProbe.java
+head="$(commit_all "selftest: engine service/db probe")"
+expect_marker "engine service/db -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "engine service/db -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "engine service/db -> G26 SKIP" "$BASE_SHA" "$head" skip "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+BASE_SHA="$head"
+
+# T3. G25 trigger branch `bpmn/` (parsing/validation of the executed model).
+mkdir -p zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/bpmn
+printf '%s\n' "package com.zorrodev.bpm.engine.bpmn; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/bpmn/SelftestBpmnProbe.java
+git add zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/bpmn/SelftestBpmnProbe.java
+head="$(commit_all "selftest: engine bpmn probe")"
+expect_marker "engine bpmn -> G25 FAIL" "$BASE_SHA" "$head" fail "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "engine bpmn -> G25 OK" "$BASE_SHA" "$head" ok "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "engine bpmn -> G26 SKIP" "$BASE_SHA" "$head" skip "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+BASE_SHA="$head"
+
+# T4. G26 trigger branch `*Feel*.java` (FEEL evaluation/validation).
+printf '%s\n' "package com.zorrodev.bpm.engine.support; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/support/FeelSelftestProbe.java
+git add zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/support/FeelSelftestProbe.java
+head="$(commit_all "selftest: engine Feel probe")"
+expect_marker "engine Feel file -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "engine Feel file -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "engine Feel file -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+BASE_SHA="$head"
+
+# T5. G26 trigger branch `ElementSupport` (io-mapping).
+printf '%s\n' "package com.zorrodev.bpm.engine.support; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/support/ElementSupport.java
+git add zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/support/ElementSupport.java
+head="$(commit_all "selftest: engine ElementSupport probe")"
+expect_marker "engine ElementSupport file -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "engine ElementSupport file -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "engine ElementSupport file -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+BASE_SHA="$head"
+
+# T6. G26 trigger branch `*ScriptService*.java` (FEEL script execution).
+printf '%s\n' "package com.zorrodev.bpm.engine.service; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/service/ScriptServiceSelftestProbe.java
+git add zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/service/ScriptServiceSelftestProbe.java
+head="$(commit_all "selftest: engine ScriptService probe")"
+expect_marker "engine ScriptService file -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "engine ScriptService file -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "engine ScriptService file -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+BASE_SHA="$head"
+
+# T7. G26 trigger branch `*Worker*.java` (worker classes outside the two worker modules).
+mkdir -p zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/worker
+printf '%s\n' "package com.zorrodev.bpm.engine.worker; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/worker/SelftestWorkerProbe.java
+git add zorrobpm-engine/src/main/java/com/zorrodev/bpm/engine/worker/SelftestWorkerProbe.java
+head="$(commit_all "selftest: engine Worker probe")"
+expect_marker "engine Worker file -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "engine Worker file -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "engine Worker file -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+BASE_SHA="$head"
+
+# T8. G26 trigger branch `zorrobpm-job-handler-spring-boot-starter/src/main/**` (the file name
+#      matches NO generic branch, so this case pins the module branch alone).
+mkdir -p zorrobpm-job-handler-spring-boot-starter/src/main/java/com/zorrodev/bpm/handler
+printf '%s\n' "package com.zorrodev.bpm.handler; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-job-handler-spring-boot-starter/src/main/java/com/zorrodev/bpm/handler/SelftestStarterProbe.java
+git add zorrobpm-job-handler-spring-boot-starter/src/main/java/com/zorrodev/bpm/handler/SelftestStarterProbe.java
+head="$(commit_all "selftest: job-handler starter probe")"
+expect_marker "job-handler starter module -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "job-handler starter module -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "job-handler starter module -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+BASE_SHA="$head"
+
+# T9. G26 trigger branch `zorrobpm-http-connector/src/main/**` (the file name matches NO generic
+#      branch, so this case pins the module branch alone).
+mkdir -p zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector
+printf '%s\n' "package com.zorrodev.bpm.httpconnector; // WO-OPS-31 selftest fixture" \
+  > zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector/SelftestConnectorProbe.java
+git add zorrobpm-http-connector/src/main/java/com/zorrodev/bpm/httpconnector/SelftestConnectorProbe.java
+head="$(commit_all "selftest: http-connector probe")"
+expect_marker "http-connector module -> G26 FAIL" "$BASE_SHA" "$head" fail "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+expect_marker "http-connector module -> G26 OK" "$BASE_SHA" "$head" ok "G26" \
+  /tmp/wo-report-gate-selftest.report.$$.with.md
+expect_marker "http-connector module -> G25 SKIP" "$BASE_SHA" "$head" skip "G25" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
+BASE_SHA="$head"
+
+# F17. off-branch (nothing ahead of the base): the checks have no diff to judge and must SAY so.
+#      BASE_SHA == HEAD here, so the gate sees an empty range.
+expect_offbranch_skip "off-branch (nothing ahead of the base) -> G25/G26 announced as off-branch" \
+  /tmp/wo-report-gate-selftest.report.$$.plain.md
 
 if [ "$FAILED" -ne 0 ]; then
   echo "SELFTEST: $FAILED case(s) FAILED - wo-report-gate.sh G2/G24/G25/G26 regressed."
