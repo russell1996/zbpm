@@ -25,7 +25,26 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_svc_completion_vars_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "c": "C"
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "c": "C"
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "svc-no-completion-vars",
@@ -47,7 +66,24 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_svc_no_completion_vars_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "svc-job-vars-scope",
@@ -70,7 +106,26 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_svc_job_vars_scope_dump",
-      "observeWork": true
+      "observeWork": true,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "s": "text"
+          },
+          "taskHeaders": {}
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "s": "text"
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "svc-io-input-local",
@@ -92,7 +147,24 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_svc_io_input_local_dump",
-      "observeWork": true
+      "observeWork": true,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1
+          },
+          "taskHeaders": {}
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "svc-io-output-root",
@@ -114,7 +186,24 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_svc_io_output_root_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "o": "C"
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "o": "C"
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "usr-completion-vars",
@@ -138,7 +227,26 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_usr_completion_vars_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "d": "D"
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "d": "D"
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "usr-job-vars-scope",
@@ -161,7 +269,26 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_usr_job_vars_scope_dump",
-      "observeWork": true
+      "observeWork": true,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "s": "text"
+          },
+          "taskHeaders": {}
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "s": "text"
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "usr-io-mapping-local",
@@ -183,7 +310,24 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_usr_io_mapping_local_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "scr-feel-expression",
@@ -204,7 +348,28 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_scr_feel_expression_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 2,
+            "b": 3,
+            "sum": 5
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 2,
+            "b": 3,
+            "sum": 5
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "scr-inline-script",
@@ -225,7 +390,27 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_scr_inline_script_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "deployError",
+          "dump": null,
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 2,
+            "b": 3
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": {
+        "bugWo": "Ф1-3",
+        "reason": "Zeebe 8.5 не знает BPMN-инлайн <script> (наша расширенная форма)",
+        "liveMatchesOurs": false
+      }
     },
     {
       "id": "scr-runtime-error",
@@ -243,7 +428,24 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_scr_runtime_error_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "sum": null
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "sum": null
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "scr-runtime-error-type",
@@ -261,7 +463,24 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_scr_runtime_error_type_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "sum": null
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "sum": null
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "brt-dmn",
@@ -282,7 +501,26 @@
       "dump": "dump",
       "dumpJobType": "p1_brt_dmn_dump",
       "observeWork": false,
-      "dmn": "ops28-phase1/discount.dmn"
+      "dmn": "ops28-phase1/discount.dmn",
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "category": "gold",
+            "discount": 20
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "category": "gold",
+            "discount": 20
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "brt-feel-expression",
@@ -302,7 +540,27 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_brt_feel_expression_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "deployError",
+          "dump": null,
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 2,
+            "doubled": 20
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": {
+        "bugWo": "Ф1-3",
+        "reason": "Zeebe 8.5 требует у BRT zeebe:calledDecision; FEEL-форма (zeebe:script) — наша",
+        "liveMatchesOurs": false
+      }
     },
     {
       "id": "brt-missing-decision",
@@ -320,7 +578,20 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_brt_missing_decision_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "stuck",
+          "dump": null,
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "stuck",
+          "dump": null,
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "snd-message-throw",
@@ -340,7 +611,24 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_snd_message_throw_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "deployError",
+          "dump": null,
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "stuck",
+          "dump": null,
+          "taskHeaders": null
+        }
+      },
+      "divergence": {
+        "bugWo": "Ф1-3",
+        "reason": "Zeebe 8.5 не знает BPMN-атрибут messageRef у send task (наша форма)",
+        "liveMatchesOurs": false
+      }
     },
     {
       "id": "snd-publish-message",
@@ -361,7 +649,24 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_snd_publish_message_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "startError",
+          "dump": null,
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "stuck",
+          "dump": null,
+          "taskHeaders": null
+        }
+      },
+      "divergence": {
+        "bugWo": "Ф1-5",
+        "reason": "Zeebe 8.5.0 падает с внутренним NPE (jobWorkerProps is null) — эталона нет",
+        "liveMatchesOurs": false
+      }
     },
     {
       "id": "snd-job-worker",
@@ -385,7 +690,26 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_snd_job_worker_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "s": "S"
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "s": "S"
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "rcv-message-catch",
@@ -410,7 +734,26 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_rcv_message_catch_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "m": "M"
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "m": "M"
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "rcv-correlation-key-match",
@@ -435,7 +778,26 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_rcv_correlation_key_match_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "m": "M",
+            "orderId": "A"
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "orderId": "A",
+            "m": "M"
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "rcv-correlation-key-miss",
@@ -460,7 +822,20 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_rcv_correlation_key_miss_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "stuck",
+          "dump": null,
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "stuck",
+          "dump": null,
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "rcv-message-no-key",
@@ -485,7 +860,27 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_rcv_message_no_key_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "stuck",
+          "dump": null,
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "orderId": "A",
+            "m": "M"
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": {
+        "bugWo": "Ф1-1",
+        "reason": "НАШ ДЕФЕКТ: бесключевая публикация будит ключевую подписку",
+        "liveMatchesOurs": false
+      }
     },
     {
       "id": "snd-intermediate-throw",
@@ -505,7 +900,24 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_snd_intermediate_throw_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "deployError",
+          "dump": null,
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "stuck",
+          "dump": null,
+          "taskHeaders": null
+        }
+      },
+      "divergence": {
+        "bugWo": "Ф1-3",
+        "reason": "Zeebe 8.5 требует zeebe:publishMessage у throw-события; наша форма без него",
+        "liveMatchesOurs": false
+      }
     },
     {
       "id": "scope-callactivity-propagate",
@@ -538,7 +950,26 @@
       "child": {
         "id": "p1_child_propagate",
         "bpmn": "ops28-phase1/p1_child_propagate.bpmn"
-      }
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "c": "C"
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "c": "C"
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "scope-callactivity-nopropagate",
@@ -571,7 +1002,24 @@
       "child": {
         "id": "p1_child_nopropagate",
         "bpmn": "ops28-phase1/p1_child_nopropagate.bpmn"
-      }
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "scope-callactivity-input-mapping",
@@ -604,7 +1052,28 @@
       "child": {
         "id": "p1_child_inputmap",
         "bpmn": "ops28-phase1/p1_child_inputmap.bpmn"
-      }
+      },
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "b": 2,
+            "x": 1
+          },
+          "taskHeaders": {}
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "b": 2,
+            "x": 1
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "scope-subprocess-local",
@@ -632,7 +1101,26 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_scope_subprocess_local_dump",
-      "observeWork": false
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "inner": "I"
+          },
+          "taskHeaders": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "inner": "I"
+          },
+          "taskHeaders": null
+        }
+      },
+      "divergence": null
     },
     {
       "id": "svc-task-headers",
@@ -654,7 +1142,28 @@
       ],
       "dump": "dump",
       "dumpJobType": "p1_svc_task_headers_dump",
-      "observeWork": true
+      "observeWork": true,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1
+          },
+          "taskHeaders": {
+            "h1": "v1"
+          }
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1
+          },
+          "taskHeaders": {
+            "h1": "v1"
+          }
+        }
+      },
+      "divergence": null
     }
   ]
 }

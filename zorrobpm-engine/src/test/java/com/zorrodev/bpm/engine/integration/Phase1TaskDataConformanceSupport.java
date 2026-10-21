@@ -201,6 +201,98 @@ public abstract class Phase1TaskDataConformanceSupport {
         assertThat(obs.get("outcome")).as("кейс %s дал измерение", id).isNotNull();
         // G-P: нарушение инварианта утечек роняет тест, а не просто попадает в отчёт.
         assertThat((List<?>) obs.get("leaks")).as("инвариант утечек G-P для кейса %s", id).isEmpty();
+        assertExpectation(c, obs);
+    }
+
+    /**
+     * Сверка измерения с ожиданием.
+     *
+     * <p>Ожидание берётся из ЖИВОГО Zeebe 8.5.0 (корпус собран скриптом
+     * {@code docs/analysis/c8-oracle/ops28-phase1-expect.js} из измерения оракула) — не из
+     * нашей реализации (G-Q). Для кейсов с зафиксированным расхождением навязывается
+     * НАШЕ измеренное поведение (characterization) + в наблюдение пишется ссылка на баг-WO:
+     * иначе расхождение просто не проверялось бы, и тест был бы зелёным «по незнанию».</p>
+     */
+    private void assertExpectation(Map<String, Object> c, Map<String, Object> obs) {
+        String id = String.valueOf(c.get("id"));
+        if (!(c.get("expect") instanceof Map<?, ?> expect)) {
+            return;
+        }
+        boolean divergence = c.get("divergence") != null;
+        obs.put("divergence", c.get("divergence"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> wanted = divergence
+            ? (Map<String, Object>) expect.get("ours")
+            : (Map<String, Object>) expect.get("live");
+        if (wanted == null) {
+            return;
+        }
+        String outcome = String.valueOf(wanted.get("outcome"));
+        assertThat(obs.get("outcome")).as("исход кейса %s", id).isEqualTo(outcome);
+        Object dump = wanted.get("dump");
+        if (dump instanceof Map<?, ?> map && !map.isEmpty()) {
+            Map<String, Object> expected = new LinkedHashMap<>();
+            // Тот же приведение типов, что в Ф1: целое JSON-число у оракула приходит Integer,
+            // у движка — LONG. Сравниваем ЗНАЧЕНИЯ, а не JSON-типы.
+            map.forEach((k, v) -> expected.put(String.valueOf(k), normalizeNumbers(v)));
+            assertThat(canon(obs.get("dump.root"))).as("переменные root в кейсе %s", id).isEqualTo(expected);
+        }
+        // Заголовки задания (zeebe:taskHeaders) — отдельное измерение: у Zeebe это
+        // job.customHeaders, у нас — taskHeaders в теле задания (outbox).
+        Object headers = wanted.get("taskHeaders");
+        if (headers instanceof Map<?, ?> map) {
+            Map<String, Object> expectedHeaders = new LinkedHashMap<>();
+            map.forEach((k, v) -> expectedHeaders.put(String.valueOf(k), v));
+            Object ours = ((Map<?, ?>) obs.get("work.outbox")) == null
+                ? null : ((Map<?, ?>) obs.get("work.outbox")).get("taskHeaders");
+            // «Заголовков нет» — это пустая карта с обеих сторон (Zeebe отдаёт {}, у нас null).
+            Map<String, Object> oursHeaders = ours instanceof Map<?, ?> m
+                ? canon(m) : Map.of();
+            assertThat(oursHeaders).as("заголовки задания в кейсе %s", id).isEqualTo(expectedHeaders);
+        }
+    }
+
+    /** Наша карта переменных → плоские значения (как у Zeebe). */
+    private Map<String, Object> canon(Object raw) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (raw instanceof Map<?, ?> map) {
+            map.forEach((k, v) -> out.put(String.valueOf(k), canonValue(v)));
+        }
+        return out;
+    }
+
+    private Object canonValue(Object entry) {
+        if (!(entry instanceof Map<?, ?> wrapper) || !wrapper.containsKey("value")) {
+            return entry;
+        }
+        Object value = wrapper.get("value");
+        String type = String.valueOf(wrapper.get("type"));
+        try {
+            return switch (type) {
+                case "LONG" -> Long.parseLong(String.valueOf(value));
+                case "DOUBLE" -> Double.parseDouble(String.valueOf(value));
+                case "BOOLEAN" -> Boolean.parseBoolean(String.valueOf(value));
+                case "JSON" -> normalizeNumbers(objectMapper.readValue(String.valueOf(value), Object.class));
+                default -> String.valueOf(value);
+            };
+        } catch (Exception e) {
+            throw new IllegalStateException("unreadable variable wrapper " + entry, e);
+        }
+    }
+
+    private static Object normalizeNumbers(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            map.forEach((k, v) -> out.put(String.valueOf(k), normalizeNumbers(v)));
+            return out;
+        }
+        if (value instanceof List<?> list) {
+            return list.stream().map(Phase1TaskDataConformanceSupport::normalizeNumbers).toList();
+        }
+        if (value instanceof Integer i) {
+            return i.longValue();
+        }
+        return value;
     }
 
     /* ------------------------------------------------------------------ драйв */

@@ -660,6 +660,26 @@ for (const c of cases) {
   bpmn[c.child.id] = defs(c.child.id, c.child.body);
 }
 
+// Ожидания (`expect`) и зафиксированные расхождения (`divergence`) пришиваются скриптом
+// ops28-phase1-expect.js из измерения ЖИВОГО Zeebe 8.5.0 — при перегенерации корпуса
+// они сохраняются, а не затираются.
+if (fs.existsSync(OUT_CASES)) {
+  try {
+    const prev = JSON.parse(fs.readFileSync(OUT_CASES, 'utf8'));
+    const byId = new Map((prev.cases || []).map((c) => [c.id, c]));
+    for (const c of corpus.cases) {
+      const old = byId.get(c.id);
+      if (old && old.expect) {
+        c.expect = old.expect;
+        c.divergence = old.divergence || null;
+      }
+    }
+    console.log(`preserved expect blocks for ${corpus.cases.filter((c) => c.expect).length} cases`);
+  } catch (e) {
+    console.log('no previous corpus to preserve expect blocks from');
+  }
+}
+
 fs.mkdirSync(OUT_DIR, { recursive: true });
 for (const [id, xml] of Object.entries(bpmn)) {
   fs.writeFileSync(path.join(OUT_DIR, `${id}.bpmn`), xml, 'utf8');
