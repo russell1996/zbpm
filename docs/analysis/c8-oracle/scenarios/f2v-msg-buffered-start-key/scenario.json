@@ -26,7 +26,22 @@
     }
   ],
   "expected": {
-    "observations": []
+    "observations": [
+      {
+        "step": "publish",
+        "outcome": "published"
+      },
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterStart",
+        "outcome": "noJob",
+        "jobType": "f2vAfterBufferedStartKey"
+      }
+    ]
   },
   "matrix": {
     "docs89": "8.9: сообщение с TTL>0 буферизуется на брокере; для message start новая инстанция создаётся, если нет активной инстанса с тем же ключом",
