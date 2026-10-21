@@ -1,5 +1,7 @@
 package com.zorrodev.bpm.engine.scenario;
 
+import com.zorrodev.bpm.contract.dto.MessagePublishResultDTO;
+import com.zorrodev.bpm.contract.dto.PublishMessageDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessDefinition;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
@@ -83,28 +85,105 @@ public final class ScenarioMatrixRunner {
             ProcessDefinition definition = processDefinitionService.addProcessDefinition(scenario.bpmn());
             StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
             dto.setProcessDefinitionId(definition.getId());
-            dto.setVariables(List.of(jsonVar(BpmnScenarioGenerator.COLLECTION_VAR, itemsJson(scenario.items()))));
+            dto.setVariables(startVariables(scenario));
             pi = runtimeService.startProcessInstance(dto).getId();
 
-            drive(scenario, pi);
+            List<String> publishes = new ArrayList<>();
+            drive(scenario, pi, publishes);
 
             Map<String, String> observed = observe(scenario, pi);
             List<String> incidents = incidentsOf(pi);
             String status = statusOf(pi);
             List<String> leaks = leaksOf(pi, baseline);
             return new ScenarioOutcome(scenario.id(), scenario.container(), scenario.content(),
-                    scenario.cardinality(), scenario.orderKey(), status, observed, leaks, incidents, "");
+                    scenario.cardinality(), scenario.orderKey(), status, observed, leaks, incidents, "",
+                    publishes);
+        } catch (NoDumpReached e) {
+            // Сценарий НЕ дошёл до наблюдательной задачи (инцидент, зависший join,
+            // не взятая ветвь). Это НЕ ошибка прогона — это НАБЛЮДАЕМЫЙ ФАКТ,
+            // который сравнивается с тем же фактом у оракула.
+            return new ScenarioOutcome(scenario.id(), scenario.container(), scenario.content(),
+                    scenario.cardinality(), scenario.orderKey(),
+                    pi == null ? "FAILED" : statusOf(pi),
+                    Map.of(), pi == null ? List.of() : leaksOf(pi, baseline),
+                    pi == null ? List.of() : incidentsOf(pi),
+                    e.getMessage(), List.of());
         } catch (RuntimeException e) {
             return new ScenarioOutcome(scenario.id(), scenario.container(), scenario.content(),
                     scenario.cardinality(), scenario.orderKey(),
                     pi == null ? "FAILED" : statusOf(pi),
                     Map.of(), List.of(), pi == null ? List.of() : incidentsOf(pi),
-                    e.getClass().getSimpleName() + ": " + e.getMessage());
+                    e.getClass().getSimpleName() + ": " + e.getMessage(), List.of());
         }
     }
 
-    /** Завершает инстансы в заданном порядке (каждый инстанс — до конца его цепочки). */
-    private void drive(BpmnScenario scenario, UUID pi) {
+    /**
+     * Стартовые переменные сценария.
+     *
+     * <p>Срез F1 (WO-OPS-27) — коллекция MI-инстансов. Срез F2 (WO-OPS-28,
+     * «потоки») — типизированный JSON-объект из {@code varsJson}: значения
+     * раскладываются по типам (BOOLEAN/LONG/DOUBLE/JSON/STRING), иначе условия
+     * FEEL в шлюзах не увидели бы булеву ложь как «ложь» (а строку «false»).
+     */
+    private List<ProcessVariable> startVariables(BpmnScenario scenario) {
+        if (scenario.actions().isEmpty()) {
+            return List.of(jsonVar(BpmnScenarioGenerator.COLLECTION_VAR, itemsJson(scenario.items())));
+        }
+        return parseVariables(scenario.varsJson());
+    }
+
+    /** Разбор JSON-объекта в типизированные переменные процесса. */
+    private List<ProcessVariable> parseVariables(String varsJson) {
+        List<ProcessVariable> out = new ArrayList<>();
+        if (varsJson == null || varsJson.isBlank()) {
+            return out;
+        }
+        Map<String, Object> parsed;
+        try {
+            parsed = new tools.jackson.databind.ObjectMapper().readValue(varsJson, Map.class);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("varsJson is not a JSON object: " + varsJson, e);
+        }
+        for (Map.Entry<String, Object> entry : parsed.entrySet()) {
+            ProcessVariable v = new ProcessVariable();
+            v.setName(entry.getKey());
+            Object value = entry.getValue();
+            if (value instanceof Boolean b) {
+                v.setType(ProcessVariableType.BOOLEAN);
+                v.setValue(String.valueOf(b));
+            } else if (value instanceof Integer || value instanceof Long) {
+                v.setType(ProcessVariableType.LONG);
+                v.setValue(String.valueOf(value));
+            } else if (value instanceof Double || value instanceof Float) {
+                v.setType(ProcessVariableType.DOUBLE);
+                v.setValue(String.valueOf(value));
+            } else if (value instanceof List || value instanceof Map) {
+                v.setType(ProcessVariableType.JSON);
+                v.setValue(String.valueOf(value));
+            } else if (value == null) {
+                v.setType(ProcessVariableType.STRING);
+                v.setValue("");
+            } else {
+                v.setType(ProcessVariableType.STRING);
+                v.setValue(String.valueOf(value));
+            }
+            out.add(v);
+        }
+        return out;
+    }
+
+    /**
+     * Ведение сценария.
+     *
+     * <p>Срез F1 (WO-OPS-27) — по MI-инстансам (по значению {@code item}).
+     * Срез F2 (WO-OPS-28, «потоки») — по СПИСКУ ДЕЙСТВИЙ: тот же список, что
+     * выполняет оракул Zeebe, поэтому сравнение остаётся честным.
+     */
+    private void drive(BpmnScenario scenario, UUID pi, List<String> publishes) {
+        if (!scenario.actions().isEmpty()) {
+            driveActions(scenario, pi, publishes);
+            return;
+        }
         for (String item : scenario.order()) {
             // Шагов внутри инстанса может быть несколько (содержимое CHAIN) —
             // повторяем, пока у инстанса не останется живых задач.
@@ -124,6 +203,60 @@ public final class ScenarioMatrixRunner {
                 }
             }
         }
+    }
+
+    /**
+     * Ведение среза F2 по списку действий.
+     *
+     * <p>Действие «complete» завершает ВСЕ живые экземпляры задачи с указанным
+     * id (в срезе F2 у каждой задачи один экземпляр, но цикл возврата может
+     * дать второй проход — он и завершается следующим действием). Если задачи с
+     * таким id нет — действие пропускается: это НЕ ошибка, а признак того, что
+     * движок пошёл не по той ветви (в отчёт это попадёт как «ветвь не создана»).
+     */
+    private void driveActions(BpmnScenario scenario, UUID pi, List<String> publishes) {
+        for (ScenarioAction action : scenario.actions()) {
+            if (ScenarioAction.PUBLISH.equals(action.kind())) {
+                PublishMessageDTO dto = new PublishMessageDTO();
+                dto.setMessageName(action.target());
+                dto.setCorrelationKey(action.correlationKey());
+                dto.setProcessInstanceId(pi);
+                dto.setVariables(parseVariables(action.varsJson()));
+                MessagePublishResultDTO result = runtimeService.publishMessage(dto);
+                // Исход публикации — ТРЕТЬЕ наблюдаемое среза F2: у оракула
+                // «отвергнуто» (подписки нет), у нас «correlated=N» (сколько
+                // подписок разбудила публикация). Разница = проигравшая
+                // подписка event-based gateway осталась живой.
+                publishes.add(action.target() + ":correlated="
+                        + (result == null ? "?" : result.getCorrelated()));
+                continue;
+            }
+            List<String> ids = action.elementIds();
+            List<ActivityEntity> live = awaitLive(pi, ids);
+            for (ActivityEntity activity : live) {
+                if (scenario.userTaskElementIds().contains(activity.getBpmnElementId())) {
+                    runtimeService.completeUserTask(activity.getId(), parseVariables(action.varsJson()));
+                } else {
+                    runtimeService.completeServiceTask(activity.getId(), parseVariables(action.varsJson()));
+                }
+            }
+        }
+    }
+
+    /** Живая задача с одним из указанных id (ждёт появления, но не бесконечно). */
+    private List<ActivityEntity> awaitLive(UUID pi, List<String> elementIds) {
+        for (int i = 0; i < 50; i++) {
+            List<ActivityEntity> live = activityRepository.findAll().stream()
+                    .filter(a -> a.getProcessInstanceId().equals(pi))
+                    .filter(a -> a.getStatus() == ActivityStatus.CREATED)
+                    .filter(a -> elementIds.contains(a.getBpmnElementId()))
+                    .toList();
+            if (!live.isEmpty()) {
+                return live;
+            }
+            sleep(50);
+        }
+        return List.of();
     }
 
     /** Живые (CREATED) задачи сценария — элементы, которые раннер водит. */
@@ -195,7 +328,10 @@ public final class ScenarioMatrixRunner {
             }
             sleep(50);
         }
-        throw new IllegalStateException("dump task '" + scenario.dumpElementId()
+        // Наблюдательная задача не появилась: процесс не дошёл до точки наблюдения
+        // (инцидент, зависший join, не взятая ветвь). Это НАБЛЮДАЕМЫЙ ФАКТ, а не
+        // сбой прогона — отдельный тип исключения, чтобы не путать его с ошибкой.
+        throw new NoDumpReached("NO_DUMP: the observation task '" + scenario.dumpElementId()
                 + "' never appeared for scenario " + scenario.id());
     }
 

@@ -1,0 +1,450 @@
+{
+  "oracle": "zeebe-8.5.0-live",
+  "note": "Факты живого Zeebe 8.5.0 и наши, снятые прогоном docs/analysis/c8-oracle/scenario-matrix.js и срезом F2 нашего движка (FlowScenarioMatrixIntegrationTests). Расхождения НЕ чинятся в кампании: они закреплены здесь, чтобы их нельзя было закрыть молча.",
+  "scenarios": {
+    "f2-event-based-message": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "bA": "A",
+          "keyA": "KA",
+          "keyB": "KB",
+          "msg": "A"
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": [
+          "msgA:correlated"
+        ]
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bA": "A",
+          "keyA": "KA",
+          "keyB": "KB",
+          "msg": "A"
+        },
+        "leaks": [
+          "type=subscription element=msgB unconsumed message_subscription"
+        ],
+        "incidents": [],
+        "error": "",
+        "publishes": [
+          "msgA:correlated=1"
+        ]
+      },
+      "verdict": "ours-differs",
+      "detail": "leftovers: ours=1 zeebe=0"
+    },
+    "f2-event-based-message-race": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "bA": "A",
+          "keyA": "KA",
+          "keyB": "KB",
+          "msg": "A"
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": [
+          "msgA:correlated",
+          "msgB:correlated"
+        ]
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bA": "A",
+          "keyA": "KA",
+          "keyB": "KB",
+          "msg": "A"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": [
+          "msgA:correlated=1",
+          "msgB:correlated=1"
+        ]
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f2-exclusive-condition-a": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "bA": "A",
+          "flagA": true,
+          "flagB": false
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bA": "A",
+          "flagA": "true",
+          "flagB": "false"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f2-exclusive-condition-b": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "bB": "B",
+          "flagA": false,
+          "flagB": true
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bB": "B",
+          "flagA": "false",
+          "flagB": "true"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f2-exclusive-default": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "bD": "D",
+          "flagA": false,
+          "flagB": false
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bD": "D",
+          "flagA": "false",
+          "flagB": "false"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f2-exclusive-no-match": {
+      "oracle": "DID-NOT-REACH-OBSERVATION",
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "NOT_COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [
+          "IllegalStateException: Exclusive gateway 'gw' could not be evaluated: no outgoing sequence flow condition was true and no default flow is defined"
+        ],
+        "error": "NO_DUMP: the observation task 'dump' never appeared for scenario f2-exclusive-no-match",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": "оба движка не дошли до точки наблюдения — ожидаемо для этого сценария"
+    },
+    "f2-exclusive-multi-match-ab": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "bB": "B",
+          "flagA": true,
+          "flagB": true
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bB": "B",
+          "flagA": "true",
+          "flagB": "true"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f2-exclusive-multi-match-ba": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "bA": "A",
+          "flagA": true,
+          "flagB": true
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bA": "A",
+          "flagA": "true",
+          "flagB": "true"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f2-inclusive-all": {
+      "oracle": "DEPLOY-REJECTED-BY-8.5",
+      "zeebe": {
+        "status": "FAILED",
+        "vars": {},
+        "leftovers": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bI1": "I1",
+          "bI2": "I2",
+          "flagA": "true",
+          "flagB": "true"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 отверг модель на деплое: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: 'f2-inclusive-all.bpmn': - Element: ijoin     - ERROR: Currently the inclusive gateway can only have one incoming sequence flow "
+    },
+    "f2-inclusive-partial": {
+      "oracle": "DEPLOY-REJECTED-BY-8.5",
+      "zeebe": {
+        "status": "FAILED",
+        "vars": {},
+        "leftovers": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bI1": "I1",
+          "flagA": "true",
+          "flagB": "false"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 отверг модель на деплое: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: 'f2-inclusive-partial.bpmn': - Element: ijoin     - ERROR: Currently the inclusive gateway can only have one incoming sequence flow "
+    },
+    "f2-inclusive-split-all": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "bI1": "I1",
+          "bI2": "I2",
+          "flagA": true,
+          "flagB": true
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bI1": "I1",
+          "bI2": "I2",
+          "flagA": "true",
+          "flagB": "true"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f2-inclusive-split-one": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "bI1": "I1",
+          "flagA": true,
+          "flagB": false
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bI1": "I1",
+          "flagA": "true",
+          "flagB": "false"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f2-inclusive-default": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "bD": "D",
+          "flagA": false,
+          "flagB": false
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bD": "D",
+          "flagA": "false",
+          "flagB": "false"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f2-loop-back": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "again": false,
+          "iter": 3
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "again": "false",
+          "iter": "3"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f2-parallel-fork-join": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "bP1": "P1",
+          "bP2": "P2"
+        },
+        "leftovers": [],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "bP1": "P1",
+          "bP2": "P2"
+        },
+        "leaks": [],
+        "incidents": [],
+        "error": "",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f2-parallel-join-incomplete": {
+      "oracle": "DID-NOT-REACH-OBSERVATION",
+      "zeebe": {
+        "status": "LEFTOVER_JOBS",
+        "vars": {},
+        "leftovers": [
+          {
+            "type": "branchP2",
+            "elementId": "taskP2"
+          }
+        ],
+        "rejectedPublishes": [],
+        "publishes": []
+      },
+      "ours": {
+        "status": "NOT_COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "error": "NO_DUMP: the observation task 'dump' never appeared for scenario f2-parallel-join-incomplete",
+        "publishes": []
+      },
+      "verdict": "match",
+      "detail": "оба движка не дошли до точки наблюдения — ожидаемо для этого сценария"
+    }
+  }
+}

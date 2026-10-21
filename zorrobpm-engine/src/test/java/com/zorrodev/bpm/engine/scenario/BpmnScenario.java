@@ -23,6 +23,8 @@ import java.util.List;
  * @param userTaskElementIds id элементов, которые завершаются как USER TASK
  * @param jobTypes типы job'ов рабочих задач (по ним оракул Zeebe активирует джобы)
  * @param dumpJobType тип job'а «наблюдательной» задачи
+ * @param actions сценарий действий (WO-OPS-28 ФАЗА 2: срез «потоки»). Пустой
+ *     список — сценарий среза F1 (WO-OPS-27), его ведёт раннер по MI-инстансам.
  */
 public record BpmnScenario(
         String id,
@@ -38,7 +40,17 @@ public record BpmnScenario(
         int steps,
         List<String> userTaskElementIds,
         List<String> jobTypes,
-        String dumpJobType) {
+        String dumpJobType,
+        List<ScenarioAction> actions) {
+
+    /** Сценарий среза F1 (WO-OPS-27) — без сценария действий. */
+    public BpmnScenario(String id, String container, String content, int cardinality,
+            List<String> items, List<String> order, String bpmn, String varsJson,
+            List<String> taskElementIds, String dumpElementId, int steps,
+            List<String> userTaskElementIds, List<String> jobTypes, String dumpJobType) {
+        this(id, container, content, cardinality, items, order, bpmn, varsJson, taskElementIds,
+                dumpElementId, steps, userTaskElementIds, jobTypes, dumpJobType, List.of());
+    }
 
     /** Ось «порядок завершения» в каноническом виде — для отчётов и группировок. */
     public String orderKey() {

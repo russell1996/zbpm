@@ -69,6 +69,14 @@ const ACTIVATE_WINDOW_MS = 1000;
 const JOB_LOCK_MS = 20000;
 /** Сколько раз ждать появления нужного job'а. */
 const MAX_TRIES = 15;
+/**
+ * Сколько раундов ждать job'а в СЦЕНАРИИ ДЕЙСТВИЙ (срез F2, WO-OPS-28).
+ * Меньше, чем у среза F1: там job'ы появляются пачками и с задержкой MI-спавна,
+ * здесь каждый шаг — синхронная цепочка «завершили задачу → движок пошёл дальше»,
+ * поэтому двух-трёх раундов хватает; ждать 15 раундов на «ветвь не взята»
+ * незачем (это НЕ ошибка, а наблюдаемый факт).
+ */
+const MAX_TRIES_ACTIONS = 5;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -140,6 +148,28 @@ async function cancelPi(client, piKey) {
   await unary(client, 'CancelProcessInstance', { processInstanceKey: String(piKey) }).catch(() => {});
 }
 
+/**
+ * Публикация сообщения (срез F2, WO-OPS-28): будит подписку, в т.ч. ветвь
+ * event-based gateway. Correlation key пустой — корреляция по имени.
+ *
+ * Отказ публикации (подписки нет — например, проигравшая подписка
+ * event-based gateway уже снята) — НЕ ошибка сценария, а наблюдаемый факт:
+ * возвращаем false, сценарий продолжается.
+ */
+async function publishMessage(client, name, variables, correlationKey) {
+  try {
+    await unary(client, 'PublishMessage', {
+      name,
+      correlationKey: correlationKey || '',
+      timeToLive: 0,
+      variables: JSON.stringify(variables || {}),
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 function parseVars(job) {
   try { return JSON.parse(job.variables || '{}'); } catch (e) { return {}; }
 }
@@ -191,6 +221,67 @@ async function drive(client, pi, scenario) {
     }
   }
   return held;
+}
+
+/**
+ * Ведение сценария по СПИСКУ ДЕЙСТВИЙ (срез F2, WO-OPS-28 «потоки»).
+ *
+ * Тот же список действий выполняет и наш раннер (ScenarioMatrixRunner) —
+ * один и тот же сценарий на обоих движках, иначе сравнение было бы нечестным.
+ *
+ * Действия:
+ *   - {kind: 'publish',  target: '<имя сообщения>', vars: '{...}'} — публикация;
+ *   - {kind: 'complete', target: '<id элемента[,id элемента…]>', vars: '{...}'}
+ *     — завершение задачи с указанным id (если такой задачи нет — действие
+ *     пропускается: это признак того, что ветвь не взята, а не ошибка).
+ */
+async function driveActions(client, pi, scenario) {
+  const types = scenario.jobTypes || ['work'];
+  const held = new Map();
+  const rejected = [];
+  for (const action of scenario.actions || []) {
+    if (action.kind === 'publish') {
+      let vars = {};
+      try {
+        vars = JSON.parse(action.vars || '{}');
+      } catch (e) {
+        vars = {};
+      }
+      const ok = await publishMessage(client, action.target, vars, action.correlationKey);
+      if (!ok) rejected.push(action.target);
+      continue;
+    }
+    const ids = String(action.target || '').split(',').map((s) => s.trim()).filter(Boolean);
+    let done = false;
+    for (let tryNo = 0; tryNo < MAX_TRIES_ACTIONS && !done; tryNo++) {
+      let mine = [...held.values()].filter((j) => ids.includes(j.elementId));
+      if (mine.length === 0) {
+        // Активируем ВСЕ типы параллельно: один раунд = ~1 с, а не по секунде
+        // на тип (типов у сценария несколько).
+        const batches = await Promise.all(types.map((t) => activate(client, t)));
+        for (const batch of batches) {
+          for (const j of forPi(batch, pi)) held.set(j.key, j);
+        }
+        mine = [...held.values()].filter((j) => ids.includes(j.elementId));
+      }
+      if (mine.length > 0) {
+        let vars = {};
+        try {
+          vars = JSON.parse(action.vars || '{}');
+        } catch (e) {
+          vars = {};
+        }
+        for (const j of mine) {
+          await complete(client, j, vars);
+          held.delete(j.key);
+        }
+        done = true;
+      } else {
+        await sleep(200);
+      }
+    }
+  }
+  return { held, rejected };
 }
 
 /** Наблюдательная задача: снимаем payload (состояние) и завершаем её. */
@@ -256,7 +347,19 @@ async function leftovers(client, pi, types) {
       const deployed = await deployContent(client, `${scenario.id}.bpmn`, toZeebeDialect(scenario.bpmn));
       const vars = JSON.parse(scenario.vars || '{}');
       pi = await start(client, deployed.bpmnProcessId, deployed.version, vars);
-      const held = await drive(client, pi, scenario);
+      // Срез F2 (WO-OPS-28 «потоки») ведётся СПИСКОМ ДЕЙСТВИЙ — тем же, что
+      // выполняет наш раннер; срез F1 (WO-OPS-27) — по MI-инстансам.
+      const hasActions = Array.isArray(scenario.actions) && scenario.actions.length > 0;
+      const driven = hasActions
+        ? await driveActions(client, pi, scenario)
+        : { held: await drive(client, pi, scenario), rejected: [] };
+      const held = driven.held;
+      row.rejectedPublishes = driven.rejected;
+      // Исходы публикаций в одном формате с нашей стороной: «<имя>:correlated» /
+      // «<имя>:rejected» (у нас — по счётчику разбуженных подписок).
+      row.publishes = (scenario.actions || [])
+        .filter((a) => a.kind === 'publish')
+        .map((a) => `${a.target}:${driven.rejected.includes(a.target) ? 'rejected' : 'correlated'}`);
       const obs = await observe(client, pi, scenario.dumpJobType || 'dump');
       if (!obs.found) {
         row.status = 'NO_DUMP_JOB';

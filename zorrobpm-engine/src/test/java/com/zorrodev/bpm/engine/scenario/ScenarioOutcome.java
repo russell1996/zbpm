@@ -16,6 +16,11 @@ import java.util.Map;
  * @param leaks        нарушения инварианта утечек (WO-OPS-26) по этому инстансу
  * @param incidents    сообщения инцидентов инстанса (пусто = чисто)
  * @param error        текст ошибки прогона (пусто = ошибок нет)
+ * @param publishes    исходы публикаций сообщений (срез F2, WO-OPS-28): по
+ *                     одному на публикацию, в формате {@code <имя>:correlated=<n>} —
+ *                     сколько подписок публикация разбудила. У оракула тот же
+ *                     факт виден как «публикация отвергнута» (нет подписчика) —
+ *                     обе стороны нормализуются в одно поле при сравнении.
  */
 public record ScenarioOutcome(
         String scenarioId,
@@ -27,7 +32,16 @@ public record ScenarioOutcome(
         Map<String, String> rootVars,
         List<String> leaks,
         List<String> incidents,
-        String error) {
+        String error,
+        List<String> publishes) {
+
+    /** Сценарий среза F1 (WO-OPS-27) — без публикаций. */
+    public ScenarioOutcome(String scenarioId, String container, String content, int cardinality,
+            String order, String status, Map<String, String> rootVars, List<String> leaks,
+            List<String> incidents, String error) {
+        this(scenarioId, container, content, cardinality, order, status, rootVars, leaks, incidents,
+                error, List.of());
+    }
 
     public boolean completed() {
         return "COMPLETED".equals(status);

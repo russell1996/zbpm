@@ -347,4 +347,633 @@ public final class BpmnScenarioGenerator {
         }
         return axes;
     }
+
+    // =====================================================================
+    // СРЕЗ F2 — «ПОТОКИ» (WO-OPS-28, ФАЗА 2 кампании)
+    // =====================================================================
+
+    /**
+     * Ось «потоки» — ФАЗА 2 кампании (WO-OPS-28, §«Фазы»: exclusive/parallel/
+     * inclusive/event-based gateway, условные и дефолтные потоки, циклы возврата,
+     * join-семантика).
+     *
+     * <p>Сценарии F2 — парные: одна и та же BPMN-схема прогоняется на нашем
+     * движке и на ЖИВОМ Zeebe 8.5.0 (оракул), с ОДНИМ И ТЕМ ЖЕ списком действий
+     * ({@link ScenarioAction}). Наблюдение — то же: «наблюдательная» задача
+     * {@code dump} в конце, её payload = переменные корневого скоупа.
+     */
+    public enum Flow {
+        /** Exclusive gateway: одно условие истинно — пошла его ветвь. */
+        EXCLUSIVE_CONDITION,
+        /** Exclusive gateway: ни одно условие не истинно — пошла ветвь default. */
+        EXCLUSIVE_DEFAULT,
+        /** Exclusive gateway: ни одно условие не истинно, default'а нет — инцидент. */
+        EXCLUSIVE_NO_MATCH,
+        /** Exclusive gateway: истинны ОБА условия — какой поток выбран (tie-break). */
+        EXCLUSIVE_MULTI_MATCH,
+        /** Parallel gateway: форк в две ветви, обе завершены — джойн проходит. */
+        PARALLEL_FORK_JOIN,
+        /** Parallel gateway: завершена только одна ветвь — джойн ЖДЁТ вторую. */
+        PARALLEL_JOIN_INCOMPLETE,
+        /** Inclusive gateway: истинны оба условия — обе ветви, джойн проходит. */
+        INCLUSIVE_ALL,
+        /** Inclusive gateway: истинно одно условие — джойн НЕ ждёт не взятую ветвь. */
+        INCLUSIVE_PARTIAL,
+        /**
+         * Inclusive gateway БЕЗ джойна (только форк): обе ветви истинны.
+         *
+         * <p>Отдельный сценарий, потому что Zeebe 8.5 вообще НЕ УМЕЕТ джойн
+         * inclusive-шлюза: живой деплой отвергает модель с двумя входящими
+         * потоками («Currently the inclusive gateway can only have one incoming
+         * sequence flow»). Форк без джойна Zeebe 8.5 принимает — значит семантику
+         * ФОРКА можно сравнить с живым оракулом, а джойн — только как факт
+         * ограничения версии.
+         */
+        INCLUSIVE_SPLIT_ALL,
+        /** Inclusive gateway без джойна: истинно одно условие — идёт одна ветвь. */
+        INCLUSIVE_SPLIT_ONE,
+        /**
+         * Inclusive gateway с ветвью default: ни одно условие не истинно — идёт
+         * default. Отдельный сценарий, потому что default-ветвь у inclusive — это
+         * отдельная семантика (у exclusive она проверена сценарием
+         * {@code f2-exclusive-default}).
+         */
+        INCLUSIVE_DEFAULT,
+        /** Event-based gateway: сработало одно из двух событий — второе отзывается. */
+        EVENT_BASED_MESSAGE,
+        /**
+         * Event-based gateway: после срабатывания ПЕРВОГО события второе
+         * публикуется немедленно. В Zeebe проигравшая подписка снимается в момент
+         * срабатывания выигравшей — второе сообщение не должно ничего запускать.
+         */
+        EVENT_BASED_MESSAGE_RACE,
+        /** Цикл возврата: exclusive gateway возвращает токен назад, потом выход. */
+        LOOP_BACK
+    }
+
+    /** Префикс оси «потоки» в id сценария. */
+    public static final String FLOW_CONTAINER = "F2";
+    /** Тип job'а «наблюдательной» задачи (общий с F1). */
+    public static final String FLOW_DUMP_JOB_TYPE = DUMP_JOB_TYPE;
+    /** Стартовые переменные сценариев с сообщениями (ключи корреляции). */
+    public static final String EVENT_VARS = "{\"keyA\":\"KA\",\"keyB\":\"KB\"}";
+
+    /**
+     * Полный срез F2 (ФАЗА 2 кампании).
+     *
+     * <p>Детерминированный, как и срез F1: ни случайности, ни внешних
+     * зависимостей — один и тот же набор схем при каждом запуске, иначе
+     * дифференциальный прогон против оракула сравнивал бы разное.
+     */
+    public static List<BpmnScenario> generateFlows() {
+        List<BpmnScenario> out = new ArrayList<>();
+        out.add(exclusiveCondition("f2-exclusive-condition-a", true));
+        out.add(exclusiveCondition("f2-exclusive-condition-b", false));
+        out.add(exclusiveDefault());
+        out.add(exclusiveNoMatch());
+        out.add(exclusiveMultiMatch("f2-exclusive-multi-match-ab", true));
+        out.add(exclusiveMultiMatch("f2-exclusive-multi-match-ba", false));
+        out.add(parallelForkJoin("f2-parallel-fork-join", true));
+        out.add(parallelForkJoin("f2-parallel-join-incomplete", false));
+        out.add(inclusiveJoin("f2-inclusive-all", true, true));
+        out.add(inclusiveJoin("f2-inclusive-partial", true, false));
+        out.add(inclusiveSplit("f2-inclusive-split-all", true, true));
+        out.add(inclusiveSplit("f2-inclusive-split-one", true, false));
+        out.add(inclusiveDefault());
+        out.add(eventBasedMessage());
+        out.add(eventBasedMessageRace());
+        out.add(loopBack());
+        return out;
+    }
+
+    /** Exclusive gateway: единственное истинное условие выбирает ветвь. */
+    private static BpmnScenario exclusiveCondition(String id, boolean flagA) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"ops28f2\" name=\"ops28f2\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"gw\" />\n");
+        sb.append("    <bpmn:exclusiveGateway id=\"gw\">\n");
+        sb.append("      <bpmn:incoming>f1</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fA</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fB</bpmn:outgoing>\n");
+        sb.append("    </bpmn:exclusiveGateway>\n");
+        sb.append(conditionalFlow("fA", "gw", "taskA", "=flagA"));
+        sb.append(conditionalFlow("fB", "gw", "taskB", "=flagB"));
+        sb.append(serviceTask("taskA", "branchA", "fA", "fA2"));
+        sb.append(serviceTask("taskB", "branchB", "fB", "fB2"));
+        sb.append("    <bpmn:sequenceFlow id=\"fA2\" sourceRef=\"taskA\" targetRef=\"mergeGw\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fB2\" sourceRef=\"taskB\" targetRef=\"mergeGw\" />\n");
+        sb.append(mergeGateway("mergeGw", List.of("fA2", "fB2"), "fMerge"));
+        sb.append("    <bpmn:sequenceFlow id=\"fMerge\" sourceRef=\"mergeGw\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("fMerge"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskA", "{\"bA\":\"A\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskB", "{\"bB\":\"B\"}"));
+        return flowScenario(id, Flow.EXCLUSIVE_CONDITION, sb.toString(),
+                "{\"flagA\":" + flagA + ",\"flagB\":" + (!flagA) + "}",
+                List.of("taskA", "taskB"), List.of("branchA", "branchB"), actions);
+    }
+
+    /** Exclusive gateway: ни одно условие не истинно — ветвь default. */
+    private static BpmnScenario exclusiveDefault() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"ops28f2\" name=\"ops28f2\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"gw\" />\n");
+        sb.append("    <bpmn:exclusiveGateway id=\"gw\" default=\"fD\">\n");
+        sb.append("      <bpmn:incoming>f1</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fA</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fB</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fD</bpmn:outgoing>\n");
+        sb.append("    </bpmn:exclusiveGateway>\n");
+        sb.append(conditionalFlow("fA", "gw", "taskA", "=flagA"));
+        sb.append(conditionalFlow("fB", "gw", "taskB", "=flagB"));
+        sb.append("    <bpmn:sequenceFlow id=\"fD\" sourceRef=\"gw\" targetRef=\"taskD\" />\n");
+        sb.append(serviceTask("taskA", "branchA", "fA", "fA2"));
+        sb.append(serviceTask("taskB", "branchB", "fB", "fB2"));
+        sb.append(serviceTask("taskD", "branchD", "fD", "fD2"));
+        sb.append("    <bpmn:sequenceFlow id=\"fA2\" sourceRef=\"taskA\" targetRef=\"mergeGw\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fB2\" sourceRef=\"taskB\" targetRef=\"mergeGw\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fD2\" sourceRef=\"taskD\" targetRef=\"mergeGw\" />\n");
+        sb.append(mergeGateway("mergeGw", List.of("fA2", "fB2", "fD2"), "fMerge"));
+        sb.append("    <bpmn:sequenceFlow id=\"fMerge\" sourceRef=\"mergeGw\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("fMerge"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskA", "{\"bA\":\"A\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskB", "{\"bB\":\"B\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskD", "{\"bD\":\"D\"}"));
+        return flowScenario("f2-exclusive-default", Flow.EXCLUSIVE_DEFAULT, sb.toString(),
+                "{\"flagA\":false,\"flagB\":false}",
+                List.of("taskA", "taskB", "taskD"), List.of("branchA", "branchB", "branchD"), actions);
+    }
+
+    /** Exclusive gateway без default: ни одно условие не истинно — инцидент. */
+    private static BpmnScenario exclusiveNoMatch() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"ops28f2\" name=\"ops28f2\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"gw\" />\n");
+        sb.append("    <bpmn:exclusiveGateway id=\"gw\">\n");
+        sb.append("      <bpmn:incoming>f1</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fA</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fB</bpmn:outgoing>\n");
+        sb.append("    </bpmn:exclusiveGateway>\n");
+        sb.append(conditionalFlow("fA", "gw", "taskA", "=flagA"));
+        sb.append(conditionalFlow("fB", "gw", "taskB", "=flagB"));
+        sb.append(serviceTask("taskA", "branchA", "fA", "fA2"));
+        sb.append(serviceTask("taskB", "branchB", "fB", "fB2"));
+        sb.append("    <bpmn:sequenceFlow id=\"fA2\" sourceRef=\"taskA\" targetRef=\"mergeGw\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fB2\" sourceRef=\"taskB\" targetRef=\"mergeGw\" />\n");
+        sb.append(mergeGateway("mergeGw", List.of("fA2", "fB2"), "fMerge"));
+        sb.append("    <bpmn:sequenceFlow id=\"fMerge\" sourceRef=\"mergeGw\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("fMerge"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskA", "{\"bA\":\"A\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskB", "{\"bB\":\"B\"}"));
+        return flowScenario("f2-exclusive-no-match", Flow.EXCLUSIVE_NO_MATCH, sb.toString(),
+                "{\"flagA\":false,\"flagB\":false}",
+                List.of("taskA", "taskB"), List.of("branchA", "branchB"), actions);
+    }
+
+    /**
+     * Exclusive gateway с ДВУМЯ одновременно истинными условиями: какой поток
+     * выбран? Вариант {@code aFirst} — условие A объявлено первым, {@code false} —
+     * первым объявлено B (порядок объявления в документе разный, условия те же).
+     */
+    private static BpmnScenario exclusiveMultiMatch(String id, boolean aFirst) {
+        String first = aFirst ? "A" : "B";
+        String second = aFirst ? "B" : "A";
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"ops28f2\" name=\"ops28f2\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"gw\" />\n");
+        sb.append("    <bpmn:exclusiveGateway id=\"gw\">\n");
+        sb.append("      <bpmn:incoming>f1</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>f").append(first).append("</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>f").append(second).append("</bpmn:outgoing>\n");
+        sb.append("    </bpmn:exclusiveGateway>\n");
+        sb.append(conditionalFlow("f" + first, "gw", "task" + first, "=flag" + first));
+        sb.append(conditionalFlow("f" + second, "gw", "task" + second, "=flag" + second));
+        sb.append(serviceTask("taskA", "branchA", "fA", "fA2"));
+        sb.append(serviceTask("taskB", "branchB", "fB", "fB2"));
+        sb.append("    <bpmn:sequenceFlow id=\"fA2\" sourceRef=\"taskA\" targetRef=\"mergeGw\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fB2\" sourceRef=\"taskB\" targetRef=\"mergeGw\" />\n");
+        sb.append(mergeGateway("mergeGw", List.of("fA2", "fB2"), "fMerge"));
+        sb.append("    <bpmn:sequenceFlow id=\"fMerge\" sourceRef=\"mergeGw\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("fMerge"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskA", "{\"bA\":\"A\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskB", "{\"bB\":\"B\"}"));
+        return flowScenario(id, Flow.EXCLUSIVE_MULTI_MATCH, sb.toString(),
+                "{\"flagA\":true,\"flagB\":true}",
+                List.of("taskA", "taskB"), List.of("branchA", "branchB"), actions);
+    }
+
+    /**
+     * Parallel gateway: форк в две ветви. {@code completeBoth=true} — обе ветви
+     * завершены (джойн проходит); {@code false} — завершена только одна (джойн
+     * ждёт вторую ветвь — процесс не доходит до наблюдательной задачи).
+     */
+    private static BpmnScenario parallelForkJoin(String id, boolean completeBoth) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"ops28f2\" name=\"ops28f2\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"fork\" />\n");
+        sb.append("    <bpmn:parallelGateway id=\"fork\">\n");
+        sb.append("      <bpmn:incoming>f1</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fP1</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fP2</bpmn:outgoing>\n");
+        sb.append("    </bpmn:parallelGateway>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fP1\" sourceRef=\"fork\" targetRef=\"taskP1\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fP2\" sourceRef=\"fork\" targetRef=\"taskP2\" />\n");
+        sb.append(serviceTask("taskP1", "branchP1", "fP1", "fP1b"));
+        sb.append(serviceTask("taskP2", "branchP2", "fP2", "fP2b"));
+        sb.append("    <bpmn:sequenceFlow id=\"fP1b\" sourceRef=\"taskP1\" targetRef=\"join\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fP2b\" sourceRef=\"taskP2\" targetRef=\"join\" />\n");
+        sb.append("    <bpmn:parallelGateway id=\"join\">\n");
+        sb.append("      <bpmn:incoming>fP1b</bpmn:incoming>\n");
+        sb.append("      <bpmn:incoming>fP2b</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fJoinOut</bpmn:outgoing>\n");
+        sb.append("    </bpmn:parallelGateway>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fJoinOut\" sourceRef=\"join\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("fJoinOut"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = new ArrayList<>();
+        actions.add(new ScenarioAction(ScenarioAction.COMPLETE, "taskP1", "{\"bP1\":\"P1\"}"));
+        if (completeBoth) {
+            actions.add(new ScenarioAction(ScenarioAction.COMPLETE, "taskP2", "{\"bP2\":\"P2\"}"));
+        }
+        return flowScenario(id, completeBoth ? Flow.PARALLEL_FORK_JOIN : Flow.PARALLEL_JOIN_INCOMPLETE,
+                sb.toString(), "{}",
+                List.of("taskP1", "taskP2"), List.of("branchP1", "branchP2"), actions);
+    }
+
+    /**
+     * Inclusive gateway: форк по двум условиям, джойн. Оба истинны — обе ветви
+     * идут (джойн ждёт обе); одно истинно — идёт одна, и джойн НЕ должен ждать
+     * вторую (не взятую) ветвь.
+     */
+    private static BpmnScenario inclusiveJoin(String id, boolean flagA, boolean flagB) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"ops28f2\" name=\"ops28f2\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"ifork\" />\n");
+        sb.append("    <bpmn:inclusiveGateway id=\"ifork\">\n");
+        sb.append("      <bpmn:incoming>f1</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fI1</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fI2</bpmn:outgoing>\n");
+        sb.append("    </bpmn:inclusiveGateway>\n");
+        sb.append(conditionalFlow("fI1", "ifork", "taskI1", "=flagA"));
+        sb.append(conditionalFlow("fI2", "ifork", "taskI2", "=flagB"));
+        sb.append(serviceTask("taskI1", "branchI1", "fI1", "fI1b"));
+        sb.append(serviceTask("taskI2", "branchI2", "fI2", "fI2b"));
+        sb.append("    <bpmn:sequenceFlow id=\"fI1b\" sourceRef=\"taskI1\" targetRef=\"ijoin\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fI2b\" sourceRef=\"taskI2\" targetRef=\"ijoin\" />\n");
+        sb.append("    <bpmn:inclusiveGateway id=\"ijoin\">\n");
+        sb.append("      <bpmn:incoming>fI1b</bpmn:incoming>\n");
+        sb.append("      <bpmn:incoming>fI2b</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fIJoinOut</bpmn:outgoing>\n");
+        sb.append("    </bpmn:inclusiveGateway>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fIJoinOut\" sourceRef=\"ijoin\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("fIJoinOut"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskI1", "{\"bI1\":\"I1\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskI2", "{\"bI2\":\"I2\"}"));
+        return flowScenario(id, flagB ? Flow.INCLUSIVE_ALL : Flow.INCLUSIVE_PARTIAL, sb.toString(),
+                "{\"flagA\":" + flagA + ",\"flagB\":" + flagB + "}",
+                List.of("taskI1", "taskI2"), List.of("branchI1", "branchI2"), actions);
+    }
+
+    /**
+     * Inclusive gateway БЕЗ джойна: форк по двум условиям, каждая ветвь уходит в
+     * свой конец (одна — через наблюдательную задачу).
+     *
+     * <p>Зачем отдельная схема: в Zeebe 8.5 джойн inclusive-шлюза (несколько
+     * входящих потоков) НЕ ПОДДЕРЖИВАЕТСЯ — живой деплой отвергает модель. Форк
+     * (один входящий, два исходящих) Zeebe 8.5 принимает, поэтому именно его
+     * семантику можно сравнить с живым оракулом.
+     *
+     * <p>Порядок действий: сначала завершается ВТОРАЯ ветвь, потом первая — так
+     * переменные обеих ветвей гарантированно попадают в payload наблюдательной
+     * задачи (в Zeebe payload job'а = переменные скоупа на момент активации).
+     */
+    private static BpmnScenario inclusiveSplit(String id, boolean flagA, boolean flagB) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"ops28f2\" name=\"ops28f2\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"ifork\" />\n");
+        sb.append("    <bpmn:inclusiveGateway id=\"ifork\">\n");
+        sb.append("      <bpmn:incoming>f1</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fI1</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fI2</bpmn:outgoing>\n");
+        sb.append("    </bpmn:inclusiveGateway>\n");
+        sb.append(conditionalFlow("fI1", "ifork", "taskI1", "=flagA"));
+        sb.append(conditionalFlow("fI2", "ifork", "taskI2", "=flagB"));
+        sb.append(serviceTask("taskI1", "branchI1", "fI1", "fI1b"));
+        sb.append(serviceTask("taskI2", "branchI2", "fI2", "fI2b"));
+        sb.append("    <bpmn:sequenceFlow id=\"fI1b\" sourceRef=\"taskI1\" targetRef=\"dump\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fI2b\" sourceRef=\"taskI2\" targetRef=\"end2\" />\n");
+        sb.append("    <bpmn:endEvent id=\"end2\">\n      <bpmn:incoming>fI2b</bpmn:incoming>\n    </bpmn:endEvent>\n");
+        sb.append(dumpTail("fI1b"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskI2", "{\"bI2\":\"I2\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskI1", "{\"bI1\":\"I1\"}"));
+        return flowScenario(id, flagB ? Flow.INCLUSIVE_SPLIT_ALL : Flow.INCLUSIVE_SPLIT_ONE, sb.toString(),
+                "{\"flagA\":" + flagA + ",\"flagB\":" + flagB + "}",
+                List.of("taskI1", "taskI2"), List.of("branchI1", "branchI2"), actions);
+    }
+
+
+    /**
+     * Inclusive gateway с ветвью default: оба условия ложны → идёт default.
+     *
+     * <p>Ветви расходятся по трём task'ам, каждая пишет СВОЮ переменную, и все
+     * сходятся в exclusive-merge перед наблюдательной задачей — так по payload
+     * видно, КАКАЯ ветвь взята (одна переменная из трёх).
+     */
+    private static BpmnScenario inclusiveDefault() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"ops28f2\" name=\"ops28f2\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"ifork\" />\n");
+        sb.append("    <bpmn:inclusiveGateway id=\"ifork\" default=\"fD\">\n");
+        sb.append("      <bpmn:incoming>f1</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fI1</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fI2</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fD</bpmn:outgoing>\n");
+        sb.append("    </bpmn:inclusiveGateway>\n");
+        sb.append(conditionalFlow("fI1", "ifork", "taskI1", "=flagA"));
+        sb.append(conditionalFlow("fI2", "ifork", "taskI2", "=flagB"));
+        sb.append("    <bpmn:sequenceFlow id=\"fD\" sourceRef=\"ifork\" targetRef=\"taskD\" />\n");
+        sb.append(serviceTask("taskI1", "branchI1", "fI1", "fI1b"));
+        sb.append(serviceTask("taskI2", "branchI2", "fI2", "fI2b"));
+        sb.append(serviceTask("taskD", "branchD", "fD", "fDb"));
+        sb.append("    <bpmn:sequenceFlow id=\"fI1b\" sourceRef=\"taskI1\" targetRef=\"mergeGw\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fI2b\" sourceRef=\"taskI2\" targetRef=\"mergeGw\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fDb\" sourceRef=\"taskD\" targetRef=\"mergeGw\" />\n");
+        sb.append(mergeGateway("mergeGw", List.of("fI1b", "fI2b", "fDb"), "fMerge"));
+        sb.append("    <bpmn:sequenceFlow id=\"fMerge\" sourceRef=\"mergeGw\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("fMerge"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskI1", "{\"bI1\":\"I1\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskI2", "{\"bI2\":\"I2\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskD", "{\"bD\":\"D\"}"));
+        return flowScenario("f2-inclusive-default", Flow.INCLUSIVE_DEFAULT, sb.toString(),
+                "{\"flagA\":false,\"flagB\":false}",
+                List.of("taskI1", "taskI2", "taskD"), List.of("branchI1", "branchI2", "branchD"), actions);
+    }
+
+    /**
+     * Event-based gateway: два сообщения-кандидата, публикуется ОДНО. Ожидание:
+     * сработавшая ветвь идёт, а подписка второго события отзывается (второй
+     * обработчик НЕ выполняется).
+     */
+    private static BpmnScenario eventBasedMessage() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(messageDefinitions()));
+        sb.append("  <bpmn:process id=\"ops28f2\" name=\"ops28f2\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"ebg\" />\n");
+        sb.append("    <bpmn:eventBasedGateway id=\"ebg\">\n");
+        sb.append("      <bpmn:incoming>f1</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fM</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fT</bpmn:outgoing>\n");
+        sb.append("    </bpmn:eventBasedGateway>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fM\" sourceRef=\"ebg\" targetRef=\"catchA\" />\n");
+        sb.append("    <bpmn:intermediateCatchEvent id=\"catchA\">\n");
+        sb.append("      <bpmn:incoming>fM</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fA2</bpmn:outgoing>\n");
+        sb.append("      <bpmn:messageEventDefinition id=\"medA\" messageRef=\"msgA\" />\n");
+        sb.append("    </bpmn:intermediateCatchEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fT\" sourceRef=\"ebg\" targetRef=\"catchB\" />\n");
+        sb.append("    <bpmn:intermediateCatchEvent id=\"catchB\">\n");
+        sb.append("      <bpmn:incoming>fT</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fB2</bpmn:outgoing>\n");
+        sb.append("      <bpmn:messageEventDefinition id=\"medB\" messageRef=\"msgB\" />\n");
+        sb.append("    </bpmn:intermediateCatchEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fA2\" sourceRef=\"catchA\" targetRef=\"taskA\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fB2\" sourceRef=\"catchB\" targetRef=\"taskB\" />\n");
+        sb.append(serviceTask("taskA", "branchA", "fA2", "fA3"));
+        sb.append(serviceTask("taskB", "branchB", "fB2", "fB3"));
+        sb.append("    <bpmn:sequenceFlow id=\"fA3\" sourceRef=\"taskA\" targetRef=\"mergeGw\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fB3\" sourceRef=\"taskB\" targetRef=\"mergeGw\" />\n");
+        sb.append(mergeGateway("mergeGw", List.of("fA3", "fB3"), "fMerge"));
+        sb.append("    <bpmn:sequenceFlow id=\"fMerge\" sourceRef=\"mergeGw\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("fMerge"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.PUBLISH, "msgA", "{\"msg\":\"A\"}", "KA"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskA", "{\"bA\":\"A\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskB", "{\"bB\":\"B\"}"));
+        return flowScenario("f2-event-based-message", Flow.EVENT_BASED_MESSAGE, sb.toString(),
+                EVENT_VARS,
+                List.of("taskA", "taskB"), List.of("branchA", "branchB"), actions);
+    }
+
+    /**
+     * Event-based gateway: выигравшее событие сработало, и СРАЗУ публикуется
+     * проигравшее.
+     *
+     * <p>Ожидание Zeebe 8.5: проигравшая подписка снята в момент срабатывания
+     * выигравшей, поэтому второе сообщение никому не достаётся и вторая ветвь НЕ
+     * начинается. Если движок держит проигравшую подписку живой до конца
+     * инстанса — второе сообщение её разбудит (и вторая ветвь пойдёт).
+     */
+    private static BpmnScenario eventBasedMessageRace() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(messageDefinitions()));
+        sb.append("  <bpmn:process id=\"ops28f2\" name=\"ops28f2\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"ebg\" />\n");
+        sb.append("    <bpmn:eventBasedGateway id=\"ebg\">\n");
+        sb.append("      <bpmn:incoming>f1</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fM</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fT</bpmn:outgoing>\n");
+        sb.append("    </bpmn:eventBasedGateway>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fM\" sourceRef=\"ebg\" targetRef=\"catchA\" />\n");
+        sb.append("    <bpmn:intermediateCatchEvent id=\"catchA\">\n");
+        sb.append("      <bpmn:incoming>fM</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fA2</bpmn:outgoing>\n");
+        sb.append("      <bpmn:messageEventDefinition id=\"medA\" messageRef=\"msgA\" />\n");
+        sb.append("    </bpmn:intermediateCatchEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fT\" sourceRef=\"ebg\" targetRef=\"catchB\" />\n");
+        sb.append("    <bpmn:intermediateCatchEvent id=\"catchB\">\n");
+        sb.append("      <bpmn:incoming>fT</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fB2</bpmn:outgoing>\n");
+        sb.append("      <bpmn:messageEventDefinition id=\"medB\" messageRef=\"msgB\" />\n");
+        sb.append("    </bpmn:intermediateCatchEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fA2\" sourceRef=\"catchA\" targetRef=\"taskA\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fB2\" sourceRef=\"catchB\" targetRef=\"taskB\" />\n");
+        sb.append(serviceTask("taskA", "branchA", "fA2", "fA3"));
+        sb.append(serviceTask("taskB", "branchB", "fB2", "fB3"));
+        sb.append("    <bpmn:sequenceFlow id=\"fA3\" sourceRef=\"taskA\" targetRef=\"mergeGw\" />\n");
+        sb.append("    <bpmn:sequenceFlow id=\"fB3\" sourceRef=\"taskB\" targetRef=\"mergeGw\" />\n");
+        sb.append(mergeGateway("mergeGw", List.of("fA3", "fB3"), "fMerge"));
+        sb.append("    <bpmn:sequenceFlow id=\"fMerge\" sourceRef=\"mergeGw\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("fMerge"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.PUBLISH, "msgA", "{\"msg\":\"A\"}", "KA"),
+                new ScenarioAction(ScenarioAction.PUBLISH, "msgB", "{\"msg\":\"B\"}", "KB"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskA", "{\"bA\":\"A\"}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskB", "{\"bB\":\"B\"}"));
+        return flowScenario("f2-event-based-message-race", Flow.EVENT_BASED_MESSAGE_RACE, sb.toString(),
+                EVENT_VARS,
+                List.of("taskA", "taskB"), List.of("branchA", "branchB"), actions);
+    }
+
+    /**
+     * Цикл возврата: задача → exclusive gateway → ОБРАТНО на задачу (условие
+     * {@code =again}), затем — выход по default. Два прохода: первый возвращает
+     * токен назад, второй уходит к наблюдательной задаче.
+     */
+    private static BpmnScenario loopBack() {
+        StringBuilder sb = new StringBuilder();
+        sb.append(defsHeader(""));
+        sb.append("  <bpmn:process id=\"ops28f2\" name=\"ops28f2\" isExecutable=\"true\">\n");
+        sb.append("    <bpmn:startEvent id=\"start\">\n      <bpmn:outgoing>f1</bpmn:outgoing>\n    </bpmn:startEvent>\n");
+        sb.append("    <bpmn:sequenceFlow id=\"f1\" sourceRef=\"start\" targetRef=\"taskL1\" />\n");
+        sb.append(serviceTask("taskL1", "loopTask", "f1", "fL2"));
+        sb.append("    <bpmn:sequenceFlow id=\"fL2\" sourceRef=\"taskL1\" targetRef=\"lgw\" />\n");
+        sb.append("    <bpmn:exclusiveGateway id=\"lgw\" default=\"fExit\">\n");
+        sb.append("      <bpmn:incoming>fL2</bpmn:incoming>\n");
+        sb.append("      <bpmn:outgoing>fLoop</bpmn:outgoing>\n");
+        sb.append("      <bpmn:outgoing>fExit</bpmn:outgoing>\n");
+        sb.append("    </bpmn:exclusiveGateway>\n");
+        sb.append(conditionalFlow("fLoop", "lgw", "taskL1", "=again"));
+        sb.append("    <bpmn:sequenceFlow id=\"fExit\" sourceRef=\"lgw\" targetRef=\"dump\" />\n");
+        sb.append(dumpTail("fExit"));
+        sb.append("  </bpmn:process>\n</bpmn:definitions>\n");
+
+        // Три прохода: два возврата по кругу и выход. Три, а не два, — чтобы
+        // цикл не прошёл «случайно» (однократный возврат может быть и
+        // особенностью реализации, а не циклом).
+        List<ScenarioAction> actions = List.of(
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskL1", "{\"again\":true,\"iter\":1}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskL1", "{\"again\":true,\"iter\":2}"),
+                new ScenarioAction(ScenarioAction.COMPLETE, "taskL1", "{\"again\":false,\"iter\":3}"));
+        return flowScenario("f2-loop-back", Flow.LOOP_BACK, sb.toString(), "{}",
+                List.of("taskL1"), List.of("loopTask"), actions);
+    }
+
+
+    /**
+     * Определения сообщений в диалекте Zeebe 8.5.
+     *
+     * <p>Zeebe 8.5 ОТВЕРГАет модель без {@code zeebe:subscription} и требует
+     * непустой {@code correlationKey} (проба живым деплоем:
+     * {@code docs/analysis/c8-oracle/probe-message-dialect.js}):
+     * «Attribute 'correlationKey' must be present and not empty»). Поэтому у
+     * каждого сообщения СВОЙ ключ корреляции ({@code keyA}/{@code keyB}) — иначе
+     * публикация одного сообщения разбудила бы обе подписки (fan-out), а
+     * event-based gateway требует «первое событие выиграло, второе отозвано».
+     */
+    private static String messageDefinitions() {
+        return "  <bpmn:message id=\"msgA\" name=\"msgA\">\n"
+                + "    <bpmn:extensionElements>\n"
+                + "      <zeebe:subscription correlationKey=\"=keyA\" />\n"
+                + "    </bpmn:extensionElements>\n"
+                + "  </bpmn:message>\n"
+                + "  <bpmn:message id=\"msgB\" name=\"msgB\">\n"
+                + "    <bpmn:extensionElements>\n"
+                + "      <zeebe:subscription correlationKey=\"=keyB\" />\n"
+                + "    </bpmn:extensionElements>\n"
+                + "  </bpmn:message>\n";
+    }
+
+    /** Заголовок definitions (с xsi — для conditionExpression). */
+    private static String defsHeader(String messages) {
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                + "<bpmn:definitions xmlns:bpmn=\"http://www.omg.org/spec/BPMN/20100524/MODEL\""
+                + " xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\""
+                + " xmlns:zeebe=\"http://camunda.org/schema/zeebe/1.0\""
+                + " id=\"defs_ops28f2\" targetNamespace=\"http://bpmn.io/schema/bpmn\">\n"
+                + messages;
+    }
+
+    /** Последовательный поток с условием FEEL. */
+    private static String conditionalFlow(String id, String source, String target, String condition) {
+        return "    <bpmn:sequenceFlow id=\"" + id + "\" sourceRef=\"" + source + "\" targetRef=\"" + target + "\">\n"
+                + "      <bpmn:conditionExpression xsi:type=\"bpmn:tFormalExpression\">" + condition
+                + "</bpmn:conditionExpression>\n"
+                + "    </bpmn:sequenceFlow>\n";
+    }
+
+    /** Service task с zeebe:taskDefinition (job-воркер). */
+    private static String serviceTask(String id, String jobType, String incoming, String outgoing) {
+        return "    <bpmn:serviceTask id=\"" + id + "\" name=\"" + id + "\">\n"
+                + "      <bpmn:extensionElements>\n"
+                + "        <zeebe:taskDefinition type=\"" + jobType + "\" />\n"
+                + "      </bpmn:extensionElements>\n"
+                + "      <bpmn:incoming>" + incoming + "</bpmn:incoming>\n"
+                + "      <bpmn:outgoing>" + outgoing + "</bpmn:outgoing>\n"
+                + "    </bpmn:serviceTask>\n";
+    }
+
+    /**
+     * Exclusive MERGE-шлюз (несколько входящих, один исходящий) — «слив» ветви
+     * перед наблюдательной задачей.
+     *
+     * <p>Зачем он вместо нескольких входящих потоков прямо в задачу: задача с
+     * двумя входящими — это НЕЯВНЫЙ join, а его семантика в Zeebe 8.5 (создаётся
+     * по экземпляру на каждый входящий токен) отличается от нашей. Явный
+     * exclusive-merge (XORслив: каждый пришедший токен проходит насквозь) —
+     * единственная форма, которую оба движка понимают ОДИНАКОВО, и она не
+     * добавляет к проверяемой семантике ничего своего (ветви тут взаимоисключающие).
+     */
+    private static String mergeGateway(String id, List<String> incoming, String outgoing) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("    <bpmn:exclusiveGateway id=\"").append(id).append("\">\n");
+        for (String in : incoming) {
+            sb.append("      <bpmn:incoming>").append(in).append("</bpmn:incoming>\n");
+        }
+        sb.append("      <bpmn:outgoing>").append(outgoing).append("</bpmn:outgoing>\n");
+        sb.append("    </bpmn:exclusiveGateway>\n");
+        return sb.toString();
+    }
+
+    /** Хвост «наблюдательная задача → конец» (одинаков для всех схем среза F2). */
+    private static String dumpTail(String incomingFlowId) {
+        return "    <bpmn:serviceTask id=\"dump\" name=\"dump\">\n"
+                + "      <bpmn:extensionElements>\n"
+                + "        <zeebe:taskDefinition type=\"" + FLOW_DUMP_JOB_TYPE + "\" />\n"
+                + "      </bpmn:extensionElements>\n"
+                + "      <bpmn:incoming>" + incomingFlowId + "</bpmn:incoming>\n"
+                + "      <bpmn:outgoing>fDumpOut</bpmn:outgoing>\n"
+                + "    </bpmn:serviceTask>\n"
+                + "    <bpmn:sequenceFlow id=\"fDumpOut\" sourceRef=\"dump\" targetRef=\"end\" />\n"
+                + "    <bpmn:endEvent id=\"end\">\n      <bpmn:incoming>fDumpOut</bpmn:incoming>\n    </bpmn:endEvent>\n";
+    }
+
+    /** Сборка сценария среза F2. */
+    private static BpmnScenario flowScenario(String id, Flow flow, String bpmn, String varsJson,
+            List<String> taskElementIds, List<String> jobTypes, List<ScenarioAction> actions) {
+        return new BpmnScenario(id, FLOW_CONTAINER, flow.name(), 0, List.of(), List.of(), bpmn, varsJson,
+                taskElementIds, "dump", 1, List.of(), jobTypes, FLOW_DUMP_JOB_TYPE, actions);
+    }
 }
