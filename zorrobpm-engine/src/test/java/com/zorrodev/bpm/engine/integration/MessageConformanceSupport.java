@@ -162,6 +162,14 @@ public abstract class MessageConformanceSupport {
         Map<String, String> declaredTypes = declaredJobTypes(xml);
 
         UUID pi = null;
+        if (Boolean.TRUE.equals(c.get("publishBeforeStart"))) {
+            // Публикация ДО старта инстанса: подписки ещё нет — проверяем буфер.
+            for (Map<String, Object> step : steps(c)) {
+                if ("publish".equals(String.valueOf(step.get("action")))) {
+                    observations.add(publish(step, null));
+                }
+            }
+        }
         if (!"message".equals(String.valueOf(c.get("start")))) {
             try {
                 StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
@@ -184,6 +192,9 @@ public abstract class MessageConformanceSupport {
                 continue; // уже опубликовано до деплоя
             }
             String action = String.valueOf(step.get("action"));
+            if (Boolean.TRUE.equals(c.get("publishBeforeStart")) && "publish".equals(action)) {
+                continue; // уже опубликовано до старта инстанса
+            }
             Map<String, Object> observation;
             if ("publish".equals(action)) {
                 observation = publish(step, pi);

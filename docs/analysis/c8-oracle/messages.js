@@ -166,6 +166,18 @@ function assertScenarioMatchesCanonical(c) {
     }
 
     if (deployed) {
+      if (c.publishBeforeStart) {
+        // Публикация ДО старта инстанса: подписки ещё нет — проверяем буфер.
+        for (const step of c.steps || []) {
+          if (step.action !== 'publish') continue;
+          try {
+            const res = await O.publishMessage(client, step.name, step.correlationKey, step.timeToLive, step.variables);
+            observations.push({ step: 'publish', outcome: 'published', key: String(res.key), publishedBeforeStart: true });
+          } catch (e) {
+            observations.push({ step: 'publish', outcome: 'error', error: String(e.message || e) });
+          }
+        }
+      }
       if ((c.start || 'none') !== 'message') {
         pi = await O.start(client, c.processId, c.vars || {});
       } else {
@@ -187,6 +199,7 @@ function assertScenarioMatchesCanonical(c) {
       }
       for (const step of c.steps || []) {
         if (c.publishBeforeDeploy && step.action === 'publish') continue; // уже опубликовано до деплоя
+        if (c.publishBeforeStart && step.action === 'publish') continue; // уже опубликовано до старта
         try {
           if (step.action === 'publish') {
             const res = await O.publishMessage(client, step.name, step.correlationKey, step.timeToLive, step.variables);

@@ -174,6 +174,62 @@
       "docs89": "8.9: буферизация сообщений (message buffering) — сообщение с TTL>0, опубликованное до появления подписки, живёт на брокере до TTL и доставляется, когда подписка откроется; при TTL=0 сообщение отбрасывается"
     },
     {
+      "id": "f2v-msg-buffered-catch",
+      "title": "Буфер: публикация с ключом и TTL>0 ДО появления подписки (путь catch)",
+      "bpmn": "message/f2v-msg-buffered-catch.bpmn",
+      "processId": "f2vBufferedCatch",
+      "publishBeforeStart": true,
+      "vars": {
+        "orderId": "ORD-BUF"
+      },
+      "steps": [
+        {
+          "action": "publish",
+          "name": "f2v-buffered-msg",
+          "correlationKey": "ORD-BUF",
+          "timeToLive": 60000,
+          "variables": {
+            "payload": "early",
+            "caseTag": "f2v-msg-buffered-catch"
+          }
+        },
+        {
+          "action": "observeJob",
+          "element": "afterCatch"
+        },
+        {
+          "action": "observeState"
+        }
+      ],
+      "expect": {
+        "observations": [
+          {
+            "step": "deploy",
+            "outcome": "deployOk"
+          },
+          {
+            "step": "publish",
+            "outcome": "published"
+          },
+          {
+            "step": "observeJob",
+            "element": "afterCatch",
+            "outcome": "noJob",
+            "jobType": "f2vAfterBuffered",
+            "liveReference": {
+              "outcome": "jobObserved",
+              "jobType": "f2vAfterBuffered",
+              "variables": "{\"caseTag\":\"f2v-msg-buffered-catch\",\"orderId\":\"ORD-BUF\",\"payload\":\"early\"}"
+            }
+          }
+        ],
+        "knownDifference": [
+          "('observeJob', 'afterCatch')#1"
+        ]
+      },
+      "docs89": "8.9: сообщение с TTL>0 буферизуется на брокере и доставляется, когда откроется подписка с тем же ключом корреляции; при TTL=0 буферизации нет"
+    },
+    {
       "id": "f2v-msg-throw-catch",
       "title": "Бросок сообщения процессом и приём сообщения",
       "bpmn": "message/f2v-msg-throw-catch.bpmn",
