@@ -254,6 +254,34 @@ public class InclusiveJoinReadinessMatrixIntegrationTests {
             .as(c + " → побочный эффект после join ровно " + expectedTaskAfter)
             .isEqualTo(expectedTaskAfter);
         assertThat(incidents(pi)).as(c + " → без инцидентов").isEqualTo(0L);
+
+        // ── инвариант завершения (WO-OPS-33) ───────────────────────────────────────────────
+        // «Инстанс завершён ⇒ ни одной живой activity в нём». Это отдельное утверждение, а не
+        // следствие правила готовности: правило говорит про join, инвариант — про терминальность
+        // инстанса. Прерывающая граница с продолжением в end event завершала инстанс, пока
+        // ветвь форка была жива, а движок затем создавал taskAfter В УЖЕ ЗАВЕРШЁННОМ инстансе.
+        assertNoLiveActivityInCompletedInstance(pi, c);
+    }
+
+    /**
+     * WO-OPS-33: завершённый инстанс не должен содержать живых activity (CREATED/IN_PROGRESS).
+     * Инстанс, который ещё жив (completedAt == null), — не нарушение: он просто ждёт.
+     */
+    private void assertNoLiveActivityInCompletedInstance(UUID pi, Combination c) {
+        boolean completed = dbService.getProcessInstance(pi).getCompletedAt() != null;
+        List<ActivityEntity> live = activities(pi).stream()
+            .filter(a -> a.getStatus() == ActivityStatus.CREATED || a.getStatus() == ActivityStatus.IN_PROGRESS)
+            .toList();
+        if (completed) {
+            assertThat(live)
+                .as(c + " → инстанс завершён, но в нём живые activity: %s",
+                    live.stream().map(a -> a.getBpmnElementId() + "/" + a.getStatus()).toList())
+                .isEmpty();
+        } else {
+            assertThat(live)
+                .as(c + " → инстанс ещё жив, живая activity закономерна")
+                .isNotEmpty();
+        }
     }
 
     // ── водительство ──────────────────────────────────────────────────────────────────────

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-33: the question the WO asks of the live oracle (п.4 «Что сделать»):
+     "что делает Zeebe, когда прерывающая граница уводит ветвь в end event корневого scope
+      при живой второй ветви форка".
+
+     Topology (a deliberate copy of the engine fixture test-c834-fork-boundary.bpmn, with
+     service tasks instead of user tasks — Zeebe has no user task):
+       start → pfork (parallel, 2 branches)
+         branch A: hostTask   — INTERRUPTING timer boundary ops33Bnd (PT1S) → escapeEnd (ROOT end event)
+         branch B: siblingTask — live while the boundary fires
+     The boundary is a TIMER with a 1 s duration so the trigger is deterministic without
+     touching the broker clock: the driver samples the jobs at ~300 ms (host still alive)
+     and at ~2.5 s (the boundary has fired).
+
+     Observed on Zeebe 8.5.0 (result-8.5.json + the WO-OPS-33 report):
+     after the boundary fires, the SIBLING job is STILL there → the root-scope end event of
+     the boundary continuation did NOT terminate the process instance and did NOT terminate
+     the live sibling branch. (Zeebe keeps the fork branch alive: the boundary continuation
+     runs in the HOST's branch scope, and the end event closes that scope, not the instance.)
+-->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_ops33" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="ops33ForkBoundary" name="ops33ForkBoundary" isExecutable="true">
+    <bpmn:startEvent id="start" name="start">
+      <bpmn:outgoing>f1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" name="f1" sourceRef="start" targetRef="pfork" />
+    <bpmn:parallelGateway id="pfork" name="pfork">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>fA</bpmn:outgoing>
+      <bpmn:outgoing>fB</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fA" name="fA" sourceRef="pfork" targetRef="hostTask" />
+    <bpmn:serviceTask id="hostTask" name="hostTask">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ops33Host" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fA</bpmn:incoming>
+      <bpmn:outgoing>fA2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="fA2" name="fA2" sourceRef="hostTask" targetRef="join" />
+    <bpmn:boundaryEvent id="ops33Bnd" name="ops33Bnd" attachedToRef="hostTask" cancelActivity="true">
+      <bpmn:outgoing>fBnd</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="ops33BndDef">
+        <bpmn:timeDuration>PT1S</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="fBnd" name="fBnd" sourceRef="ops33Bnd" targetRef="escapeEnd" />
+    <bpmn:endEvent id="escapeEnd" name="escapeEnd">
+      <bpmn:incoming>fBnd</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="fB" name="fB" sourceRef="pfork" targetRef="siblingTask" />
+    <bpmn:serviceTask id="siblingTask" name="siblingTask">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="ops33Sibling" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>fB</bpmn:incoming>
+      <bpmn:outgoing>fB2</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="fB2" name="fB2" sourceRef="siblingTask" targetRef="join" />
+    <bpmn:parallelGateway id="join" name="join">
+      <bpmn:incoming>fA2</bpmn:incoming>
+      <bpmn:incoming>fB2</bpmn:incoming>
+      <bpmn:outgoing>fOut</bpmn:outgoing>
+    </bpmn:parallelGateway>
+    <bpmn:sequenceFlow id="fOut" name="fOut" sourceRef="join" targetRef="endEvent" />
+    <bpmn:endEvent id="endEvent" name="endEvent">
+      <bpmn:incoming>fOut</bpmn:incoming>
+    </bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

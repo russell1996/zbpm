@@ -1,0 +1,26 @@
+{
+  "id": "ops33-interrupting-boundary-root-end",
+  "title": "WO-OPS-33 — прерывающая граница уводит ветвь форка в end event КОРНЕВОГО scope, пока вторая ветвь форка жива. Что делает Zeebe 8.5?",
+  "bpmn": "process.bpmn",
+  "processId": "ops33ForkBoundary",
+  "vars": {},
+  "observeJobTypes": [
+    "ops33Host",
+    "ops33Sibling"
+  ],
+  "expectIncident": false,
+  "waitMs": 4000,
+  "expected": {
+    "siblingStillAlive": false,
+    "instanceTerminated": true
+  },
+  "matrix": {
+    "docs89": "8.9 docs: a boundary event with cancelActivity=true interrupts the activity it is attached to; the activity's scope is terminated and the boundary's outgoing flow is taken. An end event in the process (root) scope completes the process instance — remaining activity instances of that scope are terminated with it.",
+    "ours": "наш движок: ветвь форка, погашенная прерывающей границей, продолжается в end event корневого scope; счётчик ветвей форка расходуется дважды (граница + end event) → инстанс завершается преждевременно, живая ветвь остаётся в завершённом инстансе (WO-OPS-33)"
+  },
+  "_help": {
+    "driver": "node ops33-driver.js — отдельный драйвер этого сценария: деплой → старт → публикация сообщения ops33Kill (триггер прерывающей границы) → наблюдение: жив ли job второй ветви и есть ли работа в инстансе.",
+    "expected.siblingStillAlive": "true, если после срабатывания границы job второй ветви всё ещё активируется (инстанс жив, ветвь не погашена); false, если инстанс терминирован и задача погашена вместе с ним.",
+    "expected.instanceTerminated": "true, если после срабатывания границы в инстансе не осталось ни одного активируемого job (корневой end event завершил инстанс)."
+  }
+}
