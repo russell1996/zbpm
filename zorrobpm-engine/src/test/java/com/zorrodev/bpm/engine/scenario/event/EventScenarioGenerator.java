@@ -80,6 +80,8 @@ public final class EventScenarioGenerator {
         out.add(boundaryConditional());
         out.add(boundaryWithoutEventDefinition());
         out.add(boundaryDanglingHost());
+        out.add(boundaryDanglingErrorRef());
+        out.add(camundaExportStartTag());
         return out;
     }
 
@@ -897,6 +899,70 @@ public final class EventScenarioGenerator {
                 List.of("host", "afterB", DUMP_JOB_TYPE), 8000,
                 "Инвентарь (ФАЗА 0, §4-18): граница, привязанная к НЕСУЩЕСТВУЮЩЕЙ activity, "
                         + "у нас деплоится без отказа и никогда не срабатывает.");
+    }
+
+    /**
+     * Граница ошибки, ссылающаяся на НЕСУЩЕСТВУЮЩЕЕ определение ошибки (инвентарь §8, P-20).
+     *
+     * <p>Наш движок откатывает ref на «сырую строку» ({@code BpmnParseServiceImpl}: код
+     * берётся как {@code registry.errorCodes().getOrDefault(ref, ref)}), поэтому граница
+     * взводится с кодом, который ни одна реальная ошибка не породит.
+     */
+    private static EventScenario boundaryDanglingErrorRef() {
+        String bpmn = defs("f4BndDanglingErr", "",
+                start("start", "f1")
+                        + flow("f1", "start", "host")
+                        + svc("host", "host", "f1", "f2")
+                        + flow("f2", "host", "endMain")
+                        + end("endMain", "f2")
+                        + "<bpmn:boundaryEvent id=\"bnd\" name=\"bnd\" attachedToRef=\"host\" cancelActivity=\"true\">"
+                        + "<bpmn:outgoing>fB</bpmn:outgoing>"
+                        + "<bpmn:errorEventDefinition id=\"bed\" errorRef=\"noSuchError\" /></bpmn:boundaryEvent>"
+                        + flow("fB", "bnd", "afterB")
+                        + svc("afterB", "afterB", "fB", "fB2")
+                        + flow("fB2", "afterB", "dump")
+                        + svc("dump", DUMP_JOB_TYPE, "fB2", "f3")
+                        + flow("f3", "dump", "end")
+                        + end("end", "f3"));
+        return scenario("f4-bnd-dangling-error-ref", "boundary",
+                "boundaryEvent(error) с errorRef на несуществующее определение", bpmn,
+                EventScenario.StartMode.PLAIN, null,
+                List.of(EventScenarioAction.throwError("host", "E-OTHER"),
+                        EventScenarioAction.waitMs(800),
+                        EventScenarioAction.complete("afterB"),
+                        EventScenarioAction.observe(),
+                        EventScenarioAction.complete("dump")),
+                List.of("host", "afterB", DUMP_JOB_TYPE), 6000,
+                "Инвентарь (ФАЗА 0, §8, P-20): error/signal/escalation ref на несуществующее "
+                        + "определение — код откатывается на «сырой ref», событие никогда не сойдётся.");
+    }
+
+    /**
+     * Camunda-экспортный тег {@code <bpmn:messageStartEvent>} (инвентарь §8, P-7).
+     *
+     * <p>Наша JAXB-модель биндит только {@code <bpmn:startEvent>} — экспортный тег в неё
+     * не попадает, и процесс остаётся БЕЗ стартового события.
+     */
+    private static EventScenario camundaExportStartTag() {
+        String bpmn = defs("f4CamundaExportTag",
+                "<bpmn:message id=\"MsgExport\" name=\"f4-msg-export\" />",
+                "<bpmn:messageStartEvent id=\"start\" name=\"start\">"
+                        + "<bpmn:outgoing>f1</bpmn:outgoing>"
+                        + "<bpmn:messageEventDefinition id=\"med\" messageRef=\"MsgExport\" /></bpmn:messageStartEvent>"
+                        + flow("f1", "start", "dump")
+                        + svc("dump", DUMP_JOB_TYPE, "f1", "f2")
+                        + flow("f2", "dump", "end")
+                        + end("end", "f2"));
+        return scenario("f4-camunda-export-start-tag", "start",
+                "Camunda-экспортный тег <bpmn:messageStartEvent>", bpmn,
+                EventScenario.StartMode.SIGNAL, "f4-msg-export",
+                List.of(EventScenarioAction.signal("f4-msg-export"),
+                        EventScenarioAction.waitMs(800),
+                        EventScenarioAction.observe(),
+                        EventScenarioAction.complete("dump")),
+                List.of(DUMP_JOB_TYPE), 5000,
+                "Инвентарь (ФАЗА 0, §8, P-7): Camunda-экспортные теги (<messageStartEvent> и т. п.) "
+                        + "наша JAXB-модель не биндит — модель молча теряет стартовое событие.");
     }
 
     // ------------------------------------------------------------------

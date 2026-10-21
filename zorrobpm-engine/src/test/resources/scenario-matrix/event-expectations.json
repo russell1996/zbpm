@@ -335,7 +335,7 @@
         "incidents": []
       },
       "verdict": "oracle-deploy-rejected",
-      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-bnd-conditional.1792578637384.bpmn': - Element: bnd / - ERROR: Boundary events must be one of: timer, message, error, signal, escalation / - Element: ced"
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-bnd-conditional.1792582166418.bpmn': - Element: ced / - ERROR: Event definition of this type is not supported / - Element: bnd"
     },
     "f4-bnd-without-event-definition": {
       "zeebe": {
@@ -362,7 +362,7 @@
         "incidents": []
       },
       "verdict": "oracle-deploy-rejected",
-      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-bnd-without-event-definition.1792578637384.bpmn': - Element: bnd / - ERROR: Must have exactly one event definition"
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-bnd-without-event-definition.1792582166418.bpmn': - Element: bnd / - ERROR: Must have exactly one event definition"
     },
     "f4-bnd-dangling-host": {
       "zeebe": {
@@ -389,7 +389,38 @@
         "incidents": []
       },
       "verdict": "oracle-deploy-rejected",
-      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-bnd-dangling-host.1792578637384.bpmn': Cannot invoke \"io.camunda.zeebe.model.bpmn.instance.Activity.equals(Object)\" because the return value of \"io.camunda.zeebe.model.bpmn.instance.BoundaryEvent.getAttachedTo()\" is null"
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-bnd-dangling-host.1792582166418.bpmn': Cannot invoke \"io.camunda.zeebe.model.bpmn.instance.Activity.equals(Object)\" because the return value of \"io.camunda.zeebe.model.bpmn.instance.BoundaryEvent.getAttachedTo()\" is null"
+    },
+    "f4-bnd-dangling-error-ref": {
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "host": 1,
+          "afterB": 1,
+          "dump": 1
+        }
+      },
+      "ours": {
+        "status": "NOT_COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [
+          "Unhandled BPMN error 'E-OTHER'"
+        ]
+      },
+      "verdict": "ours differs",
+      "detail": "точка наблюдения: ours=false zeebe=true"
     },
     "f4-cancel-instance": {
       "zeebe": {
@@ -609,7 +640,7 @@
         "incidents": []
       },
       "verdict": "oracle-deploy-rejected",
-      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-end-cancel-in-transaction.1792578637384.bpmn': - Element: tx / - ERROR: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/ / - Element: cancelEnd"
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-end-cancel-in-transaction.1792582166418.bpmn': - Element: cancelEnd / - ERROR: End events must be one of: none, error, message, terminate, signal, escalation or compensation / - Element: tx"
     },
     "f4-end-compensate": {
       "zeebe": {
@@ -636,7 +667,7 @@
         "incidents": []
       },
       "verdict": "oracle-deploy-rejected",
-      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-end-compensate.1792578637384.bpmn': - Element: ced / - ERROR: The referenced compensation activity 'compHandler' must have either a compensation boundary event or be a subprocess"
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-end-compensate.1792582166418.bpmn': - Element: ced / - ERROR: The referenced compensation activity 'compHandler' must have either a compensation boundary event or be a subprocess"
     },
     "f4-incident-resolve": {
       "zeebe": {
@@ -992,6 +1023,26 @@
       },
       "verdict": "match",
       "detail": ""
+    },
+    "f4-camunda-export-start-tag": {
+      "zeebe": {
+        "status": "FAILED",
+        "dumpReached": false,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {}
+      },
+      "ours": {
+        "status": "FAILED",
+        "dumpReached": false,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {},
+        "leaks": [],
+        "incidents": []
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-camunda-export-start-tag.1792582166418.bpmn': Error: URI=null Line=4: cvc-complex-type.2.4.a: Invalid content was found starting with element '{\"http://www.omg.org/spec/BPMN/20100524/MODEL\":messageStartEvent}'. One of '{\"http://www.omg.org/spec/BPMN/20100524/MODEL\":documentation, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":extensionElements, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":supportedInterfaceRef, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":ioSpecification, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":ioBinding, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":auditing, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":monitoring, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":property, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":laneSet, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":flowElement, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":artifact, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":resourceRole, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":correlationSubscription, \"http://www.omg.org/spec/BPMN/20100524/MODEL\":supports}' is expected."
     },
     "f4-bnd-cycle-timer": {
       "zeebe": {

@@ -122,6 +122,14 @@ public final class EventScenarioRunner {
             return new EventScenarioOutcome(scenario.id(), scenario.family(), scenario.element(),
                     status, observation, leaks, incidents, "");
         } catch (RuntimeException e) {
+            // Наблюдение дополняется теми же пустыми значениями, что и при успехе:
+            // иначе сравнение с прибитым фактом читало бы «null вместо false» (деплой
+            // отвергнут — это ФАКТ сценария, а не отсутствие данных).
+            observation.putIfAbsent("dumpReached", false);
+            observation.putIfAbsent("vars", Map.of());
+            observation.putIfAbsent("liveElements", Map.of());
+            observation.putIfAbsent("elementCounts", Map.of());
+            observation.putIfAbsent("instanceCount", 0);
             return new EventScenarioOutcome(scenario.id(), scenario.family(), scenario.element(),
                     pi == null ? "FAILED" : instanceStatus(pi),
                     observation, List.of(),

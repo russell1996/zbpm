@@ -143,6 +143,8 @@ for (const o of ours) {
       elementCounts: obs.elementCounts || {},
       instanceCount: obs.instanceCount,
       leaks: normalizeLeaks(o.leaks || []),
+      leakCheck: ['COMPLETED', 'CANCELLED'].includes(o.status)
+        ? 'применим' : 'н/д — инстанс не завершён (инвариант неприменим)',
       incidents: o.incidents || [],
       error: o.error || '',
     },
@@ -253,7 +255,13 @@ rows.forEach((r, i) => {
   const z = r.zeebe || {};
   const zeebeCell = `точка наблюдения: ${z.dumpReached ? 'достигнута' : 'НЕ достигнута'}; job'ы: ${JSON.stringify(z.jobCounts || {})}; остаток: ${JSON.stringify(z.leftoverJobs || {})}`;
   const oursCell = `статус: ${r.ours.status}; точка наблюдения: ${r.ours.dumpReached ? 'достигнута' : 'НЕ достигнута'}; элементы: ${JSON.stringify(r.ours.elementCounts || {})}; живы: ${JSON.stringify(r.ours.liveElements || {})}`;
-  const leaks = r.ours.leaks.length ? r.ours.leaks.join('; ') : 'нет';
+  // Инвариант утечек применим ТОЛЬКО к завершённым инстансам (LeakInvariantChecker
+  // берёт completed_at IS NOT NULL). Для нетерминальных сценариев колонка не «нет»,
+  // а «н/д» — иначе таблица утверждает «утечек нет» там, где проверка не могла сработать.
+  const terminal = ['COMPLETED', 'CANCELLED'].includes(r.ours.status);
+  const leaks = !terminal
+    ? 'н/д — инстанс не завершён (инвариант неприменим)'
+    : (r.ours.leaks.length ? r.ours.leaks.join('; ') : 'нет');
   md.push(`| ${i + 1} | ${r.element} | \`${r.id}\` | ${zeebeCell} | ${oursCell} | ${leaks} | **${r.verdict}**${r.detail ? ' — ' + r.detail : ''} |`);
 });
 md.push('');
