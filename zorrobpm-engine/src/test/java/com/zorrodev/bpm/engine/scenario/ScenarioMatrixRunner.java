@@ -74,7 +74,10 @@ public final class ScenarioMatrixRunner {
 
     /** Прогон одного сценария; исключения НЕ проглатываются — они попадают в outcome. */
     public ScenarioOutcome run(BpmnScenario scenario) {
-        Set<UUID> baseline = LeakInvariantChecker.snapshotCompletedInstanceIds(jdbc);
+        // Baseline ДО сценария (WO-OPS-32): снимок «все инстансы + завершённые».
+        // Наш инстанс создаётся после снимка → в проверке он «свой» (own),
+        // чужие инстансы общей БД — «чужие» (foreign) и сюда не попадают.
+        LeakInvariantChecker.Baseline baseline = LeakInvariantChecker.snapshot(jdbc);
         UUID pi = null;
         try {
             ProcessDefinition definition = processDefinitionService.addProcessDefinition(scenario.bpmn());
@@ -218,9 +221,15 @@ public final class ScenarioMatrixRunner {
         return out;
     }
 
-    /** Нарушения инварианта утечек (WO-OPS-26) по этому инстансу. */
-    private List<String> leaksOf(UUID pi, Set<UUID> baseline) {
-        return LeakInvariantChecker.check(jdbc, baseline).stream()
+    /**
+     * Нарушения инварианта утечек (WO-OPS-26) по этому инстансу.
+     *
+     * <p>WO-OPS-32: берём только «свои» нарушения (own) — инстанс сценария создан
+     * после baseline, поэтому он свой; чужие инстансы общей БД (созданные ДО
+     * baseline, завершённые в его окне) в отчёт сценария не относятся.
+     */
+    private List<String> leaksOf(UUID pi, LeakInvariantChecker.Baseline baseline) {
+        return LeakInvariantChecker.check(jdbc, baseline).own().stream()
                 .filter(v -> pi.equals(v.instanceId()))
                 .map(Object::toString)
                 .toList();
