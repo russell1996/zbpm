@@ -1,0 +1,1157 @@
+{
+  "workOrder": "WO-OPS-28 ФАЗА 4",
+  "slice": "события (start/end/intermediate/boundary/timer/incident/cancel)",
+  "oracle": "Zeebe 8.5.0",
+  "generatedAt": "2026-10-21T10:18:15.272Z",
+  "summary": {
+    "match": 27,
+    "differs": 1,
+    "rejected": 1,
+    "total": 29
+  },
+  "rows": [
+    {
+      "id": "f4-bnd-timer-interrupting-task",
+      "family": "boundary",
+      "element": "boundaryEvent(timer, прерывающая) на задаче",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "afterB": 1,
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-bnd-timer-noninterrupting-task",
+      "family": "boundary",
+      "element": "boundaryEvent(timer, непрерывающая) на задаче",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1,
+          "f2": 1,
+          "endMain": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "afterB": 1,
+          "dump": 1,
+          "host": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-bnd-signal-interrupting-task",
+      "family": "boundary",
+      "element": "boundaryEvent(signal, прерывающая) на задаче",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "afterB": 1,
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-bnd-signal-noninterrupting-task",
+      "family": "boundary",
+      "element": "boundaryEvent(signal, непрерывающая) на задаче",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1,
+          "f2": 1,
+          "endMain": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "afterB": 1,
+          "dump": 1,
+          "host": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-bnd-error-interrupting-task",
+      "family": "boundary",
+      "element": "boundaryEvent(error, прерывающая) на задаче",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "host": 1,
+          "afterB": 1,
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-bnd-timer-interrupting-container",
+      "family": "boundary",
+      "element": "boundaryEvent(timer, прерывающая) на контейнере",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "sub": 1,
+          "subStart": 1,
+          "fs1": 1,
+          "subWork": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "afterB": 1,
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-bnd-timer-noninterrupting-container",
+      "family": "boundary",
+      "element": "boundaryEvent(timer, непрерывающая) на контейнере",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "sub": 1,
+          "subStart": 1,
+          "fs1": 1,
+          "subWork": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1,
+          "fs2": 1,
+          "subEnd": 1,
+          "f2": 1,
+          "endMain": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "afterB": 1,
+          "dump": 1,
+          "subWork": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-bnd-timer-on-mi-container",
+      "family": "boundary",
+      "element": "boundaryEvent(timer) на MI-контейнере (ENG-3: тело MI vs per-instance)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ]
+        },
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "miSub": 2,
+          "subStart": 2,
+          "fs1": 2,
+          "subWork": 2,
+          "fB": 2,
+          "afterB": 2,
+          "fB2": 2,
+          "dump": 2,
+          "f3": 2,
+          "end": 2
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ]
+        },
+        "leftoverJobs": {},
+        "jobCounts": {
+          "afterB": 1,
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "ours differs",
+      "detail": "сколько раз инстанцирован элемент: afterB: ours=2 zeebe=1; dump: ours=2 zeebe=1"
+    },
+    {
+      "id": "f4-cancel-instance",
+      "family": "cancel",
+      "element": "операторская отмена инстанса",
+      "ours": {
+        "status": "CANCELLED",
+        "dumpReached": false,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {},
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-end-none",
+      "family": "end",
+      "element": "endEvent(none)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "dump": 1,
+          "f2": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-end-error-unhandled",
+      "family": "end",
+      "element": "endEvent(error) без обработчика",
+      "ours": {
+        "status": "NOT_COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "work": 1,
+          "f2": 1,
+          "errEnd": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [
+          "Unhandled BPMN error 'E-UNH'"
+        ],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "work": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-end-error-boundary",
+      "family": "end",
+      "element": "endEvent(error) + граница ошибки",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "sub": 1,
+          "subStart": 1,
+          "fs1": 1,
+          "subErr": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump2": 1,
+          "fB3": 1,
+          "endB": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "afterB": 1,
+          "dump2": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-end-escalation-boundary",
+      "family": "end",
+      "element": "endEvent(escalation) + граница эскалации",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "sub": 1,
+          "subStart": 1,
+          "fs1": 1,
+          "subEsc": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump2": 1,
+          "fB3": 1,
+          "endB": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "afterB": 1,
+          "dump2": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-end-terminate",
+      "family": "end",
+      "element": "endEvent(terminate)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "fork": 1,
+          "f2": 1,
+          "workA": 1,
+          "f3": 1,
+          "workB": 1,
+          "f2b": 1,
+          "termEnd": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "workA": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-end-cancel-in-transaction",
+      "family": "end",
+      "element": "endEvent(cancel) в транзакции",
+      "ours": {
+        "status": "NOT_COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "tx": 1,
+          "txStart": 1,
+          "fs1": 1,
+          "cancelEnd": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "FAILED",
+        "dumpReached": false,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {},
+        "unsupportedActions": [],
+        "error": "3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors:\n'f4-end-cancel-in-transaction.1792577373587.bpmn': - Element: ced\n    - ERROR: Event definition of this type is not supported\n- Element: tx\n    - ERROR: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/\n- Element: cancelEnd\n    - ERROR: End events must be one of: none, error, message, terminate, signal, escalation or compensation\n"
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 не принимает модель на деплое: 'f4-end-cancel-in-transaction.1792577373587.bpmn': - Element: ced / - ERROR: Event definition of this type is not supported / - Element: tx"
+    },
+    {
+      "id": "f4-incident-resolve",
+      "family": "incident",
+      "element": "error end → инцидент → resolve",
+      "ours": {
+        "status": "NOT_COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "work": 1,
+          "f2": 1,
+          "errEnd": 2
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [
+          "Unhandled BPMN error 'E-RES'"
+        ],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": false,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "work": 1
+        },
+        "unsupportedActions": [
+          "resolveIncident"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-catch-signal",
+      "family": "intermediate",
+      "element": "intermediateCatchEvent(signal)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "sigCatch": 1,
+          "f2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-catch-timer-duration",
+      "family": "intermediate",
+      "element": "intermediateCatchEvent(timer/duration)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "timerCatch": 1,
+          "f2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-catch-timer-date",
+      "family": "intermediate",
+      "element": "intermediateCatchEvent(timer/date, прошедшая)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "timerCatch": 1,
+          "f2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-catch-link",
+      "family": "intermediate",
+      "element": "intermediateThrowEvent(link) + catch(link)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "linkThrow": 1,
+          "linkCatch": 1,
+          "f2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-throw-signal",
+      "family": "intermediate",
+      "element": "intermediateThrowEvent(signal)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "sigThrow": 1,
+          "f2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-throw-escalation-boundary",
+      "family": "intermediate",
+      "element": "intermediateThrowEvent(escalation) + граница эскалации",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "sub": 1,
+          "subStart": 1,
+          "fs1": 1,
+          "escThrow": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump2": 1,
+          "fB3": 1,
+          "endB": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "afterB": 1,
+          "dump2": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-start-none",
+      "family": "start",
+      "element": "startEvent(none)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "dump": 1,
+          "f2": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-start-signal",
+      "family": "start",
+      "element": "startEvent(signal)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "dump": 1,
+          "f2": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "dump": 2
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": "факт срабатывания совпал; число срабатываний цикла (ours elementCounts={\"start\":1,\"f1\":1,\"dump\":1,\"f2\":1,\"end\":1} / zeebe jobCounts={\"dump\":2}) зависит от окна ожидания и не сравнивается"
+    },
+    {
+      "id": "f4-start-timer-duration",
+      "family": "start",
+      "element": "startEvent(timer/duration)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "dump": 1,
+          "f2": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-start-timer-cycle",
+      "family": "start",
+      "element": "startEvent(timer/cycle)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "dump": 1,
+          "f2": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "LIVE_JOBS",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {
+          "dump": 2
+        },
+        "jobCounts": {
+          "dump": 5
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": "факт срабатывания совпал; число срабатываний цикла (ours elementCounts={\"start\":1,\"f1\":1,\"dump\":1,\"f2\":1,\"end\":1} / zeebe jobCounts={\"dump\":5}) зависит от окна ожидания и не сравнивается"
+    },
+    {
+      "id": "f4-start-timer-date",
+      "family": "start",
+      "element": "startEvent(timer/date, прошедшая)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "dump": 1,
+          "f2": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    {
+      "id": "f4-bnd-cycle-timer",
+      "family": "timer",
+      "element": "boundaryEvent(timer/cycle, непрерывающая)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1,
+          "f2": 1,
+          "endMain": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "LIVE_JOBS",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {
+          "afterB": 1
+        },
+        "jobCounts": {
+          "afterB": 3,
+          "dump": 1,
+          "host": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": "факт срабатывания совпал; число срабатываний цикла (ours elementCounts={\"start\":1,\"f1\":1,\"host\":1,\"fB\":1,\"afterB\":1,\"fB2\":1,\"dump\":1,\"f3\":1,\"end\":1,\"f2\":1,\"endMain\":1} / zeebe jobCounts={\"afterB\":3,\"dump\":1,\"host\":1}) зависит от окна ожидания и не сравнивается"
+    },
+    {
+      "id": "f4-bnd-date-timer",
+      "family": "timer",
+      "element": "boundaryEvent(timer/date, прошедшая)",
+      "ours": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "liveElements": {},
+        "elementCounts": {
+          "start": 1,
+          "f1": 1,
+          "host": 1,
+          "fB": 1,
+          "afterB": 1,
+          "fB2": 1,
+          "dump": 1,
+          "f3": 1,
+          "end": 1
+        },
+        "instanceCount": 1,
+        "leaks": [],
+        "incidents": [],
+        "error": ""
+      },
+      "zeebe": {
+        "status": "COMPLETED",
+        "dumpReached": true,
+        "vars": {},
+        "leftoverJobs": {},
+        "jobCounts": {
+          "afterB": 1,
+          "dump": 1
+        },
+        "unsupportedActions": [],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    }
+  ]
+}
