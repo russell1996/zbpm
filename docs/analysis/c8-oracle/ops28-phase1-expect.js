@@ -29,6 +29,8 @@ const DIVERGENCES = {
   'snd-publish-message': ['Ф1-5', 'Zeebe 8.5.0 падает с внутренним NPE (jobWorkerProps is null) — эталона нет'],
   'snd-intermediate-throw': ['Ф1-3', 'Zeebe 8.5 требует zeebe:publishMessage у throw-события; наша форма без него'],
   'rcv-message-no-key': ['Ф1-1', 'НАШ ДЕФЕКТ: бесключевая публикация будит ключевую подписку'],
+  'ln-exlistener-send': ['Ф1-7', 'Zeebe 8.5 отвергает модель на деплое (execution listeners are not supported for the sendTask element); мы принимаем и теряем слушатель молча'],
+  'ln-exlistener-receive': ['Ф1-7', 'Тот же корень, что ln-exlistener-send: Zeebe 8.5 отвергает модель на деплое (receiveTask); мы принимаем и теряем слушатель молча'],
 };
 
 /** Наш тип переменной → значение в JSON-виде Zeebe. */
@@ -57,6 +59,8 @@ for (const c of corpus.cases) {
     dump: z.dump ? z.dump.variables : null,
     // customHeaders у Zeebe приходят строкой JSON — разбираем, чтобы сравнивать карту с картой.
     taskHeaders: z.work && z.work.customHeaders ? JSON.parse(z.work.customHeaders || '{}') : null,
+    // P-5: наличие задания слушателя (present/absent) — та же лексика, что и у нашей стороны.
+    listener: z.listener || null,
   };
   const mine = {
     outcome: o.outcome || 'unknown',
@@ -64,6 +68,7 @@ for (const c of corpus.cases) {
       ? Object.fromEntries(Object.entries(o['dump.root']).map(([k, v]) => [k, oursValue(v)]))
       : null,
     taskHeaders: (o['work.outbox'] || {}).taskHeaders || null,
+    listener: o.listener || null,
   };
   c.expect = { live, ours: mine };
   const div = DIVERGENCES[c.id];

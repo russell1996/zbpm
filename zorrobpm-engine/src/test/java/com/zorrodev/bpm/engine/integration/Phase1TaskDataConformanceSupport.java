@@ -3,19 +3,27 @@ package com.zorrodev.bpm.engine.integration;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.contract.model.ProcessVariable;
 import com.zorrodev.bpm.contract.model.ProcessVariableType;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementModel;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnElementType;
+import com.zorrodev.bpm.engine.bpmn.model.BpmnProcessDefinitionModel;
+import com.zorrodev.bpm.engine.bpmn.model.ListenerModel;
 import com.zorrodev.bpm.engine.entity.ActivityEntity;
 import com.zorrodev.bpm.engine.entity.ActivityStatus;
 import com.zorrodev.bpm.engine.entity.OutboxEntry;
 import com.zorrodev.bpm.engine.entity.OutboxKind;
 import com.zorrodev.bpm.engine.entity.ProcessVariableEntity;
+import com.zorrodev.bpm.engine.entity.ServiceTaskEntity;
 import com.zorrodev.bpm.engine.handler.ElementSupport;
 import com.zorrodev.bpm.engine.leak.LeakInvariantChecker;
 import com.zorrodev.bpm.engine.repository.ActivityRepository;
+import com.zorrodev.bpm.engine.repository.ElementListenerPhaseRepository;
 import com.zorrodev.bpm.engine.repository.IncidentRepository;
 import com.zorrodev.bpm.engine.repository.OutboxRepository;
 import com.zorrodev.bpm.engine.repository.ProcessInstanceRepository;
+import com.zorrodev.bpm.engine.repository.ServiceTaskRepository;
 import com.zorrodev.bpm.engine.repository.VariableRepository;
 import com.zorrodev.bpm.engine.service.ActivityService;
+import com.zorrodev.bpm.engine.service.BpmnService;
 import com.zorrodev.bpm.engine.service.DmnService;
 import com.zorrodev.bpm.engine.service.ProcessDefinitionService;
 import com.zorrodev.bpm.engine.service.RuntimeService;
@@ -31,6 +39,9 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -101,6 +112,15 @@ public abstract class Phase1TaskDataConformanceSupport {
     private ElementSupport elementSupport;
 
     @Autowired
+    private BpmnService bpmnService;
+
+    @Autowired
+    private ServiceTaskRepository serviceTaskRepository;
+
+    @Autowired
+    private ElementListenerPhaseRepository elementListenerPhaseRepository;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     /** Файл наблюдений этого профиля (профили не затирают друг друга). */
@@ -144,6 +164,7 @@ public abstract class Phase1TaskDataConformanceSupport {
         LeakInvariantChecker.Baseline baseline = LeakInvariantChecker.snapshot(jdbcTemplate);
 
         UUID pi = null;
+        UUID definitionId = null;
         try {
             if (c.get("dmn") != null) {
                 dmnService.deploy(resource(String.valueOf(c.get("dmn"))));
@@ -153,23 +174,38 @@ public abstract class Phase1TaskDataConformanceSupport {
                 Map<String, Object> child = (Map<String, Object>) c.get("child");
                 processDefinitionService.addProcessDefinition(resource(String.valueOf(child.get("bpmn"))));
             }
-            var definition = processDefinitionService.addProcessDefinition(resource(String.valueOf(c.get("bpmn"))));
-            StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
-            dto.setProcessDefinitionId(definition.getId());
-            dto.setVariables(toVariables(mapOf(c.get("vars"))));
-            pi = runtimeService.startProcessInstance(dto).getId();
+            var definition = processDefinitionService.addProcessDefinition(bpmnSource(c));
+            pi = null;
+            definitionId = definition.getId();
         } catch (Exception e) {
-            obs.put("outcome", "deployOrStartError");
+            obs.put("outcome", "deployError");
             obs.put("error", rootMessage(e));
             obs.put("incidents", List.of());
             // Инстанс не создан → инвариант утечек НЕ проверялся (не «проверено и чисто»).
             obs.put("leaksChecked", Boolean.FALSE);
             obs.put("leaks", List.of());
             observed.put(id, obs);
-            // Кейс не задеплоился/не стартовал на НАШЕМ движке. В корпусе нет кейса, который
+            // Кейс не задеплоился на НАШЕМ движке. В корпусе нет кейса, который
             // у нас по ожиданию должен падать при деплое, поэтому это расхождение с ожиданием,
             // и оно обязано ронять тест: иначе кейс молча выпал бы из измерения (а в матрице
             // выглядел бы как «ошибка деплоя/старта» — ложное расхождение с оракулом).
+            assertThat(assertExpectation(c, obs)).as("ожидание корпуса применено к кейсу %s", id).isTrue();
+            return;
+        }
+        try {
+            StartProcessInstanceDTO dto = new StartProcessInstanceDTO();
+            dto.setProcessDefinitionId(definitionId);
+            dto.setVariables(toVariables(mapOf(c.get("vars"))));
+            pi = runtimeService.startProcessInstance(dto).getId();
+        } catch (Exception e) {
+            // Старт провалился — отдельный исход (та же лексика, что у оракула:
+            // deployError / startError), чтобы матрица сравнивала ОДИН И ТОТ ЖЕ факт.
+            obs.put("outcome", "startError");
+            obs.put("error", rootMessage(e));
+            obs.put("incidents", List.of());
+            obs.put("leaksChecked", Boolean.FALSE);
+            obs.put("leaks", List.of());
+            observed.put(id, obs);
             assertThat(assertExpectation(c, obs)).as("ожидание корпуса применено к кейсу %s", id).isTrue();
             return;
         }
@@ -185,7 +221,9 @@ public abstract class Phase1TaskDataConformanceSupport {
         }
 
         // Наблюдатель: переменные корневого scope после выполнения кейса.
-        ActivityEntity dump = activeActivity(pi, String.valueOf(c.getOrDefault("dump", "dump")));
+        // Кейс без наблюдателя (P-15: процесс без start-события) — смотреть нечего.
+        String dumpElement = c.get("dump") == null ? null : String.valueOf(c.get("dump"));
+        ActivityEntity dump = dumpElement == null ? null : activeActivity(pi, dumpElement);
         if (dump == null) {
             obs.put("outcome", obs.containsKey("outcome") ? obs.get("outcome") : "stuck");
             obs.put("dump", null);
@@ -257,6 +295,18 @@ public abstract class Phase1TaskDataConformanceSupport {
             Map<String, Object> oursHeaders = ours instanceof Map<?, ?> m
                 ? canon(m) : Map.of();
             assertThat(oursHeaders).as("заголовки задания в кейсе %s", id).isEqualTo(expectedHeaders);
+        }
+        // Слушатели (P-5): «есть ли задание слушателя этого типа» — тот же вопрос, что
+        // задаёт оракул активацией job'а. Сверяем ТОЛЬКО нашу сторону (у оракула своё
+        // наблюдение — в его JSON), и сверяем ЯВНО: present/absent, а не «что-то вызвалось».
+        Object listener = wanted.get("listener");
+        if (listener instanceof Map<?, ?> map) {
+            Map<String, Object> expectedListener = new LinkedHashMap<>();
+            map.forEach((k, v) -> expectedListener.put(String.valueOf(k), v));
+            Object oursListener = obs.get("listener");
+            Map<String, Object> oursMap = oursListener instanceof Map<?, ?> m
+                ? castMap(m) : Map.of();
+            assertThat(oursMap).as("наличие задания слушателя в кейсе %s", id).isEqualTo(expectedListener);
         }
         return true;
     }
@@ -352,12 +402,173 @@ public abstract class Phase1TaskDataConformanceSupport {
                     runtimeService.completeServiceTask(activity.getId(), vars);
                 }
             }
+            case "listener" -> {
+                // «Существует ли задание слушателя?» — тот же вопрос, что у оракула
+                // (там активируется job типа listenerType). У нас воркерскую сторону
+                // смотрим по ОТКРЫТОЙ ФАЗЕ слушателя элемента: движок ставит индекс фазы
+                // (service_tasks.pending_listener_index / pending_end_listener_index),
+                // когда задание слушателя ушло воркеру. Фазы нет → слушателя нет.
+                String type = String.valueOf(step.get("jobType"));
+                UUID target = pi;
+                ActivityEntity activity = activeActivity(target, element);
+                Map<String, Object> listener = obs.get("listener") instanceof Map<?, ?> m
+                    ? castMap(m) : new LinkedHashMap<>();
+                obs.put("listener", listener);
+                if (activity == null) {
+                    listener.put(type, "absent");
+                    obs.put("listenerMissing", element);
+                    return;
+                }
+                String openType = openListenerJobType(target, activity, type);
+                listener.put(type, openType != null ? "present" : "absent");
+                Map<String, Object> modelView = obs.get("listenerModel") instanceof Map<?, ?> m
+                    ? castMap(m) : new LinkedHashMap<>();
+                obs.put("listenerModel", modelView);
+                modelView.put(type, listenerKnownInModel(target, activity, type) ? "в модели" : "нет в модели");
+                if (openType != null) {
+                    // Слушатель есть — завершаем его так же, как это сделал бы воркер.
+                    // Протокол завершения — по типу элемента: у user task своя ветка
+                    // (WO-C8-21: creating-слушатель закрывается через completeUserTask).
+                    if (isUserTask(target, activity)) {
+                        runtimeService.completeUserTask(activity.getId(), toVariables(mapOf(step.get("vars"))));
+                    } else {
+                        runtimeService.completeServiceTask(activity.getId(), toVariables(mapOf(step.get("vars"))));
+                    }
+                }
+            }
             default -> throw new IllegalStateException("неизвестный вид шага: " + kind);
         }
     }
 
-    private UUID childInstance(UUID parent) {
-        List<com.zorrodev.bpm.engine.entity.ProcessInstanceEntity> children = processInstanceRepository
+    /**
+     * Тип задания ОТКРЫТОЙ фазы слушателя элемента (null — открытой фазы нет).
+     *
+     * <p>Вопрос, который задаёт шаг {@code kind:'listener'}: «существует ли задание
+     * слушателя этого типа?» У оракула это активация job'а типа {@code listenerType};
+     * у нас воркерскую сторону видно по ОТКРЫТОЙ ФАЗЕ: движок ставит индекс фазы
+     * (у задачи — {@code service_tasks.pending_listener_index} /
+     * {@code pending_end_listener_index}, у user task — индексы на activity,
+     * у прочих элементов — {@code element_listener_phases.listener_index}), когда
+     * задание слушателя ушло воркеру. Фазы нет → слушателя нет.</p>
+     *
+     * <p>Индексы НЕ выдумываются: каждый взят из своей таблицы, список слушателей —
+     * из разобранной модели элемента (того же, которым пользуется рантайм).</p>
+     */
+    private String openListenerJobType(UUID pi, ActivityEntity activity, String wantedType) {
+        BpmnElementModel element = elementModel(pi, activity.getBpmnElementId());
+        if (element == null) {
+            return null;
+        }
+        // 1) задача (service task / send task с taskDefinition) — фаза в service_tasks.
+        ServiceTaskEntity serviceTask = serviceTaskRepository
+            .findAll(ServiceTaskRepository.byProcessInstanceId(pi)).stream()
+            .filter(t -> activity.getId().equals(t.getId()))
+            .findFirst().orElse(null);
+        if (serviceTask != null) {
+            String start = listenerTypeAt(elementSupport.serviceTaskStartListeners(element),
+                serviceTask.getPendingListenerIndex(), wantedType);
+            if (start != null) {
+                return start;
+            }
+            String end = listenerTypeAt(elementSupport.serviceTaskEndListeners(element),
+                serviceTask.getPendingEndListenerIndex(), wantedType);
+            if (end != null) {
+                return end;
+            }
+        }
+        // 2) user task — фаза на activity.
+        String creating = listenerTypeAt(elementSupport.userTaskCreatingListeners(element),
+            activity.getPendingCreatingListenerIndex(), wantedType);
+        if (creating != null) {
+            return creating;
+        }
+        String completing = listenerTypeAt(elementSupport.userTaskCompletingListeners(element),
+            activity.getPendingCompletingListenerIndex(), wantedType);
+        if (completing != null) {
+            return completing;
+        }
+        // 3) прочий элемент (шлюз/событие) — фаза в element_listener_phases.
+        for (var phase : elementListenerPhaseRepository.findAll()) {
+            if (!pi.equals(phase.getProcessInstanceId())) {
+                continue;
+            }
+            if (!activity.getBpmnElementId().equals(phase.getBpmnElementId())) {
+                continue;
+            }
+            String hit = listenerTypeAt(elementSupport.elementStartListeners(element),
+                phase.getListenerIndex(), wantedType);
+            if (hit != null) {
+                return hit;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Есть ли слушатель этого типа В МОДЕЛИ элемента (без учёта фазы).
+     *
+     * <p>Отдельно от {@link #openListenerJobType}: показывает, знает ли движок о слушателе
+     * вообще. Для P-5 (слушатели теряются молча) это и есть суть: у Zeebe 8.5 слушатель
+     * есть, у нас — нет даже в модели.</p>
+     */
+    private boolean listenerKnownInModel(UUID pi, ActivityEntity activity, String wantedType) {
+        BpmnElementModel element = elementModel(pi, activity.getBpmnElementId());
+        if (element == null) {
+            return false;
+        }
+        List<List<ListenerModel>> all = List.of(
+            elementSupport.serviceTaskStartListeners(element),
+            elementSupport.serviceTaskEndListeners(element),
+            elementSupport.userTaskCreatingListeners(element),
+            elementSupport.userTaskCompletingListeners(element),
+            elementSupport.elementStartListeners(element));
+        for (List<ListenerModel> listeners : all) {
+            for (ListenerModel l : listeners) {
+                if (l != null && wantedType.equals(l.jobType())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Тип слушателя на открытой фазе (index) — только если это ИМЕННО искомый тип. */
+    private String listenerTypeAt(List<ListenerModel> listeners, Integer index, String wantedType) {
+        if (listeners == null || listeners.isEmpty() || index == null) {
+            return null;
+        }
+        if (index < 0 || index >= listeners.size()) {
+            return null;
+        }
+        ListenerModel listener = listeners.get(index);
+        return listener != null && wantedType.equals(listener.jobType()) ? wantedType : null;
+    }
+
+    /** Модель элемента инстанса (та же, что читает рантайм). */
+    private BpmnElementModel elementModel(UUID pi, String elementId) {
+        var instance = processInstanceRepository.findById(pi).orElse(null);
+        if (instance == null) {
+            return null;
+        }
+        BpmnProcessDefinitionModel bpmn =
+            bpmnService.getProcessDefinitionModelById(instance.getProcessDefinitionId());
+        return bpmn == null ? null : bpmn.getElement(elementId);
+    }
+
+    /** Тип элемента — user task или нет (для выбора протокола завершения). */
+    private boolean isUserTask(UUID pi, ActivityEntity activity) {
+        BpmnElementModel element = elementModel(pi, activity.getBpmnElementId());
+        return element != null && element.getType() == BpmnElementType.USER_TASK;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> castMap(Map<?, ?> raw) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        raw.forEach((k, v) -> out.put(String.valueOf(k), v));
+        return out;
+    }
+
+    private UUID childInstance(UUID parent) {        List<com.zorrodev.bpm.engine.entity.ProcessInstanceEntity> children = processInstanceRepository
             .findAll(ProcessInstanceRepository.byParentProcessInstanceId(parent));
         assertThat(children).as("дочерний инстанс вызова(call activity)").hasSize(1);
         return children.get(0).getId();
@@ -475,6 +686,21 @@ public abstract class Phase1TaskDataConformanceSupport {
             assertThat(in).as("ресурс " + path).isNotNull();
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
+    }
+
+    /**
+     * BPMN кейса: либо сгенерированный файл корпуса, либо ВНЕШНЯЯ фикстура
+     * ({@code src/test/files/...}) — тот же файл читает оракул (P-15 инвентаря фазы 0:
+     * фикстура {@code process0.bpmn} не упоминалась ни одним тестом).
+     */
+    private String bpmnSource(Map<String, Object> c) throws Exception {
+        Object file = c.get("bpmnFile");
+        if (file != null) {
+            Path path = Paths.get("src/test/files", String.valueOf(file));
+            assertThat(Files.exists(path)).as("внешняя фикстура %s", path).isTrue();
+            return Files.readString(path, StandardCharsets.UTF_8);
+        }
+        return resource(String.valueOf(c.get("bpmn")));
     }
 
     @SuppressWarnings("unchecked")

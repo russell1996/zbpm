@@ -80,17 +80,41 @@ function leaksOf(ours) {
 function verdictOf(zeebe, ours) {
   const z = outcomeOf(zeebe);
   const o = outcomeOf(ours);
+  // P-5: слушатель — часть поведения, а не «деталь». Если у оракула задание слушателя
+  // ЕСТЬ, а у нас его нет — вердикт «ours differs» даже когда переменные совпали.
+  const listenerDiff = listenerVerdict(zeebe, ours);
   if (z === 'completed' && o === 'completed') {
     const zc = zeebeCanon(zeebe.dump && zeebe.dump.variables);
     const oc = oursCanon(ours['dump.root']);
-    if (zc === oc) return 'match';
+    if (zc === oc) return listenerDiff || 'match';
     return 'ours differs';
   }
   if (z === 'stuck' && o === 'stuck') return 'match (парковка)';
   if (z === 'deployError' && o === 'deployError') return 'match (оба отвергают форму)';
+  if (z === 'startError' && o === 'startError') return 'match (оба отвергают старт)';
   if (z === 'deployError') return 'ours differs (Zeebe отвергает на деплое)';
   if (o === 'deployError') return 'ours differs (ours отвергает на деплое)';
-  return 'ours differs';
+  if (z === 'startError') return 'ours differs (Zeebe отвергает старт)';
+  if (o === 'startError') return 'ours differs (ours отвергает старт)';
+  return listenerDiff || 'ours differs';
+}
+
+/**
+ * P-5: сравнение наличия задания слушателя.
+ *
+ * @returns {string|null} вердикт-суффикс (null — расхождения нет).
+ */
+function listenerVerdict(zeebe, ours) {
+  const z = (zeebe && zeebe.listener) || null;
+  const o = (ours && ours.listener) || null;
+  if (!z && !o) return null;
+  const zTypes = z ? Object.keys(z) : [];
+  const oTypes = o ? Object.keys(o) : [];
+  const types = [...new Set([...zTypes, ...oTypes])].sort();
+  const diffs = types.filter((t) => (z && z[t]) !== (o && o[t]));
+  if (!diffs.length) return null;
+  const parts = diffs.map((t) => `${t}: Zeebe=${z && z[t] ? z[t] : '—'}, ours=${o && o[t] ? o[t] : '—'}`);
+  return `ours differs (слушатель: ${parts.join('; ')})`;
 }
 
 const corpus = JSON.parse(fs.readFileSync(CORPUS, 'utf8'));
@@ -114,7 +138,7 @@ for (const c of corpus.cases) {
   let oCell;
   if (oOut === 'completed') {
     oCell = `completed · ${oursCanon(o['dump.root'])}`;
-  } else if (oOut === 'deployOrStartError') {
+  } else if (oOut === 'deployOrStartError' || oOut === 'deployError' || oOut === 'startError') {
     oCell = `ошибка деплоя/старта · ${shortError(o.error)}`;
   } else {
     oCell = `${oOut}${(o.incidents || []).length ? ' · инцидент: ' + shortError(o.incidents[0].message) : ''}`;
@@ -133,6 +157,9 @@ for (const c of corpus.cases) {
     headers: (z && z.work && z.work.customHeaders) || (o && o['work.outbox'] && o['work.outbox'].taskHeaders) || null,
     headersZ: z && z.work ? (z.work.customHeaders || '(нет)') : null,
     headersO: o && o['work.outbox'] ? JSON.stringify(o['work.outbox'].taskHeaders) : null,
+    listenerZ: z && z.listener ? z.listener : null,
+    listenerO: o && o.listener ? o.listener : null,
+    listenerModelO: o && o.listenerModel ? o.listenerModel : null,
     zOutcome: zOut,
     oOutcome: oOut,
   });
@@ -158,6 +185,20 @@ console.log('|---|---|---|');
 for (const r of rows) {
   if (!r.headers) continue;
   console.log(`| \`${r.id}\` | ${r.headersZ === null ? '—' : r.headersZ} | ${r.headersO === null ? '—' : r.headersO} |`);
+}
+
+console.log('\n\n### Слушатели (P-5 инвентаря фазы 0): задание слушателя — Zeebe 8.5 vs ours');
+console.log('| Сценарий | Тип задания слушателя | Zeebe 8.5 (живой) | ours (открытая фаза) | ours (в модели элемента) |');
+console.log('|---|---|---|---|---|');
+for (const r of rows) {
+  const zL = r.listenerZ || {};
+  const oL = r.listenerO || {};
+  const oM = r.listenerModelO || {};
+  const types = [...new Set([...Object.keys(zL), ...Object.keys(oL), ...Object.keys(oM)])].sort();
+  if (!types.length) continue;
+  for (const t of types) {
+    console.log(`| \`${r.id}\` | \`${t}\` | ${zL[t] || '—'} | ${oL[t] || '—'} | ${oM[t] || '—'} |`);
+  }
 }
 
 // ---- H2 vs PostgreSQL: тот же закоммиченный инструмент, то же сравнение ----

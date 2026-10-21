@@ -37,6 +37,11 @@ function bpmnPath(rel) {
   return path.join(ROOT, 'zorrobpm-engine', 'src', 'test', 'resources', rel);
 }
 
+/** Кейс по ВНЕШНЕЙ фикстуре (P-15): тот же файл, что читает наш JUnit-харнесс. */
+function fixturePath(rel) {
+  return path.join(ROOT, 'zorrobpm-engine', 'src', 'test', 'files', rel);
+}
+
 /** Activate a job type; a non-existent type makes Zeebe answer with an error — that is data, not a crash. */
 async function tryActivate(client, type) {
   try {
@@ -96,7 +101,7 @@ async function runCase(client, c) {
     if (c.dmn) {
       await O.deploy(client, bpmnPath(c.dmn));
     }
-    await O.deploy(client, bpmnPath(c.bpmn));
+    await O.deploy(client, c.bpmnFile ? fixturePath(c.bpmnFile) : bpmnPath(c.bpmn));
     if (c.child) {
       await O.deploy(client, bpmnPath(c.child.bpmn));
     }
@@ -129,6 +134,24 @@ async function runCase(client, c) {
       await sleep(600);
       continue;
     }
+    if (step.kind === 'listener') {
+      // «Существует ли задание слушателя?» — оракул активирует job типа listenerType
+      // для нашего инстанса. Есть → завершаем его (как воркер) и продолжаем; нет →
+      // элемент пошёл без слушателя (наша сторона теряет его молча — ср. P-5 инвентаря).
+      const type = step.jobType;
+      const jobs = await tryActivate(client, type);
+      const mine = jobs.filter((j) => String(j.processInstanceKey) === String(pi));
+      obs.listener = obs.listener || {};
+      if (mine.length === 0) {
+        obs.listener[type] = 'absent';
+        await sleep(300);
+        continue;
+      }
+      obs.listener[type] = 'present';
+      await O.complete(client, mine[0], step.vars || {});
+      await sleep(250);
+      continue;
+    }
     const job = await findJob(client, pi, step);
     if (!job) {
       obs.outcome = 'jobNotActivated';
@@ -153,11 +176,14 @@ async function runCase(client, c) {
   }
 
   // Наблюдатель: payload задания-nаблюдателя = итоговое состояние scope.
+  // Кейс без наблюдателя (P-15: процесс без start-события) — ждать нечего.
   let dumpJob = null;
-  for (let attempt = 0; attempt < 16 && !dumpJob; attempt++) {
-    const jobs = await tryActivate(client, c.dumpJobType);
-    dumpJob = jobs.find((j) => String(j.processInstanceKey) === String(pi)) || null;
-    if (!dumpJob) await sleep(400);
+  if (c.dumpJobType) {
+    for (let attempt = 0; attempt < 16 && !dumpJob; attempt++) {
+      const jobs = await tryActivate(client, c.dumpJobType);
+      dumpJob = jobs.find((j) => String(j.processInstanceKey) === String(pi)) || null;
+      if (!dumpJob) await sleep(400);
+    }
   }
   if (!dumpJob) {
     obs.outcome = 'stuck';

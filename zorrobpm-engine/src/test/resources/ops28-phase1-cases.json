@@ -33,7 +33,8 @@
             "a": 1,
             "c": "C"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -41,7 +42,8 @@
             "a": 1,
             "c": "C"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -73,14 +75,16 @@
           "dump": {
             "a": 1
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
           "dump": {
             "a": 1
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -114,7 +118,8 @@
             "a": 1,
             "s": "text"
           },
-          "taskHeaders": {}
+          "taskHeaders": {},
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -122,7 +127,8 @@
             "a": 1,
             "s": "text"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -154,14 +160,16 @@
           "dump": {
             "a": 1
           },
-          "taskHeaders": {}
+          "taskHeaders": {},
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
           "dump": {
             "a": 1
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -193,14 +201,16 @@
           "dump": {
             "o": "C"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
           "dump": {
             "o": "C"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -235,7 +245,8 @@
             "a": 1,
             "d": "D"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -243,7 +254,8 @@
             "a": 1,
             "d": "D"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -277,7 +289,8 @@
             "a": 1,
             "s": "text"
           },
-          "taskHeaders": {}
+          "taskHeaders": {},
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -285,7 +298,8 @@
             "a": 1,
             "s": "text"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -317,14 +331,16 @@
           "dump": {
             "a": 1
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
           "dump": {
             "a": 1
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -357,7 +373,8 @@
             "b": 3,
             "sum": 5
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -366,7 +383,8 @@
             "b": 3,
             "sum": 5
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -395,7 +413,8 @@
         "live": {
           "outcome": "deployError",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -403,7 +422,8 @@
             "a": 2,
             "b": 3
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": {
@@ -435,14 +455,16 @@
           "dump": {
             "sum": null
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
           "dump": {
             "sum": null
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -470,14 +492,16 @@
           "dump": {
             "sum": null
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
           "dump": {
             "sum": null
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -509,7 +533,8 @@
             "category": "gold",
             "discount": 20
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -517,7 +542,8 @@
             "category": "gold",
             "discount": 20
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -545,7 +571,8 @@
         "live": {
           "outcome": "deployError",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -553,7 +580,8 @@
             "a": 2,
             "doubled": 20
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": {
@@ -583,12 +611,14 @@
         "live": {
           "outcome": "stuck",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "stuck",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -616,12 +646,14 @@
         "live": {
           "outcome": "deployError",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "stuck",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": {
@@ -654,12 +686,14 @@
         "live": {
           "outcome": "startError",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "stuck",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": {
@@ -698,7 +732,8 @@
             "a": 1,
             "s": "S"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -706,7 +741,8 @@
             "a": 1,
             "s": "S"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -742,7 +778,8 @@
             "a": 1,
             "m": "M"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -750,7 +787,8 @@
             "a": 1,
             "m": "M"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -786,7 +824,8 @@
             "m": "M",
             "orderId": "A"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -794,7 +833,8 @@
             "orderId": "A",
             "m": "M"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -827,12 +867,14 @@
         "live": {
           "outcome": "stuck",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "stuck",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -865,7 +907,8 @@
         "live": {
           "outcome": "stuck",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -873,7 +916,8 @@
             "orderId": "A",
             "m": "M"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": {
@@ -905,12 +949,14 @@
         "live": {
           "outcome": "deployError",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "stuck",
           "dump": null,
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": {
@@ -958,7 +1004,8 @@
             "a": 1,
             "c": "C"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -966,7 +1013,8 @@
             "a": 1,
             "c": "C"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -1009,14 +1057,16 @@
           "dump": {
             "a": 1
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
           "dump": {
             "a": 1
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -1061,7 +1111,8 @@
             "b": 2,
             "x": 1
           },
-          "taskHeaders": {}
+          "taskHeaders": {},
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -1070,7 +1121,8 @@
             "b": 2,
             "x": 1
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -1109,7 +1161,8 @@
             "a": 1,
             "inner": "I"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -1117,7 +1170,8 @@
             "a": 1,
             "inner": "I"
           },
-          "taskHeaders": null
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null
@@ -1151,7 +1205,8 @@
           },
           "taskHeaders": {
             "h1": "v1"
-          }
+          },
+          "listener": null
         },
         "ours": {
           "outcome": "completed",
@@ -1160,7 +1215,198 @@
           },
           "taskHeaders": {
             "h1": "v1"
+          },
+          "listener": null
+        }
+      },
+      "divergence": null
+    },
+    {
+      "id": "ln-tasklistener-service",
+      "element": "serviceTask",
+      "title": "zeebe:taskListeners на serviceTask (вне userTask) — наша сторона теряет их молча",
+      "docs": "8.9 user task listeners: zeebe:taskListeners are defined inside the user task; other task types do not support task listeners",
+      "processId": "p1_ln_tasklistener_service",
+      "bpmn": "ops28-phase1/ln-tasklistener-service.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "work",
+          "kind": "listener",
+          "jobType": "p1_ln_tasklistener_service_listener"
+        },
+        {
+          "element": "work",
+          "kind": "service",
+          "jobType": "p1_ln_tasklistener_service_work",
+          "vars": {
+            "c": "C"
           }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_ln_tasklistener_service_dump",
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "c": "C"
+          },
+          "taskHeaders": null,
+          "listener": {
+            "p1_ln_tasklistener_service_listener": "absent"
+          }
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "c": "C"
+          },
+          "taskHeaders": null,
+          "listener": {
+            "p1_ln_tasklistener_service_listener": "absent"
+          }
+        }
+      },
+      "divergence": null
+    },
+    {
+      "id": "ln-exlistener-send",
+      "element": "sendTask",
+      "title": "zeebe:executionListeners на sendTask — наша сторона теряет их молча",
+      "docs": "8.9 execution listeners: configurable for individual BPMN elements (tasks, events, gateways); elements without start/end support: start events, boundary events (start), gateways (end), error end event (end), compensation boundary events",
+      "processId": "p1_ln_exlistener_send",
+      "bpmn": "ops28-phase1/ln-exlistener-send.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "snd",
+          "kind": "listener",
+          "jobType": "p1_ln_exlistener_send_listener"
+        },
+        {
+          "element": "snd",
+          "kind": "service",
+          "jobType": "p1_ln_exlistener_send_work",
+          "vars": {
+            "s": "S"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_ln_exlistener_send_dump",
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "deployError",
+          "dump": null,
+          "taskHeaders": null,
+          "listener": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "s": "S"
+          },
+          "taskHeaders": null,
+          "listener": {
+            "p1_ln_exlistener_send_listener": "absent"
+          }
+        }
+      },
+      "divergence": {
+        "bugWo": "Ф1-7",
+        "reason": "Zeebe 8.5 отвергает модель на деплое (execution listeners are not supported for the sendTask element); мы принимаем и теряем слушатель молча",
+        "liveMatchesOurs": false
+      }
+    },
+    {
+      "id": "ln-exlistener-receive",
+      "element": "receiveTask",
+      "title": "zeebe:executionListeners на receiveTask — наша сторона теряет их молча (инвентарь этот случай не перечисляет)",
+      "docs": "8.9 execution listeners: configurable for individual BPMN elements (tasks, events, gateways); elements without start/end support: start events, boundary events (start), gateways (end), error end event (end), compensation boundary events",
+      "processId": "p1_ln_exlistener_receive",
+      "bpmn": "ops28-phase1/ln-exlistener-receive.bpmn",
+      "vars": {
+        "a": 1
+      },
+      "drive": [
+        {
+          "element": "rcv",
+          "kind": "listener",
+          "jobType": "p1_ln_exlistener_receive_listener"
+        },
+        {
+          "element": "rcv",
+          "kind": "message",
+          "message": "note",
+          "key": "k1",
+          "vars": {
+            "m": "M"
+          }
+        }
+      ],
+      "dump": "dump",
+      "dumpJobType": "p1_ln_exlistener_receive_dump",
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "deployError",
+          "dump": null,
+          "taskHeaders": null,
+          "listener": null
+        },
+        "ours": {
+          "outcome": "completed",
+          "dump": {
+            "a": 1,
+            "m": "M"
+          },
+          "taskHeaders": null,
+          "listener": {
+            "p1_ln_exlistener_receive_listener": "absent"
+          }
+        }
+      },
+      "divergence": {
+        "bugWo": "Ф1-7",
+        "reason": "Тот же корень, что ln-exlistener-send: Zeebe 8.5 отвергает модель на деплое (receiveTask); мы принимаем и теряем слушатель молча",
+        "liveMatchesOurs": false
+      }
+    },
+    {
+      "id": "proc-no-start-event",
+      "element": "process",
+      "title": "процесс без start-события (фикстура process0.bpmn) — деплой и попытка старта",
+      "docs": "8.9 processes: a process instance is created by a start event; a process without a start event has no way to be instantiated",
+      "processId": "process0",
+      "bpmn": null,
+      "bpmnFile": "process0.bpmn",
+      "vars": {},
+      "drive": [],
+      "dump": null,
+      "dumpJobType": null,
+      "observeWork": false,
+      "expect": {
+        "live": {
+          "outcome": "deployError",
+          "dump": null,
+          "taskHeaders": null,
+          "listener": null
+        },
+        "ours": {
+          "outcome": "deployError",
+          "dump": null,
+          "taskHeaders": null,
+          "listener": null
         }
       },
       "divergence": null

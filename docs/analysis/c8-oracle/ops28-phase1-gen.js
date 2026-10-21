@@ -630,6 +630,90 @@ addCase({
     'p1_svc_task_headers_dump')),
 });
 
+/* --- 25..27 слушатели (P-5 инвентаря фазы 0) --------------------------------- */
+/* Инвентарь фазы 0 (docs/analysis/bpmn-conformance-inventory.md, §8 P-5 → ФАЗА 1):
+ *   §4-11 taskListeners вне userTask — «не парсятся» (теряются молча);
+ *   §4-12 executionListeners на sendTask — «не парсятся» (теряются молча).
+ * Ни один из них не был измерен в Фазе 1 — здесь закрываем.
+ * Шаг kind:'listener' — «это задание слушателя существует?»: оракул активирует job типа
+ * listenerType и завершает его; наша сторона смотрит открытую фазу слушателя элемента.
+ */
+
+addCase({
+  id: 'ln-tasklistener-service',
+  element: 'serviceTask',
+  title: 'zeebe:taskListeners на serviceTask (вне userTask) — наша сторона теряет их молча',
+  docs: '8.9 user task listeners: zeebe:taskListeners are defined inside the user task; other task types do not support task listeners',
+  vars: { a: 1 },
+  drive: [
+    { element: 'work', kind: 'listener', jobType: 'p1_ln_tasklistener_service_listener' },
+    { element: 'work', kind: 'service', jobType: 'p1_ln_tasklistener_service_work', vars: { c: 'C' } },
+  ],
+  dump: 'dump',
+  dumpJobType: 'p1_ln_tasklistener_service_dump',
+  bpmn: defs(P('ln_tasklistener_service'),
+    chain(svc('work', 'p1_ln_tasklistener_service_work', 'f1', 'f2',
+      '<zeebe:taskListeners><zeebe:taskListener eventType="creating" type="p1_ln_tasklistener_service_listener"/></zeebe:taskListeners>'),
+      'p1_ln_tasklistener_service_dump')),
+});
+
+addCase({
+  id: 'ln-exlistener-send',
+  element: 'sendTask',
+  title: 'zeebe:executionListeners на sendTask — наша сторона теряет их молча',
+  docs: '8.9 execution listeners: configurable for individual BPMN elements (tasks, events, gateways); elements without start/end support: start events, boundary events (start), gateways (end), error end event (end), compensation boundary events',
+  vars: { a: 1 },
+  drive: [
+    { element: 'snd', kind: 'listener', jobType: 'p1_ln_exlistener_send_listener' },
+    { element: 'snd', kind: 'service', jobType: 'p1_ln_exlistener_send_work', vars: { s: 'S' } },
+  ],
+  dump: 'dump',
+  dumpJobType: 'p1_ln_exlistener_send_dump',
+  bpmn: defs(P('ln_exlistener_send'),
+    chain(send('snd', 'f1', 'f2', null,
+      '<zeebe:taskDefinition type="p1_ln_exlistener_send_work"/>'
+      + '<zeebe:executionListeners><zeebe:executionListener eventType="start" type="p1_ln_exlistener_send_listener"/></zeebe:executionListeners>'),
+      'p1_ln_exlistener_send_dump')),
+});
+
+addCase({
+  id: 'ln-exlistener-receive',
+  element: 'receiveTask',
+  title: 'zeebe:executionListeners на receiveTask — наша сторона теряет их молча (инвентарь этот случай не перечисляет)',
+  docs: '8.9 execution listeners: configurable for individual BPMN elements (tasks, events, gateways); elements without start/end support: start events, boundary events (start), gateways (end), error end event (end), compensation boundary events',
+  vars: { a: 1 },
+  drive: [
+    { element: 'rcv', kind: 'listener', jobType: 'p1_ln_exlistener_receive_listener' },
+    { element: 'rcv', kind: 'message', message: 'note', key: 'k1', vars: { m: 'M' } },
+  ],
+  dump: 'dump',
+  dumpJobType: 'p1_ln_exlistener_receive_dump',
+  bpmn: defs(P('ln_exlistener_receive'),
+    chain(recv('rcv', 'f1', 'f2', 'msgNote',
+      '<zeebe:executionListeners><zeebe:executionListener eventType="start" type="p1_ln_exlistener_receive_listener"/></zeebe:executionListeners>'),
+      'p1_ln_exlistener_receive_dump'),
+    messageDef('msgNote', 'note', '="k1"')),
+});
+
+/* --- 28 процесс без start-события (P-15 инвентаря фазы 0) --------------------- */
+/* P-15: фикстура zorrobpm-engine/src/test/files/process0.bpmn не упоминается НИ ОДНИМ
+ * тестом. Здесь она становится кейсом корпуса: обе стороны читают ОДИН и тот же файл
+ * (генератор его не переписывает) — это же закрывает сам пробел P-15. */
+
+addCase({
+  id: 'proc-no-start-event',
+  element: 'process',
+  title: 'процесс без start-события (фикстура process0.bpmn) — деплой и попытка старта',
+  docs: '8.9 processes: a process instance is created by a start event; a process without a start event has no way to be instantiated',
+  vars: {},
+  drive: [],
+  dump: null,
+  dumpJobType: null,
+  processId: 'process0',
+  bpmnFile: 'process0.bpmn',
+  bpmn: null,
+});
+
 /* ------------------------------------------------------------------ запись */
 
 const corpus = {
@@ -641,12 +725,15 @@ const corpus = {
     element: c.element,
     title: c.title,
     docs: c.docs,
-    processId: P(c.id.replace(/-/g, '_')),
-    bpmn: `ops28-phase1/${c.id}.bpmn`,
+    processId: c.processId || P(c.id.replace(/-/g, '_')),
+    // Кейс по ВНЕШНЕЙ фикстуре (bpmnFile) — генератор её не переписывает: обе стороны
+    // читают один и тот же файл из src/test/files (P-15 инвентаря фазы 0).
+    bpmn: c.bpmnFile ? null : `ops28-phase1/${c.id}.bpmn`,
+    ...(c.bpmnFile ? { bpmnFile: c.bpmnFile } : {}),
     vars: c.vars || {},
     drive: c.drive || [],
-    dump: c.dump || 'dump',
-    dumpJobType: c.dumpJobType,
+    dump: c.dump === null ? null : (c.dump || 'dump'),
+    dumpJobType: c.dumpJobType || null,
     observeWork: !!c.observeWork,
     ...(c.observeElement ? { observeElement: c.observeElement } : {}),
     ...(c.dmn ? { dmn: c.dmn } : {}),
@@ -682,6 +769,7 @@ if (fs.existsSync(OUT_CASES)) {
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
 for (const [id, xml] of Object.entries(bpmn)) {
+  if (!xml) continue; // кейс по внешней фикстуре — файл не генерируется
   fs.writeFileSync(path.join(OUT_DIR, `${id}.bpmn`), xml, 'utf8');
 }
 fs.writeFileSync(OUT_CASES, JSON.stringify(corpus, null, 2) + '\n', 'utf8');
