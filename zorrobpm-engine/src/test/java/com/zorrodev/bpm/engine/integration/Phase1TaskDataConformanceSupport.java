@@ -166,7 +166,11 @@ public abstract class Phase1TaskDataConformanceSupport {
             obs.put("leaksChecked", Boolean.FALSE);
             obs.put("leaks", List.of());
             observed.put(id, obs);
-            assertThat(obs.get("outcome")).as("кейс %s дал измерение", id).isNotNull();
+            // Кейс не задеплоился/не стартовал на НАШЕМ движке. В корпусе нет кейса, который
+            // у нас по ожиданию должен падать при деплое, поэтому это расхождение с ожиданием,
+            // и оно обязано ронять тест: иначе кейс молча выпал бы из измерения (а в матрице
+            // выглядел бы как «ошибка деплоя/старта» — ложное расхождение с оракулом).
+            assertThat(assertExpectation(c, obs)).as("ожидание корпуса применено к кейсу %s", id).isTrue();
             return;
         }
         obs.put("processInstanceId", pi.toString());
@@ -198,10 +202,11 @@ public abstract class Phase1TaskDataConformanceSupport {
         obs.put("leaksChecked", Boolean.TRUE);
         obs.put("leaks", leaks(baseline, pi));
         observed.put(id, obs);
-        assertThat(obs.get("outcome")).as("кейс %s дал измерение", id).isNotNull();
         // G-P: нарушение инварианта утечек роняет тест, а не просто попадает в отчёт.
         assertThat((List<?>) obs.get("leaks")).as("инвариант утечек G-P для кейса %s", id).isEmpty();
-        assertExpectation(c, obs);
+        // Ожидание корпуса обязано быть применено: кейс без ожидания ничего бы не проверял
+        // и остался бы зелёным «по незнанию».
+        assertThat(assertExpectation(c, obs)).as("ожидание корпуса применено к кейсу %s", id).isTrue();
     }
 
     /**
@@ -212,11 +217,14 @@ public abstract class Phase1TaskDataConformanceSupport {
      * нашей реализации (G-Q). Для кейсов с зафиксированным расхождением навязывается
      * НАШЕ измеренное поведение (characterization) + в наблюдение пишется ссылка на баг-WO:
      * иначе расхождение просто не проверялось бы, и тест был бы зелёным «по незнанию».</p>
+     *
+     * @return {@code true}, если ожидание корпуса было применено (иначе — {@code false}:
+     *         кейс без ожидания ничего не проверяет, и вызывающий обязан это увидеть).
      */
-    private void assertExpectation(Map<String, Object> c, Map<String, Object> obs) {
+    private boolean assertExpectation(Map<String, Object> c, Map<String, Object> obs) {
         String id = String.valueOf(c.get("id"));
         if (!(c.get("expect") instanceof Map<?, ?> expect)) {
-            return;
+            return false;
         }
         boolean divergence = c.get("divergence") != null;
         obs.put("divergence", c.get("divergence"));
@@ -225,7 +233,7 @@ public abstract class Phase1TaskDataConformanceSupport {
             ? (Map<String, Object>) expect.get("ours")
             : (Map<String, Object>) expect.get("live");
         if (wanted == null) {
-            return;
+            return false;
         }
         String outcome = String.valueOf(wanted.get("outcome"));
         assertThat(obs.get("outcome")).as("исход кейса %s", id).isEqualTo(outcome);
@@ -250,6 +258,7 @@ public abstract class Phase1TaskDataConformanceSupport {
                 ? canon(m) : Map.of();
             assertThat(oursHeaders).as("заголовки задания в кейсе %s", id).isEqualTo(expectedHeaders);
         }
+        return true;
     }
 
     /** Наша карта переменных → плоские значения (как у Zeebe). */

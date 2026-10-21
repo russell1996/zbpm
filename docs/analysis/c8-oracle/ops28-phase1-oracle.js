@@ -20,6 +20,17 @@ const CASES_PATH = path.join(ROOT, 'zorrobpm-engine', 'src', 'test', 'resources'
 const OUT_DIR = path.join(__dirname, 'scenarios', 'ops28-phase1');
 const OUT_PATH = path.join(OUT_DIR, 'result-8.5.json');
 
+/**
+ * Образ оракула. Метка версии в измерении ВЫВОДИТСЯ из тега этого образа, поэтому «метка
+ * инструмента» и «образ, который на самом деле поднимали» разъехаться не могут (находка
+ * независимого verifier'а: раньше версия была просто строкой в измерении).
+ *
+ * ВНИМАНИЕ: это зафиксированный тег образа, а НЕ зонд версии у брокера. Отдельного version-зонда
+ * (напр. gRPC Topology → brokerVersion) инструмент не делает — см. §2.2 отчёта WO-OPS-28 phase1.
+ */
+const ORACLE_IMAGE = 'camunda/zeebe:8.5.0';
+const ORACLE_LABEL = 'zeebe-' + ORACLE_IMAGE.slice(ORACLE_IMAGE.lastIndexOf(':') + 1);
+
 const sleep = O.sleep;
 
 function bpmnPath(rel) {
@@ -78,7 +89,7 @@ async function runCase(client, c) {
     element: c.element,
     title: c.title,
     docs: c.docs,
-    oracle: 'zeebe-8.5.0',
+    oracle: ORACLE_LABEL,
   };
 
   try {
