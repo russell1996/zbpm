@@ -141,6 +141,10 @@ const rows = [];
 const expectations = {};
 let match = 0;
 const divergences = [];
+// Отказы оракула на деплое — ОТДЕЛЬНЫЙ вывод (не «ours-differs»): версия
+// оракула отвергает модель, мы её принимаем и исполняем. Это вопрос паритета
+// к решению владельца, а не расхождение рантайма (WO-OPS-28 ФАЗА 2, раунд 2).
+const deployRejected = [];
 
 for (const o of ours) {
   const z = zeebeById.get(o.id);
@@ -170,12 +174,13 @@ for (const o of ours) {
 
   // Оракул НЕ ПРИНЯЛ МОДЕЛЬ (deploy rejected) — это ограничение версии Zeebe
   // 8.5, а не расхождение рантайма: отдельный вердикт, отдельная строка отчёта.
-  const deployRejected = !z || (z.status === 'FAILED'
+  const rejectedByOracle = !z || (z.status === 'FAILED'
     && /rejected with code 'INVALID_ARGUMENT'/.test(z.error || ''));
-  if (deployRejected) {
+  if (rejectedByOracle) {
     entry.verdict = 'oracle-deploy-rejected';
     entry.detail = `Zeebe 8.5 отверг модель на деплое: ${(z.error || '').split('\n').slice(0, 4).join(' ')}`;
     rows.push(entry);
+    deployRejected.push(entry);
     expectations[o.id] = {
       oracle: 'DEPLOY-REJECTED-BY-8.5',
       zeebe: { status: z.status, vars: {}, leftovers: [], publishes: [] },
@@ -267,7 +272,7 @@ fs.mkdirSync(path.dirname(expectPath), { recursive: true });
 const md = [];
 md.push('# WO-OPS-28 ФАЗА 2 («потоки») — наш движок vs живой Zeebe 8.5.0');
 md.push('');
-md.push(`- Оракул: живой Zeebe 8.5.0 (gateway ${zeebeDoc.gateway || '8.5.0'}), контейнер \`zbpm-o28-zeebe\`, прогон \`docs/analysis/c8-oracle/scenario-matrix.js\`.`);
+md.push(`- Оракул: живой Zeebe 8.5.0 (gateway ${zeebeDoc.gateway || '8.5.0'}), контейнер \`${process.env.C8_ORACLE_CONTAINER || 'zbpm-o28c-zeebe'}\`, прогон \`docs/analysis/c8-oracle/scenario-matrix.js\`.`);
 md.push('- Наш движок: те же схемы и тот же список действий (манифест `zorrobpm-engine/target/scenario-matrix/manifest-flows.json`).');
 md.push(`- Сценариев: ${rows.length}; совпали: ${match}; расхождений: ${divergences.length}.`);
 md.push('- Наблюдение: переменные корневого скоупа в «наблюдательной» задаче + «что осталось активным» (у нас — нарушения инварианта утечек G-P, у оракула — оставшиеся активируемыми job\'ы).');
@@ -301,18 +306,51 @@ if (divergences.length === 0) {
   }
 }
 md.push('');
+if (deployRejected.length > 0) {
+  md.push('## Отказы оракула на деплое — отдельный вывод (не «ours-differs»)');
+  md.push('');
+  md.push('Эти сценарии НЕ расхождение рантайма: живой Zeebe 8.5.0 отверг модель на деплое,');
+  md.push('поэтому сравнивать нечего — оракул не исполнил модель. Наш движок такую модель');
+  md.push('ПРИНИМАЕТ и исполняет. Это расхождение по ПАРИТЕТУ ПРИЁМА МОДЕЛИ (мы permissive,');
+  md.push('оракул — нет), и оно НЕ чинится в кампании: решение (отвергать такую модель и у нас,');
+  md.push('или принять расхождение как осознанное) — за владельцем продукта.');
+  md.push('');
+  for (const d of deployRejected) {
+    md.push(`- \`${d.id}\` — ${d.detail}`);
+    md.push(`  - ours: ${d.ours.status} ${JSON.stringify(d.ours.vars)} (модель принята и исполнена движком)`);
+  }
+  md.push('');
+  md.push('**Вывод (к решению владельца / кандидат в баг-WO):** либо мы отвергаем модель с');
+  md.push('джойном inclusive на деплое, как Zeebe 8.5, либо расхождение принимается осознанно.');
+  md.push('В рамках кампании (WO-OPS-28) правки в деплой-валидации НЕ делаются — баги чинятся');
+  md.push('отдельными задачами; здесь зафиксирован факт и предложение.');
+} else {
+  md.push('## Отказы оракула на деплое');
+  md.push('');
+  md.push('Ни один сценарий среза не был отвергнут оракулом на деплое.');
+}
+md.push('');
 md.push('## Как воспроизвести');
 md.push('');
 md.push('```bash');
+md.push('# 0) свой оракул Zeebe 8.5.0 (чужие контейнеры не трогаем)');
+md.push('docker run -d --name zbpm-o28c-zeebe --restart unless-stopped \\');
+md.push('  -p 127.0.0.1:40600:9600 -p 127.0.0.1:37500:26500 \\');
+md.push('  -e ZEEBE_BROKER_CLUSTER_PARTITIONSCOUNT=1 \\');
+md.push('  -e ZEEBE_BROKER_GATEWAY_NETWORK_HOST=0.0.0.0 -e ZEEBE_BROKER_GATEWAY_NETWORK_PORT=26500 \\');
+md.push('  camunda/zeebe:8.5.0');
 md.push('# 1) наш движок (генерирует манифест и наши наблюдения)');
 md.push('mvn -pl zorrobpm-engine verify -Dit.test=FlowScenarioMatrixIntegrationTests');
-md.push('# 2) живой Zeebe 8.5.0');
+md.push('# 2) живой Zeebe 8.5.0 (пути — от каталога docs/analysis/c8-oracle)');
 md.push('cd docs/analysis/c8-oracle && C8_ORACLE_GW=localhost:37500 node scenario-matrix.js \\');
-md.push('  --manifest ../../zorrobpm-engine/target/scenario-matrix/manifest-flows.json \\');
-md.push('  --out ../../zorrobpm-engine/target/scenario-matrix/zeebe-flows.json');
-md.push('# 3) сравнение + прибитые факты');
+md.push('  --manifest ../../../zorrobpm-engine/target/scenario-matrix/manifest-flows.json \\');
+md.push('  --out ../../../zorrobpm-engine/target/scenario-matrix/zeebe-flows.json');
+md.push('# 3) сравнение + пересъёмка прибитых фактов');
 md.push('cd docs/analysis/c8-oracle && node scenario-matrix-flow-diff.js');
 md.push('```');
+md.push('');
+md.push('Оракул — СВОЙ контейнер Zeebe 8.5.0; чужие контейнеры (zbpm-cmp-zeebe, raxon-*,');
+md.push('zbpm-pgci-*) не трогаются. Имя своего контейнера — в §«Оракул» выше.');
 
 fs.writeFileSync(path.join(outDir, 'phase2-divergences.md'), md.join('\n') + '\n');
 fs.writeFileSync(path.join(outDir, 'phase2-divergences.json'), JSON.stringify({
@@ -321,6 +359,8 @@ fs.writeFileSync(path.join(outDir, 'phase2-divergences.json'), JSON.stringify({
   total: rows.length,
   match,
   divergences: divergences.length,
+  deployRejected: deployRejected.length,
+  deployRejectedIds: deployRejected.map((d) => d.id),
   rows,
 }, null, 2) + '\n');
 fs.writeFileSync(expectPath, JSON.stringify({
@@ -331,7 +371,8 @@ fs.writeFileSync(expectPath, JSON.stringify({
   scenarios: expectations,
 }, null, 2) + '\n');
 
-console.log(`scenarios=${rows.length} match=${match} divergences=${divergences.length}`);
+console.log(`scenarios=${rows.length} match=${match} divergences=${divergences.length} deployRejected=${deployRejected.length}`);
 for (const d of divergences) console.log(`DIVERGENCE ${d.id}: ${d.detail}`);
+for (const d of deployRejected) console.log(`DEPLOY-REJECTED ${d.id}: ${d.detail}`);
 console.log(`WROTE ${path.join(outDir, 'phase2-divergences.md')}`);
 console.log(`WROTE ${expectPath}`);

@@ -1,9 +1,14 @@
 {
-  "generatedAt": "2026-10-21T05:39:52.940Z",
+  "generatedAt": "2026-10-21T06:59:43.747Z",
   "oracle": "zeebe-8.5.0-live",
   "total": 16,
-  "match": 13,
-  "divergences": 1,
+  "match": 14,
+  "divergences": 0,
+  "deployRejected": 2,
+  "deployRejectedIds": [
+    "f2-inclusive-all",
+    "f2-inclusive-partial"
+  ],
   "rows": [
     {
       "id": "f2-event-based-message",
@@ -16,9 +21,7 @@
           "keyB": "KB",
           "msg": "A"
         },
-        "leaks": [
-          "type=subscription element=msgB unconsumed message_subscription"
-        ],
+        "leaks": [],
         "incidents": [],
         "error": "",
         "publishes": [
@@ -40,8 +43,8 @@
         ],
         "error": ""
       },
-      "verdict": "ours-differs",
-      "detail": "leftovers: ours=1 zeebe=0"
+      "verdict": "match",
+      "detail": ""
     },
     {
       "id": "f2-event-based-message-race",

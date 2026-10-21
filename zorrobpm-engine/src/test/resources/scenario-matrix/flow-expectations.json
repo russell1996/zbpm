@@ -26,17 +26,15 @@
           "keyB": "KB",
           "msg": "A"
         },
-        "leaks": [
-          "type=subscription element=msgB unconsumed message_subscription"
-        ],
+        "leaks": [],
         "incidents": [],
         "error": "",
         "publishes": [
           "msgA:correlated=1"
         ]
       },
-      "verdict": "ours-differs",
-      "detail": "leftovers: ours=1 zeebe=0"
+      "verdict": "match",
+      "detail": ""
     },
     "f2-event-based-message-race": {
       "oracle": "SUPPORTED-8.5",
