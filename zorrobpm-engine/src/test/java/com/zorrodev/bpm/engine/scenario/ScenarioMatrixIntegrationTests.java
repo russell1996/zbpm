@@ -109,13 +109,18 @@ public class ScenarioMatrixIntegrationTests {
      *
      * <p>Факты оракула «прибиты» в {@code scenario-matrix/zeebe-expectations.json}
      * (сняты прогоном {@code docs/analysis/c8-oracle/scenario-matrix.js} против
-     * стенда {@code zbpm-cmp-zeebe}; пересобрать — команда в отчёте). Здесь мы
-     * сравниваем НАШ прогон с этими фактами: любое новое расхождение роняет CI.
+     * контейнера Zeebe 8.5.0; пересобрать — команда в отчёте). Здесь мы сравниваем
+     * НАШ прогон с этими фактами: любое новое расхождение роняет CI.
      *
-     * <p>Сценарии, где оракул 8.5 не исполнил сценарий (user task: Zeebe 8.5 не
-     * создаёт job'а — измерено живьём), помечены в ожиданиях как
-     * {@code UNSUPPORTED-8.5}: для них проверяется наше поведение (инстанс
-     * завершается, утечек нет) и ТОЛЬКО ТО, что оракул остался на элементе.
+     * <p>Все сценарии среза — включая ось user task — сравниваются с оракулом
+     * (56 из 56). Ось user task для оракула разворачивается в job-worker диалекте:
+     * user task в Zeebe 8.5 — это job типа {@code io.camunda.zeebe:userTask}
+     * (измерено пробой {@code docs/analysis/c8-oracle/user-task-probe.js}), а
+     * нативная форма {@code <zeebe:userTask/>} job-worker API не отдаёт, то есть
+     * доводить её — ограничение харнесса, а не оракула.
+     *
+     * <p>Если оракул сценарий НЕ исполнил — это расхождение (запись в эталоне
+     * {@code ORACLE-DID-NOT-RUN} роняет сборку), а не «не поддерживается».
      */
     @Test
     void generatedMatrix_matchesPinnedZeebe85Facts() throws Exception {
@@ -157,6 +162,15 @@ public class ScenarioMatrixIntegrationTests {
             }
             compared++;
             Map<String, Object> oracleVars = (Map<String, Object>) expected.get("vars");
+            if (oracleVars == null) {
+                // Сценарий, помеченный SUPPORTED-8.5, обязан нести измеренные
+                // переменные оракула. Нет vars — эталон битый (пересними), а не
+                // «сравнивать нечего»: раньше такой сценарий молча падал бы в NPE
+                // ниже по коду.
+                problems.add(scenario.id() + ": прибитый факт оракула без поля vars — "
+                        + "пересними эталон (docs/analysis/c8-oracle/scenario-matrix-diff.js)");
+                continue;
+            }
             // «Что осталось активным» — третье наблюдаемое дифференциального режима
             // (WO п.3). У оракула это job'ы, оставшиеся активируемыми после точки
             // наблюдения; у нас — нарушения инварианта утечек (живые activity/задачи/

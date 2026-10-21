@@ -161,7 +161,7 @@ fs.mkdirSync(path.dirname(expectPath), { recursive: true });
 const md = [];
 md.push('# WO-OPS-27 — матрица сценариев: наш движок vs Zeebe 8.5.0 (живой оракул)');
 md.push('');
-md.push(`- Оракул: живой Zeebe 8.5.0 (gateway ${JSON.parse(fs.readFileSync(zeebePath, 'utf8')).gateway || '8.5.0'}), стенд \`zbpm-cmp-zeebe\`.`);
+md.push(`- Оракул: живой Zeebe 8.5.0 (gateway ${JSON.parse(fs.readFileSync(zeebePath, 'utf8')).gateway || '8.5.0'}), контейнер, поднятый прогоном \`scenario-matrix.js\` (gateway из C8_ORACLE_GW).`);
 md.push(`- Наш движок: тот же набор схем (манифест \`zorrobpm-engine/target/scenario-matrix/manifest.json\`).`);
 md.push(`- Сценариев: ${rows.length}; совпали: ${match}; оракул не исполнил (docs≠8.5): ${oracleUnsupported}; расхождений: ${divergences.length}.`);
 md.push('');
