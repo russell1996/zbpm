@@ -1,0 +1,503 @@
+{
+  "oracle": "zeebe-8.5.0-live",
+  "note": "Факты живого Zeebe 8.5.0 и наши, снятые прогоном docs/analysis/c8-oracle/scenario-matrix-container.js и срезом F3 нашего движка (ContainerScenarioMatrixIntegrationTests). Расхождения НЕ чинятся в кампании: они закреплены здесь, чтобы их нельзя было закрыть молча.",
+  "scenarios": {
+    "f3-call-activity": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leftovers": [],
+        "reachedSteps": [
+          "childWork"
+        ],
+        "probedTypes": [
+          "f3_call_activity_childwork",
+          "f3_call_activity_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "childWork"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f3-call-activity-mi": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "item": "b",
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            null,
+            "b"
+          ],
+          "loopCounter": 2
+        },
+        "leftovers": [],
+        "reachedSteps": [
+          "childWork"
+        ],
+        "probedTypes": [
+          "f3_call_activity_mi_childwork",
+          "f3_call_activity_mi_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "DEPLOY_REJECTED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [],
+        "error": "UNSUPPORTED_MULTI_INSTANCE_CONTAINER: Multi-instance is supported on serviceTask, userTask and embedded subProcess: call carries multiInstanceLoopCharacteristics on a container and would run once. Move the multi-instance marker onto a task inside the container, or drop it."
+      },
+      "verdict": "ours-deploy-rejected",
+      "detail": "мы отвергли модель на деплое, а Zeebe 8.5 её исполнил (вывод о паритете приёма модели)."
+    },
+    "f3-call-activity-vars": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "childVar": "CV"
+        },
+        "leftovers": [],
+        "reachedSteps": [
+          "childWork"
+        ],
+        "probedTypes": [
+          "f3_call_activity_vars_childwork",
+          "f3_call_activity_vars_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "childVar": "CV"
+        },
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "childWork"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f3-event-subprocess-interrupting": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "NO_DUMP_JOB",
+        "vars": {},
+        "leftovers": [],
+        "reachedSteps": [
+          "work",
+          "evWork"
+        ],
+        "probedTypes": [
+          "f3_event_subprocess_interrupting_work",
+          "f3_event_subprocess_interrupting_evwork",
+          "f3_event_subprocess_interrupting_dump",
+          "f3_event_subprocess_interrupting_after"
+        ],
+        "error": "dump job never appeared"
+      },
+      "ours": {
+        "status": "NO_DUMP",
+        "vars": {},
+        "leaks": [
+          "type=activity element=after live activity, status=CREATED",
+          "type=task element=after open service_task"
+        ],
+        "incidents": [],
+        "reachedSteps": [
+          "work",
+          "evWork"
+        ],
+        "error": ""
+      },
+      "verdict": "ours-leaks",
+      "detail": "у нас остаток в завершённом инстансе: [\"type=activity element=after live activity, status=CREATED\",\"type=task element=after open service_task\"]; у Zeebe остатка нет; LEAK-INVARIANT (G-P): [\"type=activity element=after live activity, status=CREATED\",\"type=task element=after open service_task\"]"
+    },
+    "f3-event-subprocess-non-interrupting": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leftovers": [],
+        "reachedSteps": [
+          "work",
+          "evWork",
+          "after"
+        ],
+        "probedTypes": [
+          "f3_event_subprocess_non_interrupting_work",
+          "f3_event_subprocess_non_interrupting_evwork",
+          "f3_event_subprocess_non_interrupting_after",
+          "f3_event_subprocess_non_interrupting_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "work",
+          "evWork",
+          "after"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f3-mi-subprocess-completion-condition": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            null,
+            null
+          ]
+        },
+        "leftovers": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "probedTypes": [
+          "f3_mi_subprocess_completion_condition_work",
+          "f3_mi_subprocess_completion_condition_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": "[\"a\",\"b\",\"c\"]",
+          "results": "[\"a\",null,null]"
+        },
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f3-mi-subprocess-parallel": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leftovers": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "probedTypes": [
+          "f3_mi_subprocess_parallel_work",
+          "f3_mi_subprocess_parallel_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": "[\"a\",\"b\"]",
+          "results": "[\"a\",\"b\"]"
+        },
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f3-mi-subprocess-sequential": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b"
+          ],
+          "results": [
+            "a",
+            "b"
+          ]
+        },
+        "leftovers": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "probedTypes": [
+          "f3_mi_subprocess_sequential_work",
+          "f3_mi_subprocess_sequential_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": "[\"a\",\"b\"]",
+          "results": "[\"a\",\"b\"]"
+        },
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f3-mi-task-completion-condition": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": [
+            "a",
+            "b",
+            "c"
+          ],
+          "results": [
+            "a",
+            null,
+            null
+          ]
+        },
+        "leftovers": [],
+        "reachedSteps": [
+          "miTask"
+        ],
+        "probedTypes": [
+          "f3_mi_task_completion_condition_work",
+          "f3_mi_task_completion_condition_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "items": "[\"a\",\"b\",\"c\"]",
+          "results": "[\"a\",null,null]"
+        },
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "miTask"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f3-subprocess-nested": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leftovers": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "probedTypes": [
+          "f3_subprocess_nested_work",
+          "f3_subprocess_nested_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f3-subprocess-nested-vars": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "inner": "IV"
+        },
+        "leftovers": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "probedTypes": [
+          "f3_subprocess_nested_vars_work",
+          "f3_subprocess_nested_vars_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "inner": "IV"
+        },
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f3-subprocess-plain": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leftovers": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "probedTypes": [
+          "f3_subprocess_plain_work",
+          "f3_subprocess_plain_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f3-subprocess-plain-vars": {
+      "oracle": "SUPPORTED-8.5",
+      "zeebe": {
+        "status": "COMPLETED",
+        "vars": {
+          "inner": "IV"
+        },
+        "leftovers": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "probedTypes": [
+          "f3_subprocess_plain_vars_work",
+          "f3_subprocess_plain_vars_dump"
+        ],
+        "error": ""
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {
+          "inner": "IV"
+        },
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "work"
+        ],
+        "error": ""
+      },
+      "verdict": "match",
+      "detail": ""
+    },
+    "f3-transaction-cancel": {
+      "oracle": "REJECTED-8.5",
+      "zeebe": {
+        "status": "DEPLOY_REJECTED",
+        "vars": {},
+        "leftovers": [],
+        "reachedSteps": [],
+        "probedTypes": [],
+        "error": "3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: | отвергнутые элементы: cad1, cad2, cb, tx, txEnd | причины: Boundary events must be one of: timer, message, error, signal, escalation / Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/ / End events must be one of: none, error, message, terminate, signal, escalation or compensation / Event definition of this type is not supported"
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "txWork",
+          "afterCancel"
+        ],
+        "error": ""
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 отверг модель на деплое — сравнивать нечего (вывод о паритете приёма модели)."
+    },
+    "f3-transaction-plain": {
+      "oracle": "REJECTED-8.5",
+      "zeebe": {
+        "status": "DEPLOY_REJECTED",
+        "vars": {},
+        "leftovers": [],
+        "reachedSteps": [],
+        "probedTypes": [],
+        "error": "3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: | отвергнутые элементы: tx | причины: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/"
+      },
+      "ours": {
+        "status": "COMPLETED",
+        "vars": {},
+        "leaks": [],
+        "incidents": [],
+        "reachedSteps": [
+          "txWork"
+        ],
+        "error": ""
+      },
+      "verdict": "oracle-deploy-rejected",
+      "detail": "Zeebe 8.5 отверг модель на деплое — сравнивать нечего (вывод о паритете приёма модели)."
+    }
+  }
+}

@@ -16,3 +16,4 @@ LeakInvariantListenerTests :: WO-OPS-26 — тест самого инвариа
 # docs/internal: компенсация без ожидания гасит handler-задачу
 # вместе с инстансом, ad-hoc с cancelRemainingInstances=false ЖДЁТ остаток
 # (Camunda 8.9), низкоуровневая отмена гасит activity сама.
+ContainerScenarioMatrixIntegrationTests#eventSubProcess_family_matchesPinnedFacts :: WO-OPS-37 (предложен в отчёте WO-OPS-28 ФАЗА 3, находка Н-1) — ПРЕРЫВАЮЩИЙ event sub-process не гасит токен основного потока: ESP срабатывает, но поток продолжается дальше, activity `after` остаётся CREATED, а её строка service_task открыта (воркер заберёт задачу завершённого инстанса). Измерено против живого Zeebe 8.5.0: там поток прерывается, остатка нет (scenario-matrix-container.js, сценарий f3-event-subprocess-interrupting).
