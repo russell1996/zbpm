@@ -6,11 +6,13 @@ import com.zorrodev.bpm.contract.dto.AuthResponse;
 import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.contract.dto.StartProcessInstanceDTO;
 import com.zorrodev.bpm.engine.repository.SignalSubscriptionRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -53,8 +55,13 @@ class CancelProcessInstanceSubscriptionCleanupIT {
     @Autowired
     private SignalSubscriptionRepository signalSubscriptionRepository;
 
+    @Autowired
+    private JdbcTemplate jdbc;
+
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private String token;
+    /** Инстанс, поднятый этим тестом (для самоочистки). */
+    private UUID ownInstance;
 
     @BeforeAll
     void login() throws Exception {
@@ -108,10 +115,36 @@ class CancelProcessInstanceSubscriptionCleanupIT {
             .toList();
     }
 
+    /**
+     * Самоочистка: общая H2-БД rest-модуля делится между 1400+ тестами, и остаток
+     * этого теста не должен попадать в чужие выборки. Порядок — ОТ ЛИСТЬЕВ К КОРНЮ
+     * (FK {@code user_tasks → process_instances} — RESTRICT: без удаления задач
+     * удаление инстанса не проходит).
+     *
+     * <p>Задеплоенное ОПРЕДЕЛЕНИЕ остаётся: оно инертно (никакой тест rest-модуля не
+     * считает определения по всему столу), а соседний тест операторской отмены
+     * ({@code CancelProcessInstanceTest}) оставляет своё определение так же.
+     */
+    @AfterEach
+    void cleanOwnInstance() {
+        if (ownInstance == null) {
+            return;
+        }
+        jdbc.update("DELETE FROM user_task_candidates WHERE user_task_id IN "
+            + "(SELECT id FROM user_tasks WHERE process_instance_id = ?)", ownInstance);
+        jdbc.update("DELETE FROM user_tasks WHERE process_instance_id = ?", ownInstance);
+        jdbc.update("DELETE FROM service_tasks WHERE process_instance_id = ?", ownInstance);
+        jdbc.update("DELETE FROM variables WHERE process_instance_id = ?", ownInstance);
+        jdbc.update("DELETE FROM activities WHERE process_instance_id = ?", ownInstance);
+        jdbc.update("DELETE FROM process_instances WHERE id = ?", ownInstance);
+        ownInstance = null;
+    }
+
     @Test
     void operatorCancel_dropsSignalSubscriptionsOfTheCancelledInstance() throws Exception {
         deploy();
         UUID pi = start();
+        ownInstance = pi;
 
         assertThat(signalSubscriptions(pi))
             .as("премисса: инстанс вооружён signal-подписками (граница + event-subprocess)")
