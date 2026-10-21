@@ -164,7 +164,7 @@ public class ContainerScenarioMatrixIntegrationTests {
                 continue;
             }
             problems.addAll(compareWithPinned(outcome, pinnedOurs, reachedSteps));
-            problems.addAll(checkVerdictStillHolds(outcome, fact));
+            problems.addAll(checkVerdictStillHolds(outcome, fact, reachedSteps));
         }
         assertThat(problems)
                 .as("container-slice divergences from the pinned facts (family=%s)", family)
@@ -212,27 +212,80 @@ public class ContainerScenarioMatrixIntegrationTests {
      * Согласованность ВЕРДИКТА с текущим прогоном.
      *
      * <p>Вердикт в прибитых фактах — это запись о расхождении, и он должен
-     * оставаться правдой: если утечка, помеченная как {@code ours-leaks},
-     * в текущем прогоне ИСЧЕЗЛА (значит, движок починили) — эталон устарел, и
-     * это обязано ронять сборку, чтобы расхождение пересмотрели, а не закрыли
-     * молча. Обратное тоже: если вердикт был {@code match}, а утечки появились —
-     * расхождение новое, эталон устарел.
+     * оставаться правдой. Поэтому он НЕ принимается на веру: тест ПЕРЕСЧИТЫВАЕТ
+     * его из двух сохранённых сторон (прибитая сторона живого Zeebe + текущая
+     * наша сторона) по тем же правилам, что и инструмент прибития
+     * ({@code docs/analysis/c8-oracle/scenario-matrix-container-diff.js}), и
+     * сравнивает с прибитым значением.
+     *
+     * <p>Что это закрывает: (а) утечка, помеченная {@code ours-leaks}, исчезла
+     * (движок починили) → пересчёт даёт другое значение → сборка красная, эталон
+     * переснимается, расхождение пересматривается, а не закрывается молча;
+     * (б) вердикт переписан РУЧНОМУ в прибитых фактах → пересчёт не совпадает →
+     * сборка красная; (в) утечка появилась при вердикте {@code match} → то же.
+     *
+     * <p>Порядок правил — тот же, что в инструменте прибития: отказ оракула на
+     * деплое → отказ у нас на деплое → расхождение статуса → расхождение
+     * переменных → расхождение остатка (утечки) → расхождение достигнутых шагов.
      */
-    private List<String> checkVerdictStillHolds(ScenarioOutcome outcome, Map<String, Object> fact) {
+    private List<String> checkVerdictStillHolds(ScenarioOutcome outcome, Map<String, Object> fact,
+            List<String> reachedSteps) {
         List<String> problems = new ArrayList<>();
-        String verdict = String.valueOf(fact.get("verdict"));
-        boolean leaksNow = !outcome.leaks().isEmpty();
-        if ("ours-leaks".equals(verdict) && !leaksNow) {
-            problems.add(outcome.scenarioId() + ": прибитый вердикт ours-leaks, а утечки в текущем "
-                    + "прогоне ИСЧЕЗЛИ — движок починили, пересними эталон "
-                    + "(docs/analysis/c8-oracle/scenario-matrix-container-diff.js)");
+        String pinnedVerdict = String.valueOf(fact.get("verdict"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pinnedZeebe = (Map<String, Object>) fact.get("zeebe");
+        if (pinnedZeebe == null) {
+            return problems;
         }
-        if (!"ours-leaks".equals(verdict) && leaksNow) {
-            problems.add(outcome.scenarioId() + ": прибитый вердикт " + verdict
-                    + ", а в текущем прогоне появилась утечка " + outcome.leaks()
-                    + " — эталон устарел, пересними (docs/analysis/c8-oracle/scenario-matrix-container-diff.js)");
+        String recomputed = recomputeVerdict(pinnedZeebe, outcome, reachedSteps);
+        if (!recomputed.equals(pinnedVerdict)) {
+            problems.add(outcome.scenarioId() + ": прибитый вердикт " + pinnedVerdict
+                    + " не совпадает с пересчитанным из сохранённых сторон (" + recomputed
+                    + ") — эталон устарел (поведение изменилось) или отредактирован руками; "
+                    + "пересними эталон (docs/analysis/c8-oracle/scenario-matrix-container-diff.js)");
         }
         return problems;
+    }
+
+    /** Пересчёт вердикта по сохранённой стороне Zeebe и текущей нашей стороне. */
+    @SuppressWarnings("unchecked")
+    private String recomputeVerdict(Map<String, Object> pinnedZeebe, ScenarioOutcome outcome,
+            List<String> reachedSteps) {
+        String zeebeStatus = String.valueOf(pinnedZeebe.get("status"));
+        String oursStatus = outcome.status();
+        if ("DEPLOY_REJECTED".equals(zeebeStatus)) {
+            return "oracle-deploy-rejected";
+        }
+        if ("DEPLOY_REJECTED".equals(oursStatus)) {
+            return "ours-deploy-rejected";
+        }
+        String zeebeFlow = "NO_DUMP_JOB".equals(zeebeStatus) ? "NO_DUMP" : zeebeStatus;
+        String ourFlow = "NO_DUMP".equals(oursStatus) ? "NO_DUMP" : oursStatus;
+        if (!zeebeFlow.equals(ourFlow)) {
+            return "ours-differs";
+        }
+        Map<String, Object> pinnedZeebeVars = (Map<String, Object>) pinnedZeebe.get("vars");
+        Map<String, Object> rawOurVars = new LinkedHashMap<>();
+        outcome.rootVars().forEach(rawOurVars::put);
+        Map<String, Object> ourVars = normalizeVars(rawOurVars);
+        if (pinnedZeebeVars != null
+                && !normalizeVars(pinnedZeebeVars).equals(ourVars)) {
+            return "ours-differs";
+        }
+        @SuppressWarnings("unchecked")
+        List<String> zeebeLeftovers = (List<String>) pinnedZeebe.get("leftovers");
+        boolean zeebeLeft = zeebeLeftovers != null && !zeebeLeftovers.isEmpty();
+        boolean ourLeft = !outcome.leaks().isEmpty();
+        if (zeebeLeft != ourLeft) {
+            return "ours-leaks";
+        }
+        @SuppressWarnings("unchecked")
+        List<String> zeebeReached = (List<String>) pinnedZeebe.get("reachedSteps");
+        List<String> ourReached = reachedSteps == null ? List.of() : reachedSteps;
+        if (zeebeReached != null && !zeebeReached.equals(ourReached)) {
+            return "ours-differs";
+        }
+        return "match";
     }
 
     /** Нарушения инварианта — без id инстанса (он случайный). */
@@ -282,6 +335,9 @@ public class ContainerScenarioMatrixIntegrationTests {
     private ScenarioOutcome runInOwnTransaction(ContainerScenario scenario) {
         TransactionTemplate template = new TransactionTemplate(transactionManager);
         template.setPropagationBehavior(TransactionTemplate.PROPAGATION_REQUIRES_NEW);
+        // Сброс ДО прогона: иначе на пути отказа (упал сам транзакционный шаблон)
+        // в артефакт попали бы шаги ПРЕДЫДУЩЕГО сценария.
+        lastReachedSteps = List.of();
         try {
             return template.execute(status -> {
                 ContainerScenarioRunner runner = new ContainerScenarioRunner(processDefinitionService,
