@@ -132,6 +132,7 @@ function itemOf(job) {
  * остатком (ложный остаток).
  */
 async function drive(client, scenario) {
+  const reached = [];
   for (const step of scenario.steps || []) {
     let done = false;
     for (let tryNo = 0; tryNo < MAX_TRIES && !done; tryNo++) {
@@ -153,11 +154,13 @@ async function drive(client, scenario) {
       }
       for (const j of targets) {
         await complete(client, j, JSON.parse(step.vars || '{}'));
+        if (!reached.includes(step.elementId)) reached.push(step.elementId);
         if (process.env.F3_DEBUG) console.log(`    [debug] completed ${j.elementId} key=${j.key}`);
       }
       done = true;
     }
   }
+  return reached;
 }
 
 /** Наблюдательная задача: снимаем payload (состояние) и завершаем её. */
@@ -175,17 +178,40 @@ async function observe(client, scenario) {
   return { observed: null, found: false };
 }
 
-/** Что осталось активным после завершения наблюдательной задачи. */
-async function leftovers(client, scenario) {
+/**
+ * Все типы job'ов схемы сценария.
+ *
+ * <p>Важно: probe остатка должен смотреть ВСЕ типы задач схемы, а не только те,
+ * по которым водились шаги. Иначе «остатка нет» означало бы «мы не проверяли
+ * тот тип, который не водили» (для прерывающего event sub-process это именно
+ * задача `after`: она не входит в список шагов, потому что в Zeebe поток
+ * прерывается и её не бывает).
+ */
+function allJobTypes(scenario) {
   const types = new Set((scenario.steps || []).map((s) => s.jobType));
   types.add(scenario.dumpJobType);
+  const bpmn = String(scenario.bpmn || '');
+  const re = /<zeebe:taskDefinition[^>]*type="([^"]+)"/g;
+  let m;
+  while ((m = re.exec(bpmn)) !== null) types.add(m[1]);
+  for (const c of scenario.childBpmn || []) {
+    const re2 = /<zeebe:taskDefinition[^>]*type="([^"]+)"/g;
+    let m2;
+    while ((m2 = re2.exec(String(c))) !== null) types.add(m2[1]);
+  }
+  return [...types];
+}
+
+/** Что осталось активным после завершения наблюдательной задачи. */
+async function leftovers(client, scenario) {
+  const types = allJobTypes(scenario);
   const left = [];
   for (const t of types) {
     for (const j of await activate(client, t)) {
       left.push({ type: j.type, elementId: j.elementId });
     }
   }
-  return { left };
+  return { left, probedTypes: types };
 }
 
 (async () => {
@@ -222,6 +248,8 @@ async function leftovers(client, scenario) {
       status: 'UNKNOWN',
       rootVars: {},
       leftovers: [],
+      reachedSteps: [],
+      probedTypes: [],
       error: '',
     };
     let pi = null;
@@ -233,7 +261,7 @@ async function leftovers(client, scenario) {
       const deployed = await deployContent(client, `${scenario.id}.bpmn`, scenario.bpmn);
       const vars = JSON.parse(scenario.vars || '{}');
       pi = await start(client, deployed.bpmnProcessId, deployed.version, vars);
-      await drive(client, scenario);
+      row.reachedSteps = await drive(client, scenario);
       const obs = await observe(client, scenario);
       if (!obs.found) {
         row.status = 'NO_DUMP_JOB';
@@ -247,6 +275,7 @@ async function leftovers(client, scenario) {
       await sleep(LOCK_SETTLE_MS);
       const rest = await leftovers(client, scenario);
       row.leftovers = rest.left;
+      row.probedTypes = rest.probedTypes;
       if (rest.left.length > 0) {
         row.status = row.status === 'COMPLETED' ? 'LEFTOVER_JOBS' : row.status;
       }

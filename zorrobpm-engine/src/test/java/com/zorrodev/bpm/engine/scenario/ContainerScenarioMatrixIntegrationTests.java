@@ -134,14 +134,18 @@ public class ContainerScenarioMatrixIntegrationTests {
         // эталоне (первый прогон среза) артефакты не были бы записаны и
         // оракулу нечего было бы прогонять.
         List<ScenarioOutcome> outcomes = new ArrayList<>();
+        List<List<String>> reached = new ArrayList<>();
         for (ContainerScenario scenario : scenarios) {
             outcomes.add(runInOwnTransaction(scenario));
+            reached.add(lastReachedSteps);
         }
-        writeOutcomes(family, outcomes);
+        writeOutcomes(family, outcomes, reached);
 
         Map<String, Map<String, Object>> pinned = loadPinnedFacts();
         List<String> problems = new ArrayList<>();
-        for (ScenarioOutcome outcome : outcomes) {
+        for (int idx = 0; idx < outcomes.size(); idx++) {
+            ScenarioOutcome outcome = outcomes.get(idx);
+            List<String> reachedSteps = idx < reached.size() ? reached.get(idx) : List.of();
             Map<String, Object> fact = pinned.get(outcome.scenarioId());
             if (fact == null) {
                 problems.add(outcome.scenarioId() + ": нет прибитого факта — пересними эталон "
@@ -159,7 +163,8 @@ public class ContainerScenarioMatrixIntegrationTests {
                 problems.add(outcome.scenarioId() + ": прибитый факт без нашей части");
                 continue;
             }
-            problems.addAll(compareWithPinned(outcome, pinnedOurs));
+            problems.addAll(compareWithPinned(outcome, pinnedOurs, reachedSteps));
+            problems.addAll(checkVerdictStillHolds(outcome, fact));
         }
         assertThat(problems)
                 .as("container-slice divergences from the pinned facts (family=%s)", family)
@@ -167,7 +172,8 @@ public class ContainerScenarioMatrixIntegrationTests {
     }
 
     /** Сверка наблюдения с прибитой нашей частью факта. */
-    private List<String> compareWithPinned(ScenarioOutcome outcome, Map<String, Object> pinnedOurs) {
+    private List<String> compareWithPinned(ScenarioOutcome outcome, Map<String, Object> pinnedOurs,
+            List<String> reachedSteps) {
         List<String> problems = new ArrayList<>();
         String pinnedStatus = String.valueOf(pinnedOurs.get("status"));
         if (!pinnedStatus.equals(outcome.status())) {
@@ -188,10 +194,43 @@ public class ContainerScenarioMatrixIntegrationTests {
                     + normalizeLeaks(pinnedLeaks) + " стало=" + normalizeLeaks(outcome.leaks()));
         }
         @SuppressWarnings("unchecked")
+        List<String> pinnedReached = (List<String>) pinnedOurs.get("reachedSteps");
+        if (pinnedReached != null && !pinnedReached.equals(reachedSteps)) {
+            problems.add(outcome.scenarioId() + ": достигнутые шаги изменились: было=" + pinnedReached
+                    + " стало=" + reachedSteps);
+        }
+        @SuppressWarnings("unchecked")
         List<String> pinnedIncidents = (List<String>) pinnedOurs.get("incidents");
         if (pinnedIncidents != null && !pinnedIncidents.equals(outcome.incidents())) {
             problems.add(outcome.scenarioId() + ": инциденты изменились: было=" + pinnedIncidents
                     + " стало=" + outcome.incidents());
+        }
+        return problems;
+    }
+
+    /**
+     * Согласованность ВЕРДИКТА с текущим прогоном.
+     *
+     * <p>Вердикт в прибитых фактах — это запись о расхождении, и он должен
+     * оставаться правдой: если утечка, помеченная как {@code ours-leaks},
+     * в текущем прогоне ИСЧЕЗЛА (значит, движок починили) — эталон устарел, и
+     * это обязано ронять сборку, чтобы расхождение пересмотрели, а не закрыли
+     * молча. Обратное тоже: если вердикт был {@code match}, а утечки появились —
+     * расхождение новое, эталон устарел.
+     */
+    private List<String> checkVerdictStillHolds(ScenarioOutcome outcome, Map<String, Object> fact) {
+        List<String> problems = new ArrayList<>();
+        String verdict = String.valueOf(fact.get("verdict"));
+        boolean leaksNow = !outcome.leaks().isEmpty();
+        if ("ours-leaks".equals(verdict) && !leaksNow) {
+            problems.add(outcome.scenarioId() + ": прибитый вердикт ours-leaks, а утечки в текущем "
+                    + "прогоне ИСЧЕЗЛИ — движок починили, пересними эталон "
+                    + "(docs/analysis/c8-oracle/scenario-matrix-container-diff.js)");
+        }
+        if (!"ours-leaks".equals(verdict) && leaksNow) {
+            problems.add(outcome.scenarioId() + ": прибитый вердикт " + verdict
+                    + ", а в текущем прогоне появилась утечка " + outcome.leaks()
+                    + " — эталон устарел, пересними (docs/analysis/c8-oracle/scenario-matrix-container-diff.js)");
         }
         return problems;
     }
@@ -236,6 +275,9 @@ public class ContainerScenarioMatrixIntegrationTests {
         }
     }
 
+    /** Шаги, достигнутые последним прогнанным сценарием (для артефакта и сверки). */
+    private List<String> lastReachedSteps = List.of();
+
     /** Каждый сценарий — в своей транзакции (сбой одного не отравляет остальные). */
     private ScenarioOutcome runInOwnTransaction(ContainerScenario scenario) {
         TransactionTemplate template = new TransactionTemplate(transactionManager);
@@ -245,7 +287,9 @@ public class ContainerScenarioMatrixIntegrationTests {
                 ContainerScenarioRunner runner = new ContainerScenarioRunner(processDefinitionService,
                         runtimeService, queryService, activityRepository, variableRepository,
                         incidentRepository, elementSupport, jdbcTemplate);
-                return runner.run(scenario);
+                ScenarioOutcome outcome = runner.run(scenario);
+                lastReachedSteps = runner.getReachedSteps();
+                return outcome;
             });
         } catch (RuntimeException e) {
             return new ScenarioOutcome(scenario.id(), scenario.base().container(), scenario.content(),
@@ -289,7 +333,8 @@ public class ContainerScenarioMatrixIntegrationTests {
     }
 
     /** Пишет наши наблюдения по семейству. */
-    private void writeOutcomes(String family, List<ScenarioOutcome> outcomes) throws Exception {
+    private void writeOutcomes(String family, List<ScenarioOutcome> outcomes,
+            List<List<String>> reached) throws Exception {
         Files.createDirectories(OURS_DIR);
         ObjectMapper mapper = new ObjectMapper();
         List<Map<String, Object>> observed = new ArrayList<>();
@@ -304,6 +349,8 @@ public class ContainerScenarioMatrixIntegrationTests {
             row.put("leaks", outcome.leaks());
             row.put("incidents", outcome.incidents());
             row.put("error", outcome.error());
+            int i = observed.size();
+            row.put("reachedSteps", i < reached.size() ? reached.get(i) : List.of());
             observed.add(row);
         }
         Files.writeString(OURS_DIR.resolve(family + ".json"),

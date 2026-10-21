@@ -62,6 +62,13 @@ function same(a, b) {
   return String(a) === String(b);
 }
 
+/** Сравнение списков шагов (порядок значим: это порядок вождения). */
+function sameSteps(a, b) {
+  const x = (a || []).map(String);
+  const y = (b || []).map(String);
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
 function diffKeys(a, b) {
   const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
   const out = [];
@@ -153,6 +160,10 @@ for (const o of ours) {
   } else if (varDiff.length > 0) {
     verdict = 'ours-differs';
     details.push(...varDiff);
+  } else if (!sameSteps(o.reachedSteps || [], z.reachedSteps || [])) {
+    verdict = 'ours-differs';
+    details.push(`достигнутые шаги разошлись: ours=${JSON.stringify(o.reachedSteps || [])}`
+      + ` zeebe=${JSON.stringify(z.reachedSteps || [])}`);
   } else if ((oursLeaks.length > 0) !== (zeebeLeftovers.length > 0)) {
     verdict = 'ours-leaks';
     details.push(oursLeaks.length > 0
@@ -172,6 +183,8 @@ for (const o of ours) {
       status: z.status,
       vars: z.rootVars || {},
       leftovers: zeebeLeftovers,
+      reachedSteps: z.reachedSteps || [],
+      probedTypes: z.probedTypes || [],
       error: z.error || '',
     },
     ours: {
@@ -179,6 +192,7 @@ for (const o of ours) {
       vars: o.rootVars || {},
       leaks: oursLeaks,
       incidents: o.incidents || [],
+      reachedSteps: o.reachedSteps || [],
       error: o.error || '',
     },
     verdict,
@@ -222,8 +236,8 @@ md.push(`- **Сценариев:** ${scenarios.length} · совпали: ${byVe
   + ` · отказ оракула на деплое: ${byVerdict('oracle-deploy-rejected')}`
   + ` · отказ у нас на деплое: ${byVerdict('ours-deploy-rejected')}`);
 md.push('');
-md.push('| # | Сценарий | Zeebe 8.5 live | ZorroBPM | Утечки (G-P) | Вердикт |');
-md.push('|---|---|---|---|---|---|');
+md.push('| # | Сценарий | Zeebe 8.5 live | ZorroBPM | Утечки (G-P) | Шаги (наши / Zeebe) | Вердикт |');
+md.push('|---|---|---|---|---|---|---|');
 scenarios.forEach((s, i) => {
   const z = s.zeebe.status === 'DEPLOY_REJECTED'
     ? `**ОТВЕРГ МОДЕЛЬ НА ДЕПЛОЕ**`
@@ -234,7 +248,8 @@ scenarios.forEach((s, i) => {
   const leaks = s.ours.leaks.length > 0
     ? `**${s.ours.leaks.length} нарушение(й)**: ${s.ours.leaks.map((l) => l.replace(/^.*type=/, 'type=')).join('; ')}`
     : 'нет';
-  md.push(`| ${i + 1} | \`${s.id}\` | ${z} | ${o} | ${leaks} | **${s.verdict}** |`);
+  const steps = `${JSON.stringify(s.ours.reachedSteps || [])} / ${JSON.stringify(s.zeebe.reachedSteps || [])}`;
+  md.push(`| ${i + 1} | \`${s.id}\` | ${z} | ${o} | ${leaks} | ${steps} | **${s.verdict}** |`);
 });
 md.push('');
 md.push('## Подробности расхождений');

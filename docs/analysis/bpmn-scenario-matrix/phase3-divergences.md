@@ -4,23 +4,23 @@
 - **Оракул:** живой Zeebe 8.5.0 (8.5.0), стенд `zbpm-cmp-zeebe`, gRPC 127.0.0.1:36500
 - **Сценариев:** 15 · совпали: 11 · расходятся: 0 · утечка у нас: 1 · отказ оракула на деплое: 2 · отказ у нас на деплое: 1
 
-| # | Сценарий | Zeebe 8.5 live | ZorroBPM | Утечки (G-P) | Вердикт |
-|---|---|---|---|---|---|
-| 1 | `f3-call-activity` | COMPLETED {} | COMPLETED {} | нет | **match** |
-| 2 | `f3-call-activity-mi` | COMPLETED {"item":"b","items":["a","b"],"loopCounter":2,"results":[null,"b"]} | **ОТВЕРГ МОДЕЛЬ НА ДЕПЛОЕ** (UNSUPPORTED_MULTI_INSTANCE_CONTAINER) | нет | **ours-deploy-rejected** |
-| 3 | `f3-call-activity-vars` | COMPLETED {"childVar":"CV"} | COMPLETED {"childVar":"CV"} | нет | **match** |
-| 4 | `f3-event-subprocess-interrupting` | NO_DUMP_JOB {} | NO_DUMP {} | **2 нарушение(й)**: type=activity element=after live activity, status=CREATED; type=task element=after open service_task | **ours-leaks** |
-| 5 | `f3-event-subprocess-non-interrupting` | COMPLETED {} | COMPLETED {} | нет | **match** |
-| 6 | `f3-mi-subprocess-completion-condition` | COMPLETED {"items":["a","b","c"],"results":["a",null,null]} | COMPLETED {"items":["a","b","c"],"results":["a",null,null]} | нет | **match** |
-| 7 | `f3-mi-subprocess-parallel` | COMPLETED {"items":["a","b"],"results":["a","b"]} | COMPLETED {"items":["a","b"],"results":["a","b"]} | нет | **match** |
-| 8 | `f3-mi-subprocess-sequential` | COMPLETED {"items":["a","b"],"results":["a","b"]} | COMPLETED {"items":["a","b"],"results":["a","b"]} | нет | **match** |
-| 9 | `f3-mi-task-completion-condition` | COMPLETED {"items":["a","b","c"],"results":["a",null,null]} | COMPLETED {"items":["a","b","c"],"results":["a",null,null]} | нет | **match** |
-| 10 | `f3-subprocess-nested` | COMPLETED {} | COMPLETED {} | нет | **match** |
-| 11 | `f3-subprocess-nested-vars` | COMPLETED {"inner":"IV"} | COMPLETED {"inner":"IV"} | нет | **match** |
-| 12 | `f3-subprocess-plain` | COMPLETED {} | COMPLETED {} | нет | **match** |
-| 13 | `f3-subprocess-plain-vars` | COMPLETED {"inner":"IV"} | COMPLETED {"inner":"IV"} | нет | **match** |
-| 14 | `f3-transaction-cancel` | **ОТВЕРГ МОДЕЛЬ НА ДЕПЛОЕ** | COMPLETED {} | нет | **oracle-deploy-rejected** |
-| 15 | `f3-transaction-plain` | **ОТВЕРГ МОДЕЛЬ НА ДЕПЛОЕ** | COMPLETED {} | нет | **oracle-deploy-rejected** |
+| # | Сценарий | Zeebe 8.5 live | ZorroBPM | Утечки (G-P) | Шаги (наши / Zeebe) | Вердикт |
+|---|---|---|---|---|---|---|
+| 1 | `f3-call-activity` | COMPLETED {} | COMPLETED {} | нет | ["childWork"] / ["childWork"] | **match** |
+| 2 | `f3-call-activity-mi` | COMPLETED {"item":"b","items":["a","b"],"loopCounter":2,"results":[null,"b"]} | **ОТВЕРГ МОДЕЛЬ НА ДЕПЛОЕ** (UNSUPPORTED_MULTI_INSTANCE_CONTAINER) | нет | [] / ["childWork"] | **ours-deploy-rejected** |
+| 3 | `f3-call-activity-vars` | COMPLETED {"childVar":"CV"} | COMPLETED {"childVar":"CV"} | нет | ["childWork"] / ["childWork"] | **match** |
+| 4 | `f3-event-subprocess-interrupting` | NO_DUMP_JOB {} | NO_DUMP {} | **2 нарушение(й)**: type=activity element=after live activity, status=CREATED; type=task element=after open service_task | ["work","evWork"] / ["work","evWork"] | **ours-leaks** |
+| 5 | `f3-event-subprocess-non-interrupting` | COMPLETED {} | COMPLETED {} | нет | ["work","evWork","after"] / ["work","evWork","after"] | **match** |
+| 6 | `f3-mi-subprocess-completion-condition` | COMPLETED {"items":["a","b","c"],"results":["a",null,null]} | COMPLETED {"items":["a","b","c"],"results":["a",null,null]} | нет | ["work"] / ["work"] | **match** |
+| 7 | `f3-mi-subprocess-parallel` | COMPLETED {"items":["a","b"],"results":["a","b"]} | COMPLETED {"items":["a","b"],"results":["a","b"]} | нет | ["work"] / ["work"] | **match** |
+| 8 | `f3-mi-subprocess-sequential` | COMPLETED {"items":["a","b"],"results":["a","b"]} | COMPLETED {"items":["a","b"],"results":["a","b"]} | нет | ["work"] / ["work"] | **match** |
+| 9 | `f3-mi-task-completion-condition` | COMPLETED {"items":["a","b","c"],"results":["a",null,null]} | COMPLETED {"items":["a","b","c"],"results":["a",null,null]} | нет | ["miTask"] / ["miTask"] | **match** |
+| 10 | `f3-subprocess-nested` | COMPLETED {} | COMPLETED {} | нет | ["work"] / ["work"] | **match** |
+| 11 | `f3-subprocess-nested-vars` | COMPLETED {"inner":"IV"} | COMPLETED {"inner":"IV"} | нет | ["work"] / ["work"] | **match** |
+| 12 | `f3-subprocess-plain` | COMPLETED {} | COMPLETED {} | нет | ["work"] / ["work"] | **match** |
+| 13 | `f3-subprocess-plain-vars` | COMPLETED {"inner":"IV"} | COMPLETED {"inner":"IV"} | нет | ["work"] / ["work"] | **match** |
+| 14 | `f3-transaction-cancel` | **ОТВЕРГ МОДЕЛЬ НА ДЕПЛОЕ** | COMPLETED {} | нет | ["txWork","afterCancel"] / [] | **oracle-deploy-rejected** |
+| 15 | `f3-transaction-plain` | **ОТВЕРГ МОДЕЛЬ НА ДЕПЛОЕ** | COMPLETED {} | нет | ["txWork"] / [] | **oracle-deploy-rejected** |
 
 ## Подробности расхождений
 
@@ -57,5 +57,5 @@
 Zeebe 8.5 отверг модель на деплое — оракул её не исполнил, сравнивать нечего.
 Это НЕ «ours-differs», а вывод о ПАРИТЕТЕ ПРИЁМА МОДЕЛИ (мы permissive, оракул — нет).
 
-- `f3-transaction-cancel`: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: / 'f3-transaction-cancel.bpmn': - Element: cad2 /     - ERROR: Event definition of this type is not supported / - Element: tx
+- `f3-transaction-cancel`: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: / 'f3-transaction-cancel.bpmn': - Element: tx /     - ERROR: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/ / - Element: cb
 - `f3-transaction-plain`: 3 INVALID_ARGUMENT: Command 'CREATE' rejected with code 'INVALID_ARGUMENT': Expected to deploy new resources, but encountered the following errors: / 'f3-transaction-plain.bpmn': - Element: tx /     - ERROR: Elements of type 'Transaction' are currently not supported. Please refer to the documentation for a list of supported elements: https://docs.camunda.io/docs/components/modeler/bpmn/bpmn-coverage/

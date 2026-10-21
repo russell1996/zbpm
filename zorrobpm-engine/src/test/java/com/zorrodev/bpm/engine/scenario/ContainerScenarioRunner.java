@@ -46,6 +46,9 @@ public final class ContainerScenarioRunner {
     /** Сколько раз ждать появления нужной activity (50 мс на попытку). */
     private static final int WAIT_TRIES = 60;
 
+    /** Элементы, шаги которых реально достигнуты (задача появилась и была завершена). */
+    private final List<String> reachedSteps = new ArrayList<>();
+
     private final ProcessDefinitionService processDefinitionService;
     private final RuntimeService runtimeService;
     private final QueryService queryService;
@@ -117,6 +120,19 @@ public final class ContainerScenarioRunner {
         }
     }
 
+    /**
+     * Шаги вождения, которые РЕАЛЬНО достигнуты (задача появилась и была завершена).
+     *
+     * <p>Нужно для доказательства: «сценарий дошёл до конца» и «шаг был
+     * пропущен» — разные вещи. Например, в сценарии с отменой транзакции
+     * задача {@code afterCancel} существует ТОЛЬКО если сработала cancel-граница,
+     * поэтому «шаг afterCancel достигнут» и есть доказательство, что ветка
+     * отмены была пройдена, а cancel-конец не был обработан как обычный конец.
+     */
+    public List<String> getReachedSteps() {
+        return List.copyOf(reachedSteps);
+    }
+
     /** Отказ при деплое модели (наш движок отвергает неподдерживаемые конструкции). */
     static final class DeployRefused extends RuntimeException {
         DeployRefused(String message) {
@@ -179,6 +195,9 @@ public final class ContainerScenarioRunner {
     private void drive(ContainerScenario scenario, UUID pi) {
         for (ContainerScenario.Step step : scenario.steps()) {
             List<ActivityEntity> live = awaitLive(pi, step);
+            if (!live.isEmpty() && !reachedSteps.contains(step.elementId())) {
+                reachedSteps.add(step.elementId());
+            }
             for (ActivityEntity activity : live) {
                 if (scenario.userTaskElementIds().contains(activity.getBpmnElementId())) {
                     runtimeService.completeUserTask(activity.getId(), stepVariables(step));
