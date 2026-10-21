@@ -911,20 +911,13 @@
           "listener": null
         },
         "ours": {
-          "outcome": "completed",
-          "dump": {
-            "orderId": "A",
-            "m": "M"
-          },
+          "outcome": "stuck",
+          "dump": null,
           "taskHeaders": null,
           "listener": null
         }
       },
-      "divergence": {
-        "bugWo": "Ф1-1",
-        "reason": "НАШ ДЕФЕКТ: бесключевая публикация будит ключевую подписку",
-        "liveMatchesOurs": false
-      }
+      "divergence": null
     },
     {
       "id": "snd-intermediate-throw",

@@ -423,12 +423,12 @@ class DBServiceImplTest {
     }
 
     @Test
-    void findMessageSubscriptions_delegates() {
+    void findKeylessMessageSubscriptions_delegates() {
         UUID processInstanceId = UUID.randomUUID(); MessageSubscription expected = new MessageSubscription();
-        when(messageSubscriptionDbOperations.findMessageSubscriptions("msg1", processInstanceId)).thenReturn(List.of(expected));
-        List<MessageSubscription> subs = dbService.findMessageSubscriptions("msg1", processInstanceId);
+        when(messageSubscriptionDbOperations.findKeylessMessageSubscriptions("msg1", processInstanceId, null)).thenReturn(List.of(expected));
+        List<MessageSubscription> subs = dbService.findKeylessMessageSubscriptions("msg1", processInstanceId, null);
         assertThat(subs).hasSize(1);
-        verify(messageSubscriptionDbOperations).findMessageSubscriptions("msg1", processInstanceId);
+        verify(messageSubscriptionDbOperations).findKeylessMessageSubscriptions("msg1", processInstanceId, null);
     }
 
     @Test

@@ -56,15 +56,15 @@ public class MessageSubscriptionFanOutIntegrationTests {
         }
         messageSubscriptionRepository.saveAll(seeds);
 
-        List<MessageSubscription> page1 = dbService.findMessageSubscriptions(MESSAGE_NAME, null, null);
+        List<MessageSubscription> page1 = dbService.findKeylessMessageSubscriptions(MESSAGE_NAME, null, null);
         assertThat(page1).hasSize(DBService.FAN_OUT_BATCH_SIZE);
 
         UUID cursor1 = page1.get(page1.size() - 1).getId(); // min id of page1 (id-DESC)
-        List<MessageSubscription> page2 = dbService.findMessageSubscriptions(MESSAGE_NAME, null, cursor1);
+        List<MessageSubscription> page2 = dbService.findKeylessMessageSubscriptions(MESSAGE_NAME, null, cursor1);
         assertThat(page2).hasSize(DBService.FAN_OUT_BATCH_SIZE);
 
         UUID cursor2 = page2.get(page2.size() - 1).getId();
-        List<MessageSubscription> page3 = dbService.findMessageSubscriptions(MESSAGE_NAME, null, cursor2);
+        List<MessageSubscription> page3 = dbService.findKeylessMessageSubscriptions(MESSAGE_NAME, null, cursor2);
         assertThat(page3).hasSize(200); // 1200 - 500 - 500
 
         // pages are disjoint and cover all seeds; every id appears exactly once
@@ -100,9 +100,34 @@ public class MessageSubscriptionFanOutIntegrationTests {
         }
         messageSubscriptionRepository.saveAll(seeds);
 
-        List<MessageSubscription> page = dbService.findMessageSubscriptions(MESSAGE_NAME, piA, null);
+        List<MessageSubscription> page = dbService.findKeylessMessageSubscriptions(MESSAGE_NAME, piA, null);
         assertThat(page).hasSize(400); // one page — 400 < 500
         assertThat(page).allMatch(s -> piA.equals(s.getProcessInstanceId()));
+    }
+
+    /**
+     * WO-OPS-39: бесключевая выборка возвращает ТОЛЬКО подписки без ключа корреляции.
+     * Подписка с ключом — это подписка ДРУГОГО инстанса по контракту: её будит
+     * публикация с ТЕМ ЖЕ ключом, а бесключевая публикация — нет (Zeebe 8.5).
+     */
+    @Test
+    @Transactional
+    void keylessLookup_excludesSubscriptionsWithCorrelationKey() {
+        UUID pi = UUID.randomUUID();
+        List<MessageSubscriptionEntity> seeds = new ArrayList<>();
+        for (int i = 0; i < 5; i++) {
+            seeds.add(subscription(pi, MESSAGE_NAME, null));      // без ключа
+            seeds.add(subscription(pi, MESSAGE_NAME, "key-" + i)); // с ключом
+        }
+        messageSubscriptionRepository.saveAll(seeds);
+
+        List<MessageSubscription> page = dbService.findKeylessMessageSubscriptions(MESSAGE_NAME, pi, null);
+
+        assertThat(page).hasSize(5); // только бесключевые
+        // DTO не несёт ключ — проверяем по строкам БД, что ключевых в выборке нет
+        List<UUID> pageIds = page.stream().map(MessageSubscription::getId).toList();
+        assertThat(messageSubscriptionRepository.findAllById(pageIds))
+            .allMatch(e -> e.getCorrelationKey() == null || e.getCorrelationKey().isEmpty());
     }
 
     @Test

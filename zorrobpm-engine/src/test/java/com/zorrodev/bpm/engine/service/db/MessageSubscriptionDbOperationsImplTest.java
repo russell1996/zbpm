@@ -7,6 +7,9 @@ import com.zorrodev.bpm.engine.repository.MessageStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.data.repository.query.FluentQuery.FetchableFluentQuery;
+
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -14,6 +17,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -60,10 +64,13 @@ class MessageSubscriptionDbOperationsImplTest {
     }
 
     @Test
-    void findMessageSubscriptions_returnsMapped() {
+    void findKeylessMessageSubscriptions_returnsMapped() {
         MessageSubscriptionEntity e = new MessageSubscriptionEntity(); e.setId(UUID.randomUUID()); e.setProcessInstanceId(UUID.randomUUID()); e.setActivityId(UUID.randomUUID()); e.setMessageName("m");
-        when(messageSubscriptionRepository.findByConsumedFalseAndMessageName("m")).thenReturn(List.of(e));
-        List<MessageSubscription> result = db.findMessageSubscriptions("m", null);
+        when(messageSubscriptionRepository.findBy(
+                any(Specification.class),
+                org.mockito.ArgumentMatchers.<Function<FetchableFluentQuery<MessageSubscriptionEntity>, List<MessageSubscriptionEntity>>>any()))
+            .thenReturn(List.of(e));
+        List<MessageSubscription> result = db.findKeylessMessageSubscriptions("m", null, null);
         assertThat(result).hasSize(1);
     }
 

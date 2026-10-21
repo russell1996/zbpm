@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-39: инстанс, припаркованный на сообщении БЕЗ ключа корреляции
+     (у <bpmn:message> нет zeebe:subscription — наш движок это допускает,
+     см. Ф1-4 отчёта WO-OPS-28). Контроль для «режима без ключа»:
+     бесключевая публикация ДОЛЖНА будить такую подписку — иначе фикс
+     WO-OPS-39 сломал бы собственный бесключевой режим. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_ops39_keyless_waiter" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_Ops39_Keyless" name="sharedNote" />
+  <bpmn:process id="test-ops39-keyless-waiter" name="test-ops39-keyless-waiter" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="rcv" />
+    <bpmn:receiveTask id="rcv" name="rcv" messageRef="Msg_Ops39_Keyless">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="rcv" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

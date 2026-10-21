@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-39: инстанс, ПРИПАРКОВАННЫЙ на сообщении с ЗАДАННЫМ ключом корреляции.
+     Подписка несёт zeebe:subscription correlationKey="=k" — значит, её можно
+     разбудить ТОЛЬКО публикацией с тем же ключом ("k" из переменных инстанса).
+     Бесключевая публикация (в т.ч. внутренний бросок сообщения процессом) не
+     должна её будить — паритет с Zeebe 8.5 (живой замер WO-OPS-28 Фаза 1:
+     publish {key: null, correlated: 0} → stuck). -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:zeebe="http://camunda.org/schema/zeebe/1.0" id="Definitions_ops39_keyed_waiter" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_Ops39_Keyed" name="sharedNote">
+    <bpmn:extensionElements>
+      <zeebe:subscription correlationKey="=k" />
+    </bpmn:extensionElements>
+  </bpmn:message>
+  <bpmn:process id="test-ops39-keyed-waiter" name="test-ops39-keyed-waiter" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="rcv" />
+    <bpmn:receiveTask id="rcv" name="rcv" messageRef="Msg_Ops39_Keyed">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="rcv" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

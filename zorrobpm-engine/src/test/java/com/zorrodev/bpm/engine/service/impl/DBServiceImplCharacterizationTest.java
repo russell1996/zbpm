@@ -336,12 +336,12 @@ class DBServiceImplCharacterizationTest {
     }
 
     @Test
-    void findMessageSubscriptions_delegates() {
+    void findKeylessMessageSubscriptions_delegates() {
         List<MessageSubscription> expected = List.of(new MessageSubscription());
         UUID pi = UUID.randomUUID();
-        when(messageSubscriptionDbOperations.findMessageSubscriptions("m", pi)).thenReturn(expected);
-        assertThat(dbService.findMessageSubscriptions("m", pi)).isEqualTo(expected);
-        verify(messageSubscriptionDbOperations).findMessageSubscriptions("m", pi);
+        when(messageSubscriptionDbOperations.findKeylessMessageSubscriptions("m", pi, null)).thenReturn(expected);
+        assertThat(dbService.findKeylessMessageSubscriptions("m", pi, null)).isEqualTo(expected);
+        verify(messageSubscriptionDbOperations).findKeylessMessageSubscriptions("m", pi, null);
     }
 
     @Test

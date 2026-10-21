@@ -28,7 +28,8 @@ const DIVERGENCES = {
   'snd-message-throw': ['Ф1-3', 'Zeebe 8.5 не знает BPMN-атрибут messageRef у send task (наша форма)'],
   'snd-publish-message': ['Ф1-5', 'Zeebe 8.5.0 падает с внутренним NPE (jobWorkerProps is null) — эталона нет'],
   'snd-intermediate-throw': ['Ф1-3', 'Zeebe 8.5 требует zeebe:publishMessage у throw-события; наша форма без него'],
-  'rcv-message-no-key': ['Ф1-1', 'НАШ ДЕФЕКТ: бесключевая публикация будит ключевую подписку'],
+  // Ф1-1 закрыт WO-OPS-39 (бесключевая публикация больше не будит ключевую подписку —
+  // паритет с Zeebe 8.5). Кейс ушёл из списка расхождений: ожидание Zeebe навязывается.
   'ln-exlistener-send': ['Ф1-7', 'Zeebe 8.5 отвергает модель на деплое (execution listeners are not supported for the sendTask element); мы принимаем и теряем слушатель молча'],
   'ln-exlistener-receive': ['Ф1-7', 'Тот же корень, что ln-exlistener-send: Zeebe 8.5 отвергает модель на деплое (receiveTask); мы принимаем и теряем слушатель молча'],
 };

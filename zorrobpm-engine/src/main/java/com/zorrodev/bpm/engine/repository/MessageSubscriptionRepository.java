@@ -13,24 +13,25 @@ import java.util.UUID;
 
 public interface MessageSubscriptionRepository extends JpaRepository<MessageSubscriptionEntity, UUID>, JpaSpecificationExecutor<MessageSubscriptionEntity> {
 
-    List<MessageSubscriptionEntity> findByConsumedFalseAndMessageNameAndProcessInstanceId(String messageName, UUID processInstanceId);
-
-    List<MessageSubscriptionEntity> findByConsumedFalseAndMessageName(String messageName);
-
     List<MessageSubscriptionEntity> findByConsumedFalseAndMessageNameAndCorrelationKey(String messageName, String correlationKey);
 
     // WO-REL-31 CR-3: keyset-paged fan-out finders — batch ≤500, deterministic id-DESC order.
     // Cursor is the minimum id from the previous page (null = first page). Pages of non-interrupting
     // event-subprocess subscriptions are never revisited (ids from earlier pages are always > cursor),
     // so consumed=false re-firers don't create infinite loops.
+    //
+    // WO-OPS-39: выборки, ИГНОРИРУЮЩИЕ ключ корреляции, с пути корреляции убраны
+    // (бесключевая публикация будит только бесключевые подписки). Остался один
+    // key-ignoring finder — он нужен только тесту (EventSubProcessInclusiveJoinIntegrationTests)
+    // и НА ПУТИ КОРРЕЛЯЦИИ НЕ ИСПОЛЬЗУЕТСЯ.
 
-    List<MessageSubscriptionEntity> findFirst500ByConsumedFalseAndMessageNameOrderByIdDesc(String messageName);
-
-    List<MessageSubscriptionEntity> findFirst500ByConsumedFalseAndMessageNameAndIdLessThanOrderByIdDesc(String messageName, UUID id);
-
+    /**
+     * key-ignoring finder: возвращает подписки по имени сообщения и инстансу, КЛЮЧ
+     * КОРРЕЛЯЦИИ НЕ УЧИТЫВАЕТ. На пути корреляции не использовать (WO-OPS-39) — для
+     * бесключевой публикации есть
+     * {@link com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations#findKeylessMessageSubscriptions}.
+     */
     List<MessageSubscriptionEntity> findFirst500ByConsumedFalseAndMessageNameAndProcessInstanceIdOrderByIdDesc(String messageName, UUID processInstanceId);
-
-    List<MessageSubscriptionEntity> findFirst500ByConsumedFalseAndMessageNameAndProcessInstanceIdAndIdLessThanOrderByIdDesc(String messageName, UUID processInstanceId, UUID id);
 
     List<MessageSubscriptionEntity> findFirst500ByConsumedFalseAndMessageNameAndCorrelationKeyOrderByIdDesc(String messageName, String correlationKey);
 
@@ -46,6 +47,20 @@ public interface MessageSubscriptionRepository extends JpaRepository<MessageSubs
 
     static Specification<MessageSubscriptionEntity> byConsumed(boolean consumed) {
         return (root, query, cb) -> cb.equal(root.get("consumed"), consumed);
+    }
+
+    /**
+     * WO-OPS-39: подписка БЕЗ ключа корреляции — ключ не задан ({@code null}) или пуст.
+     *
+     * <p>Бесключевая публикация будит ТОЛЬКО такие подписки: подписка с заданным
+     * ключом ждёт публикацию с ТЕМ ЖЕ ключом (Zeebe 8.5: публикация без ключа не
+     * коррелирует ни с одной ключевой подпиской — живой замер WO-OPS-28 Фаза 1,
+     * §7 Ф1-1).</p>
+     */
+    static Specification<MessageSubscriptionEntity> byKeylessCorrelationKey() {
+        return (root, query, cb) -> cb.or(
+            cb.isNull(root.get("correlationKey")),
+            cb.equal(root.get("correlationKey"), ""));
     }
 
 

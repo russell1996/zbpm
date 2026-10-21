@@ -671,13 +671,8 @@ public class DBServiceImpl implements DBService {
     }
 
     @Override
-    public List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId) {
-        return messageSubscriptionDbOperations.findMessageSubscriptions(messageName, processInstanceId);
-    }
-
-    @Override
-    public List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId, UUID cursorId) {
-        return messageSubscriptionDbOperations.findMessageSubscriptions(messageName, processInstanceId, cursorId);
+    public List<MessageSubscription> findKeylessMessageSubscriptions(String messageName, UUID processInstanceId, UUID cursorId) {
+        return messageSubscriptionDbOperations.findKeylessMessageSubscriptions(messageName, processInstanceId, cursorId);
     }
 
     @Override

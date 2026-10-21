@@ -31,14 +31,20 @@ public interface MessageSubscriptionDbOperations {
 
     List<MessageStartSubscription> findMessageStartSubscriptions(String messageName);
 
-    List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId);
-
     /**
-     * WO-REL-31 CR-3: keyset-paged variant — returns up to {@code FAN_OUT_BATCH_SIZE} (500)
-     * unconsumed subscriptions in deterministic id-DESC order. Cursor = minimum id from previous
-     * page (null = first page).
+     * WO-OPS-39: бесключевая выборка подписок — ТОЛЬКО подписки БЕЗ ключа корреляции
+     * (ключ не задан или пуст).
+     *
+     * <p>Основа изоляции корреляции: бесключевая публикация не должна будить подписку,
+     * у которой ключ задан (Zeebe 8.5: публикация без ключа не коррелирует ни с одной
+     * ключевой подпиской — живой замер WO-OPS-28 Фаза 1, §7 Ф1-1). Подписки с ключом
+     * берёт {@link #findMessageSubscriptionsByKey(String, String, UUID)}.</p>
+     *
+     * <p>WO-REL-31 CR-3: keyset-paged — до {@code FAN_OUT_BATCH_SIZE} (500) строк в
+     * детерминированном порядке id-DESC. Cursor = минимальный id предыдущей страницы
+     * (null = первая страница).</p>
      */
-    List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId, UUID cursorId);
+    List<MessageSubscription> findKeylessMessageSubscriptions(String messageName, UUID processInstanceId, UUID cursorId);
 
     List<MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey);
 

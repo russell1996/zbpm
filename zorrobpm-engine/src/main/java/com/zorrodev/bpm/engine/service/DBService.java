@@ -456,14 +456,20 @@ public interface DBService {
     /** Creates an instance-scoped message subscription that triggers a message-started event sub-process. */
     UUID createEventSubprocessMessageSubscription(UUID processInstanceId, String messageName, String eventSubprocessId);
 
-    List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId);
-
     /**
-     * WO-REL-31 CR-3: keyset-paged fan-out — returns up to {@link #FAN_OUT_BATCH_SIZE} rows
-     * in deterministic id-DESC order. Cursor is the minimum id from the previous page
-     * (null = first page).
+     * WO-OPS-39: бесключевая выборка подписок — ТОЛЬКО подписки БЕЗ ключа корреляции
+     * (ключ не задан или пуст).
+     *
+     * <p>Основа изоляции корреляции: бесключевая публикация не должна будить подписку,
+     * у которой ключ задан (Zeebe 8.5: публикация без ключа не коррелирует ни с одной
+     * ключевой подпиской — живой замер WO-OPS-28 Фаза 1, §7 Ф1-1). Подписки с ключом
+     * берёт {@link #findMessageSubscriptionsByKey(String, String, UUID)}.</p>
+     *
+     * <p>WO-REL-31 CR-3: keyset-paged fan-out — до {@link #FAN_OUT_BATCH_SIZE} строк в
+     * детерминированном порядке id-DESC. Cursor = минимальный id предыдущей страницы
+     * (null = первая страница).</p>
      */
-    List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId, UUID cursorId);
+    List<com.zorrodev.bpm.engine.dto.MessageSubscription> findKeylessMessageSubscriptions(String messageName, UUID processInstanceId, UUID cursorId);
 
     /** Active subscriptions matching the message name and correlation-key value (targeted delivery). */
     List<com.zorrodev.bpm.engine.dto.MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey);

@@ -6,7 +6,10 @@ import com.zorrodev.bpm.engine.entity.MessageStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.repository.MessageStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
+import com.zorrodev.bpm.engine.service.DBService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -104,14 +107,27 @@ public class MessageSubscriptionDbOperationsImpl implements MessageSubscriptionD
     }
 
     @Override
-    public List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId, UUID cursorId) {
-        List<MessageSubscriptionEntity> entities = processInstanceId != null
-            ? (cursorId == null
-                ? messageSubscriptionRepository.findFirst500ByConsumedFalseAndMessageNameAndProcessInstanceIdOrderByIdDesc(messageName, processInstanceId)
-                : messageSubscriptionRepository.findFirst500ByConsumedFalseAndMessageNameAndProcessInstanceIdAndIdLessThanOrderByIdDesc(messageName, processInstanceId, cursorId))
-            : (cursorId == null
-                ? messageSubscriptionRepository.findFirst500ByConsumedFalseAndMessageNameOrderByIdDesc(messageName)
-                : messageSubscriptionRepository.findFirst500ByConsumedFalseAndMessageNameAndIdLessThanOrderByIdDesc(messageName, cursorId));
+    public List<MessageSubscription> findKeylessMessageSubscriptions(String messageName, UUID processInstanceId, UUID cursorId) {
+        // WO-OPS-39: выборка ТОЛЬКО бесключевых подписок (см. интерфейс). Фильтр —
+        // в SQL, а не в памяти: иначе постраничный фан-аут (WO-REL-31 CR-3) на
+        // странице из одних ключевых подписок вернул бы пустой список и цикл
+        // корреляции завершился бы, не дойдя до бесключевых подписок на следующих
+        // страницах. findBy(... limit ...) — без COUNT-запроса (P-63: окно без total).
+        Specification<MessageSubscriptionEntity> spec = MessageSubscriptionRepository.byKeylessCorrelationKey()
+            .and((root, query, cb) -> cb.isFalse(root.get("consumed")))
+            .and((root, query, cb) -> cb.equal(root.get("messageName"), messageName));
+        if (processInstanceId != null) {
+            UUID pi = processInstanceId;
+            spec = spec.and((root, query, cb) -> cb.equal(root.get("processInstanceId"), pi));
+        }
+        if (cursorId != null) {
+            UUID cursor = cursorId;
+            spec = spec.and((root, query, cb) -> cb.lessThan(root.get("id"), cursor));
+        }
+        List<MessageSubscriptionEntity> entities = messageSubscriptionRepository.findBy(spec,
+            q -> q.sortBy(Sort.by(Sort.Direction.DESC, "id"))
+                .limit(DBService.FAN_OUT_BATCH_SIZE)
+                .all());
         return toMessageSubscriptions(entities);
     }
 
@@ -124,18 +140,10 @@ public class MessageSubscriptionDbOperationsImpl implements MessageSubscriptionD
     }
 
     /**
-     * Legacy entry point — returns ALL unconsumed subscriptions (no batch limit).
+     * Legacy entry point — returns ALL unconsumed subscriptions with that key (no batch limit).
      * Used by characterization tests and non-fan-out callers. Fan-out paths use the
-     * 3-arg cursor variant ({@link #findMessageSubscriptions(String, UUID, UUID)}) instead.
+     * 3-arg cursor variant ({@link #findMessageSubscriptionsByKey(String, String, UUID)}) instead.
      */
-    @Override
-    public List<MessageSubscription> findMessageSubscriptions(String messageName, UUID processInstanceId) {
-        List<MessageSubscriptionEntity> entities = processInstanceId != null
-            ? messageSubscriptionRepository.findByConsumedFalseAndMessageNameAndProcessInstanceId(messageName, processInstanceId)
-            : messageSubscriptionRepository.findByConsumedFalseAndMessageName(messageName);
-        return toMessageSubscriptions(entities);
-    }
-
     @Override
     public List<MessageSubscription> findMessageSubscriptionsByKey(String messageName, String correlationKey) {
         return toMessageSubscriptions(

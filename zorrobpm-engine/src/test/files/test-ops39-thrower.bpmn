@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- WO-OPS-39: процесс-«БРОСАЮЩИЙ»: sendTask с messageRef — наш движок бросает
+     сообщение ВНУТРИ (публикация БЕЗ ключа корреляции, путь «throw-handler»).
+     Имя сообщения — «sharedNote»: то же, что у ожидателей (ключевого и
+     бесключевого). Бросок не должен будить ключевую подписку (Zeebe 8.5:
+     публикация без ключа не коррелирует ни с чем), но бесключевую — должен. -->
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" id="Definitions_ops39_thrower" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:message id="Msg_Ops39_Throw" name="sharedNote" />
+  <bpmn:process id="test-ops39-thrower" name="test-ops39-thrower" isExecutable="true">
+    <bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:sequenceFlow id="f1" sourceRef="start" targetRef="snd" />
+    <bpmn:sendTask id="snd" name="snd" messageRef="Msg_Ops39_Throw">
+      <bpmn:incoming>f1</bpmn:incoming>
+      <bpmn:outgoing>f2</bpmn:outgoing>
+    </bpmn:sendTask>
+    <bpmn:sequenceFlow id="f2" sourceRef="snd" targetRef="end" />
+    <bpmn:endEvent id="end"><bpmn:incoming>f2</bpmn:incoming></bpmn:endEvent>
+  </bpmn:process>
+</bpmn:definitions>

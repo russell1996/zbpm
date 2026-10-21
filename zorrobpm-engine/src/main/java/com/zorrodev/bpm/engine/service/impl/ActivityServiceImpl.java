@@ -305,6 +305,15 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
      * WO-DIFF-5: counted core of {@link #correlateMessage(String, String, UUID, List)}.
      * Returns {@code [correlated, started]}. Pre-existing body verbatim (incl. WO-REL-31 CR-3
      * keyset-paged fan-out); only the two counters are new.
+     *
+     * <p><b>WO-OPS-39 — изоляция корреляции.</b> Публикация БЕЗ ключа корреляции
+     * будит ТОЛЬКО бесключевые подписки: подписка с заданным ключом ждёт публикацию
+     * с ТЕМ ЖЕ ключом. До правки выборка шла по ИМЕНИ сообщения и ключ подписки
+     * игнорировался — бесключевая публикация продвигала чужие инстансы. Эталон —
+     * живой Zeebe 8.5.0 (замер WO-OPS-28 Фаза 1, §7 Ф1-1): публикация без ключа не
+     * коррелирует ни с одной ключевой подпиской ({@code publish {key: null,
+     * correlated: 0}}, исход {@code stuck}). Публикация С ключом работает как раньше
+     * (точное совпадение ключа), message start — тоже (по имени).</p>
      */
     private int[] correlateCounted(String messageName, String correlationKey, UUID processInstanceId, List<ProcessVariable> variables) {
         int correlated = 0;
@@ -330,7 +339,7 @@ public class ActivityServiceImpl implements ActivityService, TokenExecutor {
         while (true) {
             List<MessageSubscription> page = correlationKey != null
                 ? dbService.findMessageSubscriptionsByKey(messageName, correlationKey, cursor)
-                : dbService.findMessageSubscriptions(messageName, processInstanceId, cursor);
+                : dbService.findKeylessMessageSubscriptions(messageName, processInstanceId, cursor);
             if (page.isEmpty()) {
                 break;
             }
