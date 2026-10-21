@@ -246,6 +246,53 @@ public class CompletedInstanceSubscriptionCleanupIntegrationTests {
     }
 
     /**
+     * Взаимодействие ДВУХ правил, которые теперь разведены по моментам:
+     * C37-3 (WO-C8-37) — подписка закрытого ХОСТА закрывается при завершении
+     * хоста ({@code consumed=true}, история сохраняется, строка остаётся), и
+     * WO-OPS-34 — терминальный переход ИНСТАНСА удаляет все его подписки.
+     *
+     * <p>Сценарий — тот же, что у переработанного теста WO-C8-37
+     * {@code ContainerSubscriptionCloseIntegrationTests#boundarySubscriptionOfCompletedHost_closedWithoutAnyCorrelate}:
+     * хост с message-границей завершается напрямую (корреляции не было), инстанс
+     * после этого ещё жив. Здесь закрываются оба правила: сначала видно, что
+     * подписка хоста помечена consumed (C37-3), потом инстанс завершается — и
+     * подписки нет вовсе (WO-OPS-34). Этим же тестом закрывается покрытие
+     * «завершение задачи завершает инстанс», ушедшее из чужого теста при
+     * переработке его фикстуры (см. отчёт §4.3).
+     */
+    @Test
+    void completedInstance_dropsAlsoTheHostSubscriptionClosedByC37() throws Exception {
+        UUID pi = startFixture("test-c837-timeout-then-message.bpmn");
+
+        ActivityEntity work = activities(pi).stream()
+            .filter(a -> a.getBpmnElementId().equals("work"))
+            .filter(a -> a.getStatus() == ActivityStatus.CREATED)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no CREATED work in " + pi));
+        runtimeService.completeUserTask(work.getId(), List.of());
+
+        assertThat(messageSubscriptionRows(pi))
+            .as("C37-3: подписка закрытого хоста помечена consumed=true (история), а не удалена")
+            .hasSize(1)
+            .allMatch(r -> r.contains("consumed=TRUE"));
+        assertThat(queryService.getProcessInstance(pi).getCompletedAt())
+            .as("инстанс ещё жив (вторая задача ждёт)")
+            .isNull();
+
+        ActivityEntity work2 = activities(pi).stream()
+            .filter(a -> a.getBpmnElementId().equals("work2"))
+            .filter(a -> a.getStatus() == ActivityStatus.CREATED)
+            .findFirst()
+            .orElseThrow(() -> new AssertionError("no CREATED work2 in " + pi));
+        runtimeService.completeUserTask(work2.getId(), List.of());
+        assertCompletedNormally(pi);
+
+        assertThat(messageSubscriptionRows(pi))
+            .as("терминальный переход инстанса удаляет и уже закрытую C37-3 подписку")
+            .isEmpty();
+    }
+
+    /**
      * WO-OPS-34, пункт 2 «что сделать»: ПРОВЕРКА остальных instance-scoped
      * «подписок» — таймер-джобов инстанса.
      *

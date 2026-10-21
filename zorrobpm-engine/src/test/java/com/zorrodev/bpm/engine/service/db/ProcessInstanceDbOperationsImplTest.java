@@ -226,7 +226,8 @@ class ProcessInstanceDbOperationsImplTest {
     }
 
     @Test
-    void cancelProcessInstance_setsCancelledAndCompletedAndEmits() {        UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
+    void cancelProcessInstance_setsCancelledAndCompletedAndEmits() {
+        UUID id = UUID.randomUUID(); UUID pdId = UUID.randomUUID();
         ProcessInstanceEntity e = new ProcessInstanceEntity(); e.setId(id); e.setProcessDefinitionId(pdId);
         when(processInstanceRepository.findById(id)).thenReturn(Optional.of(e));
         db.cancelProcessInstance(id);
