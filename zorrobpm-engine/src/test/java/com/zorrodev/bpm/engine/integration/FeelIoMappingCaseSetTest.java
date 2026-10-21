@@ -24,8 +24,10 @@ class FeelIoMappingCaseSetTest {
 
     /** 72 кейса Ф1 + 12 кейсов условий гейтвея (WO-C8-54) + 5 кейсов корня 3 (WO-C8-55)
      *  + 3 кейса MI-полей корня 3 (WO-C8-55) + 2 кейса «правильная форма правки outputElement»
-     *  (WO-C8-55, ответ maintainer: что консьюмеру писать вместо статичного значения). */
-    private static final int EXPECTED_CASES = 94;
+     *  (WO-C8-55, ответ maintainer: что консьюмеру писать вместо статичного значения)
+     *  + 6 кейсов класса «вложенный target» (WO-C8-58: глубина, замена родителя,
+     *  объединение двух маппингов в одного родителя — на входах и на выходах). */
+    private static final int EXPECTED_CASES = 100;
     private static final Set<String> WRAPPERS = Set.of("subprocess", "mi", "gateway");
     private static final List<String> OPERATION_FIELDS = List.of(
         "input", "output", "completionVars", "containerInput", "containerOutput", "outputElement"
@@ -106,6 +108,13 @@ class FeelIoMappingCaseSetTest {
                 // WO-C8-55: the two forms the CONSUMER must write instead of the refused
                 // spelling — a bare reference (the value is shadowed by the pre-created null)
                 // and a context (the value stays visible). Both measured on live 8.5.
-                "mi-outputelement-bare-parent-var", "mi-outputelement-ctx-parent-var");
+                "mi-outputelement-bare-parent-var", "mi-outputelement-ctx-parent-var",
+                // WO-C8-58: the whole class of the nested target, measured on live 8.5
+                // (docs/analysis/c8-oracle/feel-iomapping-static-nested.js, probes
+                // tgt-nested*): nesting, depth, the parent REPLACED, two mappings into
+                // one parent merged — on the input side and on the output side.
+                "target-nested", "target-nested-deep", "target-nested-parent-string",
+                "target-nested-parent-ctx", "target-nested-sibling",
+                "target-nested-output", "target-nested-output-sibling");
     }
 }

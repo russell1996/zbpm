@@ -82,15 +82,35 @@ const IO_PROBES = [
     why: 'an OUTPUT source without \'=\' into a dotted target — the two rules together' },
   { id: 'src-noeq-spaces', source: '  hello  ', target: 'r', vars: {},
     why: 'a static value with surrounding SPACES — trimmed or verbatim?' },
+
+  /* --- the OUTPUT side of the nested-target rule (WO-C8-58) --------------------
+   * The probes above measure INPUT mappings. The rule «a target with dots creates
+   * a nested context» was measured on live 8.5 for inputs only; the output side
+   * (zeebe:output target="a.b" → the parent scope) is measured here, because our
+   * engine writes outputs into a DIFFERENT scope (the parent) and G-Q forbids
+   * answering «by analogy».
+   */
+  { id: 'tgt-nested-output', source: '=1', target: 'a.b', vars: {}, outputOnly: true,
+    why: 'an OUTPUT target with a dot — nested context in the parent scope?' },
+  { id: 'tgt-nested-output-sibling', source: '=1', target: 'a.b', vars: {}, outputOnly: true,
+    second: { source: '=2', target: 'a.c' },
+    why: 'two OUTPUT mappings into the SAME parent — do both survive?' },
 ];
 
 function ioBpmn(pid, probe) {
-  const inputs = [{ source: probe.source, target: probe.target }]
-    .concat(probe.second ? [probe.second] : [])
+  const inputs = probe.outputOnly ? [] : [{ source: probe.source, target: probe.target }]
+    .concat(probe.second ? [probe.second] : []);
+  const outputMappings = probe.outputOnly
+    ? [{ source: probe.source, target: probe.target }].concat(probe.second ? [probe.second] : [])
+    : [];
+  const inputXml = inputs
     .map((m) => `<zeebe:input source="${esc(m.source)}" target="${esc(m.target)}"/>`)
     .join('');
-  const outputs = probe.output
-    ? `<zeebe:output source="${esc(probe.source)}" target="${esc(probe.target)}"/>`
+  const outputXml = outputMappings
+    .map((m) => `<zeebe:output source="${esc(m.source)}" target="${esc(m.target)}"/>`)
+    .join('');
+  const io = inputXml || outputXml
+    ? `<zeebe:ioMapping>${inputXml}${outputXml}</zeebe:ioMapping>`
     : '';
   const defs = '<?xml version="1.0" encoding="UTF-8"?>'
     + '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" '
@@ -100,7 +120,7 @@ function ioBpmn(pid, probe) {
   const body = '<bpmn:startEvent id="start"><bpmn:outgoing>f1</bpmn:outgoing></bpmn:startEvent>'
     + '<bpmn:serviceTask id="work" name="work">'
     + `<bpmn:extensionElements><zeebe:taskDefinition type="probeWork"/>`
-    + `<zeebe:ioMapping>${inputs}${outputs}</zeebe:ioMapping>`
+    + io
     + '</bpmn:extensionElements>'
     + '<bpmn:incoming>f1</bpmn:incoming><bpmn:outgoing>f2</bpmn:outgoing></bpmn:serviceTask>'
     + '<bpmn:serviceTask id="dump" name="dump">'

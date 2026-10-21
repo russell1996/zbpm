@@ -33,6 +33,7 @@ import java.util.Set;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -748,6 +749,15 @@ public class ElementSupport {
     // ─── IO mapping ────────────────────────────────────────────────────
 
     /**
+     * JSON-маппер движка — для {@link IoMappingTargetWriter} (вложенный target).
+     * Отдаётся, а не дублируется: вторая копия маппера разъехалась бы по
+     * настройкам (P-24 — одна точка на механизм).
+     */
+    public tools.jackson.databind.ObjectMapper objectMapper() {
+        return objectMapper;
+    }
+
+    /**
      * WO-C8-40: chain-bound seed входных маппингов контейнера подпроцесса для
      * MI-инстанса. Контекст оценки — цепочка внешних скоупов + собственный
      * (nearest-wins, как {@link #visibleVariables}), поэтому seed видит
@@ -765,15 +775,22 @@ public class ElementSupport {
             return;
         }
         List<ProcessVariable> variables = visibleVariables(processInstanceId, activityId);
-        List<ProcessVariable> results = new ArrayList<>();
+        IoMappingTargetWriter writer = new IoMappingTargetWriter(objectMapper);
+        Map<String, ProcessVariable> results = new LinkedHashMap<>();
         for (IoMappingExtensionModel.Mapping mapping : io.getInputs()) {
             ProcessVariable result = evaluateMapping(mapping, variables);
             if (result != null) {
-                results.add(result);
+                // WO-C8-58: target с точкой → вложенный контекст (Zeebe 8.5).
+                // Ключ — ИМЯ ЗАПИСИ (родителя), а не имя target'а: иначе в одном
+                // вызове setVariables окажутся две строки с одинаковым именем
+                // (инвариант «имена внутри одного вызова уникальны» —
+                // VariableDbOperationsImpl).
+                ProcessVariable stored = writer.persist(result);
+                results.put(stored.getName(), stored);
             }
         }
         if (!results.isEmpty()) {
-            dbService.setVariables(processInstanceId, activityId, results);
+            dbService.setVariables(processInstanceId, activityId, new ArrayList<>(results.values()));
             log.info("{}: Applied {} chained input mapping(s) at {} (scope {})",
                 processInstanceId, results.size(), element.getId(), activityId);
         }
@@ -909,35 +926,41 @@ public class ElementSupport {
             variables = new ArrayList<>(merged.values());
         }
         List<ProcessVariable> results = new ArrayList<>();
+        IoMappingTargetWriter writer = new IoMappingTargetWriter(objectMapper);
+        Map<String, ProcessVariable> persisted = new LinkedHashMap<>();
         for (IoMappingExtensionModel.Mapping mapping : io.getOutputs()) {
             ProcessVariable result = evaluateMapping(mapping, variables);
             if (result != null) {
-                results.add(result);
+                // WO-C8-58: target с точкой → вложенный контекст; в БАТЧЕ накопление
+                // родителей (два маппинга в одного родителя → оба выживают, Zeebe 8.5).
+                ProcessVariable stored = writer.persist(result);
+                persisted.put(stored.getName(), stored);
+                results.add(stored);
                 // Ordered: target немедленно виден последующим маппингам
                 // (замена существующего имени — не дубль).
                 List<ProcessVariable> next = new ArrayList<>(variables);
                 boolean replaced = false;
                 for (int i = 0; i < next.size(); i++) {
-                    if (result.getName().equals(next.get(i).getName())) {
-                        next.set(i, result);
+                    if (stored.getName().equals(next.get(i).getName())) {
+                        next.set(i, stored);
                         replaced = true;
                         break;
                     }
                 }
                 if (!replaced) {
-                    next.add(result);
+                    next.add(stored);
                 }
                 variables = next;
             }
         }
         if (!results.isEmpty()) {
             if (writeScope == null) {
-                dbService.setVariables(processInstanceId, results);
+                dbService.setVariables(processInstanceId, new ArrayList<>(persisted.values()));
             } else {
-                dbService.setVariables(processInstanceId, writeScope, results);
+                dbService.setVariables(processInstanceId, writeScope, new ArrayList<>(persisted.values()));
             }
             log.info("{}: Applied {} ordered output mapping(s) at {} (write scope {})",
-                processInstanceId, results.size(), element.getId(),
+                processInstanceId, persisted.size(), element.getId(),
                 writeScope == null ? "root" : writeScope);
         }
     }
@@ -1252,16 +1275,24 @@ public class ElementSupport {
         // WO-DIFF-1 п.2: mappings see the element's own scope PLUS every enclosing
         // sub-process scope down to root (nearest-wins) — not just root+own.
         List<ProcessVariable> variables = visibleVariables(processInstanceId, activityId);
-        List<ProcessVariable> results = new ArrayList<>();
+        IoMappingTargetWriter writer = new IoMappingTargetWriter(objectMapper);
+        Map<String, ProcessVariable> results = new LinkedHashMap<>();
         for (IoMappingExtensionModel.Mapping mapping : mappings) {
             ProcessVariable result = evaluateMapping(mapping, variables);
             if (result != null) {
-                results.add(result);
+                // WO-C8-58: target с точкой → вложенный контекст (Zeebe 8.5).
+                // Ключ — ИМЯ ЗАПИСИ (родителя), а не имя target'а: иначе в одном
+                // вызове setVariables окажутся две строки с одинаковым именем
+                // (инвариант «имена внутри одного вызова уникальны» —
+                // VariableDbOperationsImpl).
+                ProcessVariable stored = writer.persist(result);
+                results.put(stored.getName(), stored);
             }
         }
         if (!results.isEmpty()) {
-            dbService.setVariables(processInstanceId, activityId, results);
-            log.info("{}: Applied {} input mapping(s) at {} (scope {})", processInstanceId, results.size(), element.getId(), activityId);
+            dbService.setVariables(processInstanceId, activityId, new ArrayList<>(results.values()));
+            log.info("{}: Applied {} input mapping(s) at {} (scope {})",
+                processInstanceId, results.size(), element.getId(), activityId);
         }
     }
 

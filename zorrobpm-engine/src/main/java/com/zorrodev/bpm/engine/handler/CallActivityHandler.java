@@ -15,7 +15,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -162,14 +164,18 @@ public class CallActivityHandler implements ElementHandler, TypedElementHandler 
             return List.of();
         }
         List<ProcessVariable> parentVariables = elementSupport.visibleVariables(processInstanceId, activityId);
-        List<ProcessVariable> seed = new ArrayList<>();
+        // WO-C8-58: target с точкой → вложенный контекст (Zeebe 8.5); два маппинга в
+        // одного родителя внутри одного call activity объединяются.
+        IoMappingTargetWriter writer = new IoMappingTargetWriter(elementSupport.objectMapper());
+        Map<String, ProcessVariable> seed = new LinkedHashMap<>();
         for (IoMappingExtensionModel.Mapping mapping : inputs) {
             ProcessVariable result = elementSupport.evaluateMapping(mapping, parentVariables);
             if (result != null) {
-                seed.add(result);
+                ProcessVariable stored = writer.persist(result);
+                seed.put(stored.getName(), stored);
             }
         }
         log.info("{}: propagateAllParentVariables=false — seeding child from {} Input mapping(s)", processInstanceId, seed.size());
-        return seed;
+        return new ArrayList<>(seed.values());
     }
 }

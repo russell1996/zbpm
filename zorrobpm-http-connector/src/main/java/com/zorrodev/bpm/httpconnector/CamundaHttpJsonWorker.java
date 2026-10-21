@@ -113,6 +113,35 @@ public class CamundaHttpJsonWorker implements JobHandler {
         "connectiontimeoutinseconds", "readtimeoutinseconds", "followredirects");
 
     /**
+     * WO-C8-58: вложенные контексты, которые переводятся/отвергаются и потому НЕ
+     * копируются в переведённое тело как есть. После перехода движка на вложенные
+     * target'ы точечный {@code authentication.type} приходит контекстом
+     * {@code authentication: {type: …}} — его нельзя тащить в тело задания: это
+     * пространство Camunda-диалекта, которое переводчик сам разбирает.
+     */
+    private static final java.util.Set<String> NESTED_CONSUMED_CONTEXTS = java.util.Set.of(
+        "authentication", "clienttls");
+
+    /**
+     * WO-C8-58: пространство {@code http.*} в Camunda-диалекте принадлежит ПЕРЕВОДУ
+     * (в него пишется {@code url → http.url} и т.д.). Вложенный контекст {@code http}
+     * из процесса (например, completion предыдущего коннектора) в переведённое тело
+     * НЕ копируется — иначе чужой контекст (заголовки/тело ЧУЖОГО ответа) уехал бы в
+     * запрос этого элемента. Вместо копирования он разворачивается в плоские
+     * {@code http.*}-ключи (данные не теряются, пространство остаётся плоским).
+     */
+    private static final String HTTP_CONTEXT = "http";
+
+    /** Вложенный контекст авторизации Camunda ({@code authentication: {type: …}}). */
+    private static final String AUTH_CONTEXT = "authentication";
+
+    /** Вложенный контекст client TLS ({@code clientTls: {…}}) — не поддерживается. */
+    private static final String CLIENT_TLS_CONTEXT = "clienttls";
+
+    /** Единственный ключ, который принимается во вложенном контексте авторизации. */
+    private static final String AUTH_CONTEXT_ALLOWED_KEY = "type";
+
+    /**
      * Тип авторизации Camunda → наш {@code http.authType}. Ключи в нижнем регистре:
      * значение приходит строкой, регистр из шаблона менялся между версиями
      * ({@code noAuth} в v2). {@code apiKey} → {@code apikey}: наш {@code resolveAuth}
@@ -183,11 +212,17 @@ public class CamundaHttpJsonWorker implements JobHandler {
         Map<String, ProcessVariable> byLowerName = new LinkedHashMap<>();
         source.forEach((name, pv) -> byLowerName.put(name.toLowerCase(Locale.ROOT), pv));
 
-        rejectUnsupportedAuthInputs(byLowerName);
+        // WO-C8-58: чтение входов в ОБЕИХ формах — плоский ключ и вложенный путь
+        // (движок после перехода пишет target с точкой как вложенный контекст).
+        // Приоритет — вложенная форма; плоский ключ — fallback (сохранённое состояние
+        // живых инстансов connCamunda v1 — плоские authentication.type).
+        ConnectorInputLookup lookup = new ConnectorInputLookup(byLowerName);
+
+        rejectUnsupportedAuthInputs(lookup);
         Map<String, String> taskHeaders =
             model.getTaskHeaders() == null ? Map.of() : model.getTaskHeaders();
         rejectUnsupportedHeaders(taskHeaders, model.getServiceTaskId());
-        rejectFollowRedirects(byLowerName);
+        rejectFollowRedirects(lookup);
 
         // Всё, что переводится или отвергается, из тела уходит: Camunda-имена нам не нужны,
         // а лишние копии входов — это лишний шанс пробросить что-то вниз по конвейеру.
@@ -195,19 +230,26 @@ public class CamundaHttpJsonWorker implements JobHandler {
         // `http.authRef`, которого в шаблоне Camunda нет).
         Map<String, ProcessVariable> translated = new LinkedHashMap<>();
         source.forEach((name, pv) -> {
-            if (!CONSUMED_INPUTS.contains(name.toLowerCase(Locale.ROOT))) {
-                translated.put(name, pv);
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (CONSUMED_INPUTS.contains(lower) || NESTED_CONSUMED_CONTEXTS.contains(lower)) {
+                return;
             }
+            if (HTTP_CONTEXT.equals(lower)) {
+                // Вложенный контекст http — не копия: см. flattenHttpContext ниже.
+                return;
+            }
+            translated.put(name, pv);
         });
+        flattenHttpContext(lookup, translated);
 
-        translateAuthType(byLowerName, translated);
-        copy(byLowerName, translated, "url", "http.url");
-        copy(byLowerName, translated, "method", "http.method");
-        copy(byLowerName, translated, "headers", "http.headers");
-        copy(byLowerName, translated, "queryparameters", "http.queryParameters");
-        copy(byLowerName, translated, "body", "http.body");
-        copy(byLowerName, translated, "connectiontimeoutinseconds", "http.connectionTimeout");
-        copy(byLowerName, translated, "readtimeoutinseconds", "http.readTimeout");
+        translateAuthType(lookup, translated);
+        copy(lookup, translated, "url", "http.url");
+        copy(lookup, translated, "method", "http.method");
+        copy(lookup, translated, "headers", "http.headers");
+        copy(lookup, translated, "queryparameters", "http.queryParameters");
+        copy(lookup, translated, "body", "http.body");
+        copy(lookup, translated, "connectiontimeoutinseconds", "http.connectionTimeout");
+        copy(lookup, translated, "readtimeoutinseconds", "http.readTimeout");
 
         JobDetailModel translatedModel = new JobDetailModel();
         translatedModel.setServiceTaskId(model.getServiceTaskId());
@@ -235,27 +277,56 @@ public class CamundaHttpJsonWorker implements JobHandler {
      * {@code refreshToken}, {@code scopes}, …) меняется, а перечисление однажды устареет
      * и тихо пропустит новый секрет мимо reject'а.
      */
-    private static void rejectUnsupportedAuthInputs(Map<String, ProcessVariable> byLowerName) {
+    private static void rejectUnsupportedAuthInputs(ConnectorInputLookup lookup) {
         // Обход в ОТСОРТИРОВАННОМ порядке: входы приходят из карты переменных, а порядок
         // обхода HashMap не задан. Без сортировки сообщение об ошибке называло бы произвольный
         // из отвергнутых входов — а это единственное, что читает автор процесса.
-        for (String name : byLowerName.keySet().stream().sorted().toList()) {
+        for (String name : lookup.names().stream().sorted().toList()) {
             if (AUTH_TYPE_INPUT.equals(name)) {
                 continue;
             }
             if (REJECTED_INPUT_PREFIXES.stream().anyMatch(name::startsWith)) {
-                ProcessVariable rejected = byLowerName.get(name);
+                ProcessVariable rejected = lookup.flat(name);
                 String original = rejected != null && rejected.getName() != null ? rejected.getName() : name;
-                String hint = name.startsWith("clienttls.")
-                    ? "client TLS (mutual TLS) is not implemented by the connector — separate work order"
-                    : "inline secrets must not live in the process model — add an input with "
-                        + "target='http.authRef' holding the secret NAME and keep the secret "
-                        + "server-side (zorrobpm.http-connector.secrets / secrets-json)";
                 throw new HttpConnectorWorker.HttpConnectorConfigException(
                     HttpConnectorWorker.ERR_CONFIG,
-                    "Camunda input '" + original + "' is not supported: " + hint);
+                    "Camunda input '" + original + "' is not supported: " + authHint(name));
             }
         }
+        // WO-C8-58: те же правила — для ВЛОЖЕННОЙ формы. После перехода движка на
+        // вложенные target'ы точечный authentication.type приходит контекстом
+        // authentication: {type: …}, а инлайн-секрет — authentication: {token: …}.
+        // Без этой проверки правило «инлайн-секрет в модели не живёт» обходилось бы
+        // простой сменой формы записи.
+        com.fasterxml.jackson.databind.JsonNode clientTls = lookup.context(CLIENT_TLS_CONTEXT);
+        if (clientTls != null) {
+            throw new HttpConnectorWorker.HttpConnectorConfigException(
+                HttpConnectorWorker.ERR_CONFIG,
+                "Camunda input 'clientTls' is not supported: client TLS (mutual TLS) is not "
+                    + "implemented by the connector — separate work order");
+        }
+        com.fasterxml.jackson.databind.JsonNode auth = lookup.context(AUTH_CONTEXT);
+        if (auth != null) {
+            List<String> keys = new java.util.ArrayList<>();
+            auth.fieldNames().forEachRemaining(keys::add);
+            for (String key : keys.stream().sorted().toList()) {
+                if (!AUTH_CONTEXT_ALLOWED_KEY.equals(key)) {
+                    throw new HttpConnectorWorker.HttpConnectorConfigException(
+                        HttpConnectorWorker.ERR_CONFIG,
+                        "Camunda input 'authentication." + key + "' is not supported: "
+                            + authHint("authentication." + key));
+                }
+            }
+        }
+    }
+
+    /** Подсказка в отказе — по названию входа (секрет или client TLS). */
+    private static String authHint(String name) {
+        return name.startsWith("clienttls.") || name.startsWith("clientTls.")
+            ? "client TLS (mutual TLS) is not implemented by the connector — separate work order"
+            : "inline secrets must not live in the process model — add an input with "
+                + "target='http.authRef' holding the secret NAME and keep the secret "
+                + "server-side (zorrobpm.http-connector.secrets / secrets-json)";
     }
 
     /**
@@ -307,12 +378,12 @@ public class CamundaHttpJsonWorker implements JobHandler {
      * заново проходит SSRF-гейт. Дефолт шаблона {@code false} совпадает с нашим
      * {@code max-redirects=0} и проходит молча.
      */
-    private static void rejectFollowRedirects(Map<String, ProcessVariable> byLowerName) {
-        ProcessVariable pv = byLowerName.get("followredirects");
-        if (pv == null || pv.getValue() == null || pv.getValue().isBlank()) {
+    private static void rejectFollowRedirects(ConnectorInputLookup lookup) {
+        String raw = lookup.text("followredirects");
+        if (raw == null || raw.isBlank()) {
             return;
         }
-        String value = pv.getValue().strip();
+        String value = raw.strip();
         if ("false".equalsIgnoreCase(value)) {
             return;
         }
@@ -331,17 +402,20 @@ public class CamundaHttpJsonWorker implements JobHandler {
     }
 
     /** {@code authentication.type} → {@code http.authType}; неизвестный тип (OAuth) — reject. */
-    private static void translateAuthType(Map<String, ProcessVariable> byLowerName,
+    private static void translateAuthType(ConnectorInputLookup lookup,
             Map<String, ProcessVariable> translated) {
-        ProcessVariable pv = byLowerName.get(AUTH_TYPE_INPUT);
-        if (pv == null || pv.getValue() == null || pv.getValue().isBlank()) {
+        // WO-C8-58: обе формы — плоский ключ authentication.type (сохранённое состояние
+        // живых инстансов connCamunda v1) и вложенный контекст authentication: {type: …}
+        // (то, что пишет движок после перехода на вложенные target'ы).
+        String raw = lookup.text(AUTH_TYPE_INPUT);
+        if (raw == null || raw.isBlank()) {
             return;
         }
-        String type = AUTH_TYPES.get(pv.getValue().strip().toLowerCase(Locale.ROOT));
+        String type = AUTH_TYPES.get(raw.strip().toLowerCase(Locale.ROOT));
         if (type == null) {
             throw new HttpConnectorWorker.HttpConnectorConfigException(
                 HttpConnectorWorker.ERR_CONFIG,
-                "Camunda authentication.type '" + HttpConnectorWorker.sanitizeDiag(pv.getValue()) + "' is not supported "
+                "Camunda authentication.type '" + HttpConnectorWorker.sanitizeDiag(raw) + "' is not supported "
                     + "(separate work order): this connector supports no authentication, api keys, "
                     + "and username/password or token schemes; the secret itself is referenced by "
                     + "the input 'http.authRef'");
@@ -357,9 +431,9 @@ public class CamundaHttpJsonWorker implements JobHandler {
      * только на ключ карты (логи, диагностика, будущий потребитель), и расхождение «ключ
      * {@code http.url}, имя {@code url}» там выглядит как баг, который потом чинят полчаса.
      */
-    private static void copy(Map<String, ProcessVariable> byLowerName,
+    private static void copy(ConnectorInputLookup lookup,
             Map<String, ProcessVariable> translated, String from, String to) {
-        ProcessVariable pv = byLowerName.get(from);
+        ProcessVariable pv = lookup.flat(from);
         if (pv != null) {
             ProcessVariable renamed = new ProcessVariable();
             renamed.setName(to);
@@ -367,6 +441,31 @@ public class CamundaHttpJsonWorker implements JobHandler {
             renamed.setType(pv.getType());
             translated.put(to, renamed);
         }
+    }
+
+    /**
+     * WO-C8-58: вложенный контекст {@code http} разворачивается в плоские
+     * {@code http.*}-ключи. Пространство {@code http.*} в Camunda-диалекте принадлежит
+     * ПЕРЕВОДУ, поэтому сам контекст в переведённое тело не копируется: иначе чужой
+     * контекст процесса (completion предыдущего коннектора — его заголовки/тело ответа)
+     * уехал бы в запрос этого элемента. Разворачивание сохраняет данные и оставляет
+     * воркеру плоское пространство, как было до перехода.
+     */
+    private static void flattenHttpContext(ConnectorInputLookup lookup,
+            Map<String, ProcessVariable> translated) {
+        com.fasterxml.jackson.databind.JsonNode http = lookup.context(HTTP_CONTEXT);
+        if (http == null) {
+            return;
+        }
+        http.fields().forEachRemaining(entry -> {
+            String key = HTTP_CONTEXT + "." + entry.getKey();
+            ProcessVariable pv = new ProcessVariable();
+            pv.setName(key);
+            boolean container = entry.getValue().isContainerNode();
+            pv.setValue(container ? entry.getValue().toString() : entry.getValue().asText());
+            pv.setType(container ? "JSON" : "STRING");
+            translated.put(key, pv);
+        });
     }
 
     private static ProcessVariable textVar(String name, String value) {

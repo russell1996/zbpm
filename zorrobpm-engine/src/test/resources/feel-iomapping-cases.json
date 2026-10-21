@@ -867,7 +867,162 @@
           "source": "=1",
           "target": "a.b"
         }
-      ]
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "a": {
+            "b": 1
+          }
+        },
+        "dumpEquals": {}
+      }
+    },
+    {
+      "id": "target-nested-deep",
+      "title": "target with two dots — the nesting follows every segment",
+      "docs": "8.9 variables: a target with dots creates a nested context in the element scope",
+      "input": [
+        {
+          "source": "=1",
+          "target": "a.b.c"
+        }
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "a": {
+            "b": {
+              "c": 1
+            }
+          }
+        },
+        "dumpEquals": {}
+      }
+    },
+    {
+      "id": "target-nested-parent-string",
+      "title": "the parent key already exists as a STRING — the parent is REPLACED, not merged",
+      "docs": "8.9 variables: a target with dots creates a nested context in the element scope; the element scope shadows the parent value",
+      "vars": {
+        "a": "S"
+      },
+      "input": [
+        {
+          "source": "=1",
+          "target": "a.b"
+        }
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "a": {
+            "b": 1
+          }
+        },
+        "dumpEquals": {
+          "a": "S"
+        }
+      }
+    },
+    {
+      "id": "target-nested-parent-ctx",
+      "title": "the parent key already exists as a CONTEXT — the parent is REPLACED, not merged",
+      "docs": "8.9 variables: a target with dots creates a nested context in the element scope; the element scope shadows the parent value",
+      "vars": {
+        "a": {
+          "x": 1
+        }
+      },
+      "input": [
+        {
+          "source": "=1",
+          "target": "a.b"
+        }
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "a": {
+            "b": 1
+          }
+        },
+        "dumpEquals": {
+          "a": {
+            "x": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "target-nested-sibling",
+      "title": "two mappings into the SAME parent — both survive",
+      "docs": "8.9 variables: mappings into the same parent accumulate into one nested context",
+      "input": [
+        {
+          "source": "=1",
+          "target": "a.b"
+        },
+        {
+          "source": "=2",
+          "target": "a.c"
+        }
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {
+          "a": {
+            "b": 1,
+            "c": 2
+          }
+        },
+        "dumpEquals": {}
+      }
+    },
+    {
+      "id": "target-nested-output",
+      "title": "an OUTPUT target with a dot — nested context in the parent scope",
+      "docs": "8.9 variables: a target with dots creates a nested context; output mappings write into the parent scope",
+      "output": [
+        {
+          "source": "=1",
+          "target": "a.b"
+        }
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {},
+        "dumpEquals": {
+          "a": {
+            "b": 1
+          }
+        }
+      }
+    },
+    {
+      "id": "target-nested-output-sibling",
+      "title": "two OUTPUT mappings into the SAME parent — both survive",
+      "docs": "8.9 variables: mappings into the same parent accumulate into one nested context",
+      "output": [
+        {
+          "source": "=1",
+          "target": "a.b"
+        },
+        {
+          "source": "=2",
+          "target": "a.c"
+        }
+      ],
+      "expect": {
+        "outcome": "completed",
+        "workEquals": {},
+        "dumpEquals": {
+          "a": {
+            "b": 1,
+            "c": 2
+          }
+        }
+      }
     },
     {
       "id": "input-rewrite",

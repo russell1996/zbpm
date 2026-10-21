@@ -16,6 +16,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -820,14 +822,17 @@ public class FlowNavigator {
                 .orElse(null);
             if (outputMappings != null && !outputMappings.isEmpty()) {
                 List<ProcessVariable> childVariables = dbService.getVariables(processInstanceId);
-                List<ProcessVariable> picked = new ArrayList<>();
+                // WO-C8-58: target с точкой → вложенный контекст (Zeebe 8.5).
+                IoMappingTargetWriter writer = new IoMappingTargetWriter(elementSupport.objectMapper());
+                Map<String, ProcessVariable> picked = new LinkedHashMap<>();
                 for (IoMappingExtensionModel.Mapping mapping : outputMappings) {
                     ProcessVariable result = elementSupport.evaluateMapping(mapping, childVariables);
                     if (result != null) {
-                        picked.add(result);
+                        ProcessVariable stored = writer.persist(result);
+                        picked.put(stored.getName(), stored);
                     }
                 }
-                dbService.setVariables(parentProcessInstanceId, picked);
+                dbService.setVariables(parentProcessInstanceId, new ArrayList<>(picked.values()));
                 log.info("{}/{}: Applied {} Output mapping(s) from call activity {} to parent", parentProcessInstanceId, parentToken, picked.size(), parentBpmnElement.getId());
             } else if (propagate) {
                 dbService.setVariables(parentProcessInstanceId, dbService.getVariables(processInstanceId));
