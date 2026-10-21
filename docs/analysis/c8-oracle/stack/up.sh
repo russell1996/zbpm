@@ -18,6 +18,7 @@ export COMPOSE_PROJECT_NAME=zbpm-cmp
 
 ZEEBE="zbpm-cmp-zeebe"
 CONN="zbpm-cmp-connectors"
+MOCK="zbpm-cmp-mock"
 HEALTH_URL="http://localhost:39600/actuator/health"
 
 running() { [ -n "$(docker ps -q --filter "name=^$1$" 2>/dev/null)" ]; }
@@ -82,9 +83,22 @@ else
   fi
 fi
 
-# --- 3) Report --------------------------------------------------------------------------
+# --- 3) Mock target (WO-OPS-30 F2b) ----------------------------------------------------
+# The shared HTTP target both engines hit. Started from the compose file so the route
+# table and the case list come from the repository (never from a hand-made container).
+if running "$MOCK"; then
+  echo "[up] ${MOCK} already up — leaving it"
+else
+  echo "[up] starting ${MOCK} (shared mock target) ..."
+  docker rm -f "$MOCK" >/dev/null 2>&1 || true
+  docker compose up -d mock
+  sleep 1
+fi
+
+# --- 4) Report --------------------------------------------------------------------------
 echo "[up] zeebe health:  $(curl -fsS --max-time 5 "$HEALTH_URL")"
 echo "[up] zeebe:      $(docker ps --filter "name=^${ZEEBE}$" --format '{{.Names}} {{.Status}}')"
 echo "[up] connectors: $(docker ps --filter "name=^${CONN}$" --format '{{.Names}} {{.Status}}') (gateway ${GATEWAY})"
+echo "[up] mock:       $(docker ps --filter "name=^${MOCK}$" --format '{{.Names}} {{.Status}}') (http://zbpm-cmp-mock:8080 in-network, http://127.0.0.1:18099 from the host)"
 echo "[up] verify connectors connected:  docker logs ${CONN} 2>&1 | grep -c 'Connection refused'  # expect 0"
 echo "[up] done — only zbpm-cmp-* containers were started"

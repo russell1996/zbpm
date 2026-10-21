@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 KEEP_ZEEBE=0
 [ "${1:-}" = "--keep-zeebe" ] && KEEP_ZEEBE=1
 
-for c in zbpm-cmp-connectors zbpm-cmp-zeebe; do
+for c in zbpm-cmp-connectors zbpm-cmp-mock zbpm-cmp-zeebe; do
   if [ "$c" = "zbpm-cmp-zeebe" ] && [ "$KEEP_ZEEBE" -eq 1 ]; then
     echo "[down] keeping ${c} (--keep-zeebe)"
     continue

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+                  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+                  id="Definitions_f2b_f2b_headers_custom" targetNamespace="http://bpmn.io/schema/bpmn">
+  <bpmn:process id="f2b_f2b_headers_custom" isExecutable="true">
+    <bpmn:startEvent id="start">
+      <bpmn:outgoing>toCall</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:sequenceFlow id="toCall" sourceRef="start" targetRef="call" />
+    <bpmn:serviceTask id="call" name="http-json">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="io.camunda:http-json:1" retries="1" />
+      <zeebe:ioMapping>
+        <zeebe:input source="= { &quot;Origin&quot;: &quot;https://modeler.camunda.io/&quot;, &quot;x-f2b-case&quot;: &quot;f2b-headers-custom&quot; }" target="headers" />
+        <zeebe:input source="= &quot;GET&quot;" target="method" />
+        <zeebe:input source="= &quot;http://zbpm-cmp-mock:8080/f2b/ok&quot;" target="url" />
+      </zeebe:ioMapping>
+      </bpmn:extensionElements>
+      <bpmn:incoming>toCall</bpmn:incoming>
+      <bpmn:outgoing>toDump</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:sequenceFlow id="toDump" sourceRef="call" targetRef="dump" />
+    <bpmn:serviceTask id="dump">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2b-dump" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>toDump</bpmn:incoming>
+    </bpmn:serviceTask>
+    <bpmn:boundaryEvent id="errBoundary" attachedToRef="call">
+      <bpmn:outgoing>toErrDump</bpmn:outgoing>
+      <bpmn:errorEventDefinition />
+    </bpmn:boundaryEvent>
+    <bpmn:sequenceFlow id="toErrDump" sourceRef="errBoundary" targetRef="errDump" />
+    <bpmn:serviceTask id="errDump">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="f2b-errdump" retries="3" />
+      </bpmn:extensionElements>
+      <bpmn:incoming>toErrDump</bpmn:incoming>
+    </bpmn:serviceTask>
+  </bpmn:process>
+</bpmn:definitions>
