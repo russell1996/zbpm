@@ -40,7 +40,37 @@
     }
   ],
   "expected": {
-    "observations": []
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "publish",
+        "occurrence": 1,
+        "outcome": "published"
+      },
+      {
+        "step": "publish",
+        "occurrence": 2,
+        "outcome": "published"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterCatch",
+        "occurrence": 1,
+        "outcome": "noJob",
+        "jobType": "f2vAfterCatchKey"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterCatch",
+        "occurrence": 2,
+        "outcome": "jobObserved",
+        "jobType": "f2vAfterCatchKey",
+        "variables": "{\"caseTag\":\"f2v-msg-catch-key\",\"orderId\":\"ORD-1\",\"payload\":\"right\"}"
+      }
+    ]
   },
   "matrix": {
     "docs89": "8.9: подписка с correlationKey будится только сообщением с тем же ключом; подписка без ключа — любым сообщением с тем же именем",

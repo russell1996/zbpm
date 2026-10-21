@@ -35,7 +35,47 @@
     }
   ],
   "expected": {
-    "observations": []
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "observeJob",
+        "element": "host",
+        "occurrence": 1,
+        "outcome": "jobObserved",
+        "jobType": "f2vHostNI",
+        "variables": "{\"orderId\":\"ORD-3\"}"
+      },
+      {
+        "step": "observeJob",
+        "element": "host",
+        "occurrence": 2,
+        "outcome": "jobObserved",
+        "jobType": "f2vHostNI",
+        "variables": "{\"orderId\":\"ORD-3\"}",
+        "liveReference": {
+          "outcome": "jobObserved",
+          "jobType": "f2vHostNI",
+          "variables": "{\"caseTag\":\"f2v-msg-boundary-noninterrupting\",\"orderId\":\"ORD-3\",\"payload\":\"spawn\"}"
+        }
+      },
+      {
+        "step": "publish",
+        "outcome": "published"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterBoundary",
+        "outcome": "jobObserved",
+        "jobType": "f2vAfterBoundaryNI",
+        "variables": "{\"caseTag\":\"f2v-msg-boundary-noninterrupting\",\"orderId\":\"ORD-3\",\"payload\":\"spawn\"}"
+      }
+    ],
+    "knownDifference": [
+      "('observeJob', 'host')#2"
+    ]
   },
   "matrix": {
     "docs89": "8.9: boundary message event (cancelActivity=false) создаёт параллельную ветку, хост продолжает работу",

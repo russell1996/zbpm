@@ -18,7 +18,26 @@
     }
   ],
   "expected": {
-    "observations": []
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterDecision",
+        "outcome": "jobObserved",
+        "jobType": "f2vAfterDecision",
+        "variables": "{\"amount\":21,\"decision\":20}",
+        "liveReference": {
+          "outcome": "noJob",
+          "jobType": "f2vAfterDecision"
+        }
+      }
+    ],
+    "knownDifference": [
+      "('observeJob', 'afterDecision')#1"
+    ]
   },
   "matrix": {
     "docs89": "8.9: business rule task с zeebe:calledDecision — вызов DMN-решения, результат в resultVariable",

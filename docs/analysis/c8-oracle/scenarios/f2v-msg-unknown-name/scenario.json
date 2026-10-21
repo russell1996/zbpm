@@ -25,7 +25,22 @@
     }
   ],
   "expected": {
-    "observations": []
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "publish",
+        "outcome": "published"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterStart",
+        "outcome": "noJob",
+        "jobType": "f2vAfterStart"
+      }
+    ]
   },
   "matrix": {
     "docs89": "8.9: PublishMessage с timeToLive — сообщение с TTL>0 буферизуется на брокере до истечения TTL; при TTL=0 (по умолчанию) сообщение отбрасывается, если подписки нет",

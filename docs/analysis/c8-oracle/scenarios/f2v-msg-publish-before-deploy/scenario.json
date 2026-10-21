@@ -25,7 +25,22 @@
     }
   ],
   "expected": {
-    "observations": []
+    "observations": [
+      {
+        "step": "publish",
+        "outcome": "published"
+      },
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterEarly",
+        "outcome": "noJob",
+        "jobType": "f2vAfterEarly"
+      }
+    ]
   },
   "matrix": {
     "docs89": "8.9: буферизация сообщений (message buffering) — сообщение с TTL>0, опубликованное до появления подписки, живёт на брокере до TTL и доставляется, когда подписка откроется; при TTL=0 сообщение отбрасывается",

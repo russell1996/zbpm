@@ -18,7 +18,19 @@
     }
   ],
   "expected": {
-    "observations": []
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterScript",
+        "outcome": "jobObserved",
+        "jobType": "f2vAfterScript",
+        "variables": "{\"amount\":21,\"doubled\":42}"
+      }
+    ]
   },
   "matrix": {
     "docs89": "8.9: script task с zeebe:script (FEEL) — исполняется воркером скриптов; результат кладётся в resultVariable",

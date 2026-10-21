@@ -35,7 +35,38 @@
     }
   ],
   "expected": {
-    "observations": []
+    "observations": [
+      {
+        "step": "deploy",
+        "outcome": "deployOk"
+      },
+      {
+        "step": "observeJob",
+        "element": "host",
+        "occurrence": 1,
+        "outcome": "jobObserved",
+        "jobType": "f2vHost",
+        "variables": "{\"orderId\":\"ORD-2\"}"
+      },
+      {
+        "step": "observeJob",
+        "element": "host",
+        "occurrence": 2,
+        "outcome": "noJob",
+        "jobType": "f2vHost"
+      },
+      {
+        "step": "publish",
+        "outcome": "published"
+      },
+      {
+        "step": "observeJob",
+        "element": "afterBoundary",
+        "outcome": "jobObserved",
+        "jobType": "f2vAfterBoundary",
+        "variables": "{\"caseTag\":\"f2v-msg-boundary\",\"orderId\":\"ORD-2\",\"payload\":\"cancel\"}"
+      }
+    ]
   },
   "matrix": {
     "docs89": "8.9: boundary message event (cancelActivity=true) прерывает хост и уводит поток по ветке границы",
