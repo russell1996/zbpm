@@ -6,25 +6,47 @@ import com.zorrodev.bpm.contract.dto.LoginDTO;
 import com.zorrodev.bpm.engine.entity.UiUserEntity;
 import com.zorrodev.bpm.engine.repository.UiUserRepository;
 import com.zorrodev.bpm.engine.security.PasswordHasher;
+import jakarta.servlet.Filter;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.ServletRequest;
+import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Bean;
+import org.springframework.core.Ordered;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.web.servlet.HandlerInterceptor;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import java.io.IOException;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -42,6 +64,113 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @AutoConfigureMockMvc
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class LastSuperAdminProtectionIT {
+
+    /**
+     * WO-AUDIT-21: заголовок, по которому запрос-демоушен встаёт в барьер
+     * «оба запроса уже аутентифицированы».
+     */
+    private static final String RACE_BARRIER_HEADER = "X-Zbpm-Race-Barrier";
+    /** Значение заголовка-метки: «это запрос гонки». */
+    private static final String RACE_BARRIER_VALUE = "1";
+    /**
+     * WO-AUDIT-21: барьеры гонки — ДВА, а не один.
+     *
+     * <p>Стартового {@code CountDownLatch} (он в тесте есть и остаётся) НЕ
+     * хватает: он синхронизирует только СТАРТ потоков. Если «опоздавшая»
+     * заявка доходит до {@code JwtAuthFilter} уже после того, как первая
+     * транзакция понизила САМОГО админа-актора, её JWT мёртв
+     * ({@code UiUserServiceImpl.update} поднимает {@code tokenVersion} при смене
+     * роли, а {@code JwtAuthFilter} сверяет claim {@code ver} и роль) — заявка
+     * получает 401 и до защиты «последнего суперадмина» НЕ доходит вовсе.
+     * Именно это наблюдалось в пайплайне 181096: успех=1, конфликт=0
+     * ({@code expected: <1> but was: <0>}).
+     *
+     * <p>Чтобы гонка была гонкой ДВУХ ТРАНЗАКЦИЙ, а не гонкой момента
+     * времени, нужны две точки синхронизации:
+     * <ol>
+     *   <li>ДО аутентификации (servlet-фильтр, порядок
+     *       {@code HIGHEST_PRECEDENCE + 10} — раньше {@code JwtAuthFilter}'s
+     *       {@code HIGHEST_PRECEDENCE + 20}): «опоздавшая» заявка не может
+     *       умереть на проверке JWT, потому что ждёт тут, а не в фильтре;</li>
+     *   <li>ПОСЛЕ аутентификации, но ДО контроллера ({@code HandlerInterceptor}
+     *       — по Spring MVC всегда после servlet-фильтров): обе заявки
+     *       гарантированно пережили проверку JWT ДО того, как первая
+     *       транзакция понижения закоммитится.</li>
+     * </ol>
+     * Без второй точки первая заявка успевает закоммитить понижение, пока
+     * вторая ещё не прошла аутентификацию (проверено живьём: 200 + 401).
+     * Никакой прод-код не меняется — это только синхронизация теста.
+     */
+    private static final AtomicReference<CyclicBarrier> RACE_BARRIER = new AtomicReference<>();
+
+    /** Единая реализация точки синхронизации: ждёт, пока обе заявки дойдут до неё. */
+    private static void awaitRaceBarrier(String phase) {
+        CyclicBarrier barrier = RACE_BARRIER.get();
+        if (barrier == null) {
+            return;
+        }
+        try {
+            barrier.await(10, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("WO-AUDIT-21: race barrier (" + phase + ") interrupted", e);
+        } catch (BrokenBarrierException e) {
+            throw new IllegalStateException("WO-AUDIT-21: race barrier (" + phase + ") broken", e);
+        } catch (TimeoutException e) {
+            throw new IllegalStateException(
+                    "WO-AUDIT-21: both race requests did not reach the barrier (" + phase + ") in time", e);
+        }
+    }
+
+    /**
+     * WO-AUDIT-21: фильтр ДО аутентификации. Реализует {@link Ordered}, чтобы
+     * Spring Boot упорядочил его в цепочке фильтров ДО {@code JwtAuthFilter}
+     * ({@code @Order(HIGHEST_PRECEDENCE + 20)}) — порядок в MockMvc считается
+     * по {@code @Order}/{@link Ordered} так же, как в реальном контейнере.
+     */
+    static class RaceBarrierFilter implements Filter, Ordered {
+        @Override
+        public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+                throws IOException, ServletException {
+            HttpServletRequest http = (HttpServletRequest) request;
+            if (RACE_BARRIER.get() != null && RACE_BARRIER_VALUE.equals(http.getHeader(RACE_BARRIER_HEADER))) {
+                awaitRaceBarrier("before-auth");
+            }
+            chain.doFilter(request, response);
+        }
+
+        @Override
+        public int getOrder() {
+            return Ordered.HIGHEST_PRECEDENCE + 10;
+        }
+    }
+
+    @TestConfiguration
+    static class RaceBarrierConfiguration {
+        @Bean
+        Filter raceBarrierFilter() {
+            return new RaceBarrierFilter();
+        }
+
+        @Bean
+        WebMvcConfigurer raceBarrierConfigurer() {
+            return new WebMvcConfigurer() {
+                @Override
+                public void addInterceptors(InterceptorRegistry registry) {
+                    registry.addInterceptor(new HandlerInterceptor() {
+                        @Override
+                        public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+                            if (RACE_BARRIER.get() != null
+                                    && RACE_BARRIER_VALUE.equals(request.getHeader(RACE_BARRIER_HEADER))) {
+                                awaitRaceBarrier("after-auth");
+                            }
+                            return true;
+                        }
+                    });
+                }
+            };
+        }
+    }
 
     @Autowired MockMvc mockMvc;
     @Autowired UiUserRepository userRepository;
@@ -351,59 +480,40 @@ class LastSuperAdminProtectionIT {
         long countBefore = countHumanSuperAdmins();
         assertEquals(2, countBefore, "Precondition: two active HUMAN SUPER_ADMIN for race");
 
-        // Two concurrent demotions: one demotes admin, one demotes second
         CountDownLatch startLatch = new CountDownLatch(1);
         CountDownLatch doneLatch = new CountDownLatch(2);
         AtomicInteger successCount = new AtomicInteger(0);
         AtomicInteger conflictCount = new AtomicInteger(0);
+        List<String> outcomes = Collections.synchronizedList(new ArrayList<>());
+
+        // WO-AUDIT-21: барьер ставится ДО старта потоков — иначе запрос может
+        // пройти мимо него (в interceptor попадёт null) и сценарий снова станет
+        // «гонкой во времени», а не гонкой двух транзакций.
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        RACE_BARRIER.set(barrier);
 
         ExecutorService executor = Executors.newFixedThreadPool(2);
-        Runnable demoteAdmin = () -> {
-            try {
-                startLatch.await();
-                MvcResult r = mockMvc.perform(put("/users/" + superAdminId)
-                                .header("Authorization", "Bearer " + superAdminToken)
-                                .content("{\"role\":\"USER\"}")
-                                .contentType(MediaType.APPLICATION_JSON))
-                        .andReturn();
-                int status = r.getResponse().getStatus();
-                if (status == 200) successCount.incrementAndGet();
-                else if (status == 409) conflictCount.incrementAndGet();
-            } catch (Exception e) {
-                e.printStackTrace();
-            } finally {
-                doneLatch.countDown();
-            }
-        };
-        Runnable demoteSecond = () -> {
-            try {
-                startLatch.await();
-                MvcResult r = mockMvc.perform(put("/users/" + secondId)
-                                .header("Authorization", "Bearer " + superAdminToken)
-                                .content("{\"role\":\"USER\"}")
-                                .contentType(MediaType.APPLICATION_JSON))
-                        .andReturn();
-                int status = r.getResponse().getStatus();
-                if (status == 200) successCount.incrementAndGet();
-                else if (status == 409) conflictCount.incrementAndGet();
-            } catch (Exception e) {
-                e.printStackTrace();
-            } finally {
-                doneLatch.countDown();
-            }
-        };
-
-        executor.submit(demoteAdmin);
-        executor.submit(demoteSecond);
-        // Start both at the same time
-        startLatch.countDown();
-        doneLatch.await();
-        executor.shutdown();
+        try {
+            executor.submit(() -> demoteForRace(superAdminId, startLatch, doneLatch, successCount, conflictCount, outcomes));
+            executor.submit(() -> demoteForRace(secondId, startLatch, doneLatch, successCount, conflictCount, outcomes));
+            // Start both at the same time
+            startLatch.countDown();
+            doneLatch.await();
+        } finally {
+            RACE_BARRIER.set(null);
+            executor.shutdown();
+        }
 
         // Exactly one should succeed, one should be rejected (409)
         // Due to PESSIMISTIC_WRITE, the second transaction will wait for the first's lock and then see count=1 and be rejected
-        assertEquals(1, successCount.get(), "Exactly one demotion should succeed, got success=" + successCount.get() + " conflict=" + conflictCount.get());
-        assertEquals(1, conflictCount.get(), "Exactly one demotion should be rejected with 409");
+        assertEquals(1, successCount.get(), "Exactly one demotion should succeed, got success=" + successCount.get()
+                + " conflict=" + conflictCount.get() + " outcomes=" + outcomes);
+        assertEquals(1, conflictCount.get(), "Exactly one demotion should be rejected with 409, outcomes=" + outcomes);
+
+        // WO-AUDIT-21: проигравший отклонён ИМЕННО защитой (409 с текстом guard'а),
+        // а не фильтром (401) — иначе гонки двух транзакций вообще не было.
+        assertTrue(outcomes.stream().anyMatch(o -> o.contains("409") && o.contains("last active SUPER_ADMIN")),
+                "The rejected demotion must carry the last-SUPER_ADMIN guard message, got: " + outcomes);
 
         // Verify DB has exactly one SUPER_ADMIN left
         long countAfter = countHumanSuperAdmins();
@@ -428,6 +538,84 @@ class LastSuperAdminProtectionIT {
         admin.setUserType("HUMAN");
         userRepository.saveAndFlush(admin);
         userRepository.flush();
+    }
+
+    /**
+     * WO-AUDIT-21: механизм, из-за которого этот класс был флейком, зафиксирован
+     * отдельным детерминированным тестом. Понижение, выполненное АКТОРОМ-админом,
+     * убивает его собственный JWT (смена роли поднимает {@code tokenVersion},
+     * {@code JwtAuthFilter} сверяет claim {@code ver} и роль) — поэтому
+     * «опоздавшая» заявка того же админа отклоняется фильтром (401) и до защиты
+     * «последнего суперадмина» НЕ доходит. Обхода защиты при этом нет: понижение
+     * просто не состоялось, в системе остаётся ровно один SUPER_ADMIN.
+     *
+     * <p>Именно поэтому гонку в {@code concurrentDemote_...} нельзя чинить
+     * «стартовым барьером» (он был и в исходном тесте): нужен барьер ПОСЛЕ
+     * аутентификации — см. {@link RaceBarrierConfiguration}.
+     */
+    @Test
+    void lateLoser_afterActorSelfDemotion_isRejectedWith401_andGuardIsNotBypassed() throws Exception {
+        String secondName = "sec60-late-" + UUID.randomUUID().toString().substring(0, 8);
+        UUID secondId = createUser(secondName, "SUPER_ADMIN", "HUMAN");
+        UiUserEntity admin = userRepository.findById(superAdminId).orElseThrow();
+        admin.setRole("SUPER_ADMIN");
+        admin.setActive(true);
+        admin.setUserType("HUMAN");
+        userRepository.saveAndFlush(admin);
+        userRepository.flush();
+        assertEquals(2, countHumanSuperAdmins(), "Precondition: two active HUMAN SUPER_ADMIN");
+
+        // Актор-админ понижает сам себя — его собственный JWT после этого мёртв.
+        mockMvc.perform(put("/users/" + superAdminId)
+                        .header("Authorization", "Bearer " + superAdminToken)
+                        .content("{\"role\":\"USER\"}")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk());
+
+        // «Опоздавшая» заявка тем же токеном: 401 от JwtAuthFilter, а НЕ 409 от защиты.
+        MvcResult late = mockMvc.perform(put("/users/" + secondId)
+                        .header("Authorization", "Bearer " + superAdminToken)
+                        .content("{\"role\":\"USER\"}")
+                        .contentType(MediaType.APPLICATION_JSON))
+                .andReturn();
+        assertEquals(401, late.getResponse().getStatus(),
+                "The late request must be rejected by the auth filter (dead token), got status="
+                        + late.getResponse().getStatus());
+
+        // Защита не обойдена: второй суперадмин на месте — понижения не было.
+        UiUserEntity secondAfter = userRepository.findById(secondId).orElseThrow();
+        assertEquals("SUPER_ADMIN", secondAfter.getRole(), "The late demotion must not have happened");
+        assertEquals(1, countHumanSuperAdmins(), "Exactly one active HUMAN SUPER_ADMIN must remain");
+
+        // Cleanup
+        userRepository.deleteById(secondId);
+        userRepository.flush();
+    }
+
+    /**
+     * WO-AUDIT-21: одна конкурентная заявка на понижение. Барьер (если он
+     * установлен) ставит её ПОСЛЕ аутентификации — так обе заявки гарантированно
+     * переживают проверку JWT до того, как первая транзакция закоммитится.
+     */
+    private void demoteForRace(UUID targetId, CountDownLatch startLatch, CountDownLatch doneLatch,
+                               AtomicInteger successCount, AtomicInteger conflictCount, List<String> outcomes) {
+        try {
+            startLatch.await();
+            MvcResult r = mockMvc.perform(put("/users/" + targetId)
+                            .header("Authorization", "Bearer " + superAdminToken)
+                            .header(RACE_BARRIER_HEADER, RACE_BARRIER_VALUE)
+                            .content("{\"role\":\"USER\"}")
+                            .contentType(MediaType.APPLICATION_JSON))
+                    .andReturn();
+            int status = r.getResponse().getStatus();
+            outcomes.add(status + "|" + r.getResponse().getContentAsString());
+            if (status == 200) successCount.incrementAndGet();
+            else if (status == 409) conflictCount.incrementAndGet();
+        } catch (Exception e) {
+            outcomes.add("EX|" + e);
+        } finally {
+            doneLatch.countDown();
+        }
     }
 
     // --- helpers ---
