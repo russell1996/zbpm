@@ -496,7 +496,9 @@ public interface DBService {
     boolean consumeSignalSubscription(UUID subscriptionId);
 
     // WO-REL-31 CR-3: fan-out batch size — cursor-paged finders return at most this many rows per page.
-    int FAN_OUT_BATCH_SIZE = 500;
+    // WO-OPS-39: единственный источник правды — MessageSubscriptionDbOperations.FAN_OUT_BATCH_SIZE
+    // (слой доступа к данным не должен зависеть от этого верхнего API — иначе цикл бинов).
+    int FAN_OUT_BATCH_SIZE = com.zorrodev.bpm.engine.service.db.MessageSubscriptionDbOperations.FAN_OUT_BATCH_SIZE;
 
     /** Replaces any signal-start subscriptions for {@code processKey} with a fresh one (newer
      *  versions supersede older ones). */

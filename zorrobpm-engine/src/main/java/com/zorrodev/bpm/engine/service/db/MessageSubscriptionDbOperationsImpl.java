@@ -6,7 +6,6 @@ import com.zorrodev.bpm.engine.entity.MessageStartSubscriptionEntity;
 import com.zorrodev.bpm.engine.entity.MessageSubscriptionEntity;
 import com.zorrodev.bpm.engine.repository.MessageStartSubscriptionRepository;
 import com.zorrodev.bpm.engine.repository.MessageSubscriptionRepository;
-import com.zorrodev.bpm.engine.service.DBService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
@@ -126,7 +125,7 @@ public class MessageSubscriptionDbOperationsImpl implements MessageSubscriptionD
         }
         List<MessageSubscriptionEntity> entities = messageSubscriptionRepository.findBy(spec,
             q -> q.sortBy(Sort.by(Sort.Direction.DESC, "id"))
-                .limit(DBService.FAN_OUT_BATCH_SIZE)
+                .limit(MessageSubscriptionDbOperations.FAN_OUT_BATCH_SIZE)
                 .all());
         return toMessageSubscriptions(entities);
     }

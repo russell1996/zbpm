@@ -11,6 +11,18 @@ import java.util.UUID;
  */
 public interface MessageSubscriptionDbOperations {
 
+    /**
+     * WO-REL-31 CR-3: размер батча keyset-постраничного фан-аута подписок (строк на страницу).
+     *
+     * <p>WO-OPS-39: константа живёт здесь, в слое доступа к данным, а не в верхнем API
+     * {@code com.zorrodev.bpm.engine.service.DBService}: слой {@code service.db} не должен
+     * зависеть от верхнего слоя — иначе при инъекции {@code DBService} в
+     * {@code DBServiceImpl → MessageSubscriptionDbOperations → DBService} появился бы цикл
+     * бинов. {@link com.zorrodev.bpm.engine.service.DBService#FAN_OUT_BATCH_SIZE} — публичный
+     * псевдоним этого значения (единственный источник правды — здесь).</p>
+     */
+    int FAN_OUT_BATCH_SIZE = 500;
+
     UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName);
 
     UUID createMessageSubscription(UUID processInstanceId, UUID activityId, String messageName, String boundaryElementId);
